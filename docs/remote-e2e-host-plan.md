@@ -38,10 +38,21 @@ zero human Required Approvals and strict app-bound `verify`.
 
 ## Private identity provisioning
 
-Privileged identity provisioning needs separate Owner authorization. Use a new
-dedicated Codex ChatGPT login session through a private supported login flow;
-preserve the existing login. If an encrypted repository-secret channel is used,
-the Owner must approve that channel and the dedicated session's remote use.
+Privileged identity provisioning needs separate Owner authorization. Propose
+a new dedicated Codex ChatGPT login session through a private supported flow,
+preserving the existing login. Deliver it through encrypted GitHub Environment
+secrets in an environment restricted by GitHub to the exact protected main
+branch. A public branch/PR must not be able to obtain the bootstrap identities.
+No per-stage human approval or second GitHub human account is introduced.
+
+Proposed environment-secret names are `NIBFIN_E2E_CODEX_AUTH`,
+`NIBFIN_E2E_CONTROLLER_TOKEN` and a separately bounded bootstrap administration
+credential for Runner registration/retirement. The controller credential needs
+administration read plus the approved stage writes; only bootstrap management
+needs Runner administration write. Hosted locators use a separate read-only
+identity. Do not silently reuse a write credential as a hosted read token.
+
+The Owner must approve this channel and the dedicated session's remote use.
 Do not publish login links/codes, auth files, refresh tokens or credentials in
 Actions logs, artifacts, Issues, source files or chat.
 
@@ -99,3 +110,7 @@ Owner approval must cover the bounded remote VM/Runner setup and the private
 dedicated GitHub/Codex identity-provisioning channel. Repository/Issue approval
 alone does not grant those privileges. This document is a plan, not evidence
 that the host, authenticated Agent or complete protected E2E has passed.
+
+References: [Core host adoption](https://github.com/taco3064/nibfin-core/blob/f0db1b5c678461b759ba5f4d8b2100822dd98960/docs/host-launcher.md),
+[GitHub environment protection](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments),
+[official Codex headless authentication](https://learn.chatgpt.com/docs/auth#login-on-headless-devices).
