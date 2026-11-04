@@ -6,8 +6,20 @@ Agent execution has occurred. The two prerequisites below remain unresolved.
 
 ## Requested boundary
 
-- One temporary GitHub-hosted Ubuntu 24.04 VM, kept alive by one fixed bootstrap
-  job for at most 360 minutes. No new paid VM or cloud-provider account.
+- Owner confirmed that no existing remote VM is available and requested a
+  minimum resource proposal. The former GitHub-hosted 360-minute VM idea does
+  not satisfy private journal retention on host loss and is superseded here.
+- Propose one DigitalOcean Basic Regular x86-64 VM: Ubuntu 24.04, 4 vCPU,
+  8 GiB RAM and its included 160 GiB boot disk, for at most 24 hours of evaluation
+  and delivery. The existing Agent container limit is 4 GiB and 2 CPUs; 8 GiB
+  leaves room for the Runner, Docker and bounded Hooks without changing limits.
+- Add one independent 10 GiB private block volume in the same datacenter for
+  Core's existing state, workspace and journal. Use a fixed mounted ext4 path,
+  controller ownership and 0700 permissions; Agent mounts remain restricted.
+  Never fall back to a boot-disk directory if the volume is missing.
+- No Kubernetes, GPU, domain, load balancer, paid backup plan, additional VM or
+  shared infrastructure. Region availability and actual quote require read-back
+  before purchase; no cloud account or paid resource has been created.
 - One explicitly registered repository-level Self-hosted Runner. Repository
   registration and an Owner routing label do not restrict which workflow can
   execute on it. Native registration/job/OIDC must be verified; being inside a
@@ -18,8 +30,28 @@ Agent execution has occurred. The two prerequisites below remain unresolved.
   non-root controller/Runner account, private state and the existing rootless
   Docker backend. The Agent never receives the Docker socket or host privileges.
 
-This requests use of existing GitHub Actions capacity, not a new product host-OS
-requirement. It does not require changes to the Owner's Windows/WSL settings.
+This is one optional remote verification configuration, not a new product
+host-OS requirement. It does not require changes to Windows or WSL.
+
+## Proposed cost and lifetime
+
+Official prices checked on 2026-11-04: the selected VM is USD 0.07143/hour
+(USD 48/month); block storage is USD 0.10/GiB/month, charged hourly even when
+detached. Estimate about USD 1.75 for 24 hours including the 10 GiB volume,
+before tax and any separately charged usage. Retaining only that volume costs
+at most USD 1 per month at the quoted rate.
+
+Request a USD 3 pre-tax resource budget: at most 24 VM hours and at most one
+month of volume retention. This is an authorization limit, not a claim that
+the provider supplies a hard spending cap. Do not extend VM time, resize or
+add paid resources without Owner approval. If the account requires a deposit,
+minimum payment or a different quote, report it before purchase.
+
+Stopping a VM is not retirement or a billing guarantee. At the deadline, stop
+execution, reconcile what is known, retire the Runner and destroy only the VM
+after checking for required recovery data. Preserve the independent volume if
+effects remain unresolved. Never include it in automatic VM deletion. Report
+any inability to perform retirement promptly; do not silently exceed the budget.
 
 ## Sources and native authority
 
@@ -42,14 +74,15 @@ zero human Required Approvals and strict app-bound `verify`.
 
 Privileged identity provisioning needs separate Owner authorization. Propose
 a new dedicated Codex ChatGPT login session through a private supported flow,
-preserving the existing login. Deliver it through encrypted GitHub Environment
-secrets in an environment restricted by GitHub to the exact protected main
-branch. A public branch/PR must not be able to obtain the bootstrap identities.
+preserving the existing login. Provision only through the provider's private
+console or authenticated encrypted SSH after independently confirming host
+identity. A public workflow, branch or PR must not obtain bootstrap identities.
 No per-stage human approval or second GitHub human account is introduced.
 
-Proposed environment-secret names are `NIBFIN_E2E_CODEX_AUTH`,
-`NIBFIN_E2E_CONTROLLER_TOKEN` and a separately bounded bootstrap administration
-credential for Runner registration/retirement. The controller credential needs
+Keep the existing workstation GitHub administrator credential local. Use it
+only for authorized native Runner registration/retirement; transfer only the
+short-lived registration material over the verified private channel. The
+separate, repository-scoped controller credential needs
 administration read plus the approved stage writes; only bootstrap management
 needs Runner administration write. Hosted locators use a separate read-only
 identity. Do not silently reuse a write credential as a hosted read token.
@@ -97,13 +130,14 @@ before an effect-bearing delivery can run. A final cleanup step or post-job
 hook is insufficient: abrupt cancellation and VM destruction can prevent it.
 Public repository artifacts are not an approved private journal destination.
 
-The proposed hosted VM alone does not satisfy this requirement. A private
-persistent POSIX state volume on a legally available remote host is a candidate
-that retains the existing journal without a second delivery database. No such
-host or volume is currently available or authorized. Its persistence, access
-controls and recovery must be tested before adoption. Alternatively, a bounded
-safe retention mechanism would need explicit technical review; none is claimed
-here. Do not add an artifact checkpoint service or new controller implicitly.
+The proposed independent block volume retains the existing journal without a
+second delivery database. It is not yet provisioned or verified. Before any
+effect-bearing stage, test private permissions, Core directory/file sync and
+recovery after a controlled VM interruption using probe state, not a real
+unknown write. Prove that missing/wrong/unmounted storage denies startup, and
+that cancellation leaves the existing exclusion/Pending evidence available.
+Do not reset a fence or replay an uncertain operation merely because the volume
+can be reattached. No artifact checkpoint service or new controller is proposed.
 
 Do not place Agent credentials or execute effect-bearing stages until both
 prerequisites pass. A lost host must remain unresolved; no automatic replacement
@@ -153,7 +187,19 @@ private dedicated GitHub/Codex identity-provisioning channel. Repository/Issue
 approval alone does not grant those privileges. Approval of this document
 cannot substitute for the missing technical verification.
 
+The proposed authorization is limited to the VM/volume and USD 3 pre-tax budget
+above, one test-repository Runner, private repository-scoped identities, and a
+new dedicated Codex session. First perform safety-only evaluation with no
+effect-bearing stage or Agent credential; continue to authenticated Issue #2
+only if the reviewed admission, persistence and isolation checks pass. Failed
+checks require diagnosis and no reduced protection. No automatic retry follows
+unknown external effects. Cloud account/payment login may require the Owner;
+no credential should be pasted in chat.
+
 References: [Core host adoption](https://github.com/taco3064/nibfin-core/blob/f0db1b5c678461b759ba5f4d8b2100822dd98960/docs/host-launcher.md),
 [GitHub environment protection](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments),
 [GitHub pre-job hooks](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/run-scripts),
+[VM pricing](https://www.digitalocean.com/pricing/droplets),
+[volume pricing](https://docs.digitalocean.com/products/volumes/details/pricing/),
+[independent volume lifecycle](https://docs.digitalocean.com/products/droplets/how-to/destroy/),
 [official Codex headless authentication](https://learn.chatgpt.com/docs/auth#login-on-headless-devices).
