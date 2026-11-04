@@ -1,0 +1,22 @@
+name: Nibfin adopted wake
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number: { required: true, type: string }
+      issue_id: { required: true, type: string }
+      repository_id: { required: true, type: string }
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: nibfin-${{ github.repository_id }}-${{ inputs.issue_number }}
+  cancel-in-progress: false
+jobs:
+  wake:
+    uses: "taco3064/nibfin-core/.github/workflows/wake.yml@\
+      f0db1b5c678461b759ba5f4d8b2100822dd98960"
+    with:
+      core_commit: f0db1b5c678461b759ba5f4d8b2100822dd98960
+    secrets:
+      NIBFIN_WAKE_ADOPTION: ${{ secrets.NIBFIN_WAKE_ADOPTION }}
+      NIBFIN_READ_TOKEN: ${{ secrets.NIBFIN_READ_TOKEN }}
