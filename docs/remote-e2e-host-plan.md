@@ -1,15 +1,17 @@
 # Proposed temporary remote E2E host
 
-Status: proposed configuration for Owner review. No Runner registration,
-credential provisioning or authenticated Agent execution has occurred.
+Status: incomplete proposal under technical review, not an executable E2E host
+approval. No Runner registration, credential provisioning or authenticated
+Agent execution has occurred. The two prerequisites below remain unresolved.
 
 ## Requested boundary
 
 - One temporary GitHub-hosted Ubuntu 24.04 VM, kept alive by one fixed bootstrap
   job for at most 360 minutes. No new paid VM or cloud-provider account.
-- One explicitly registered Self-hosted Runner, restricted to this repository
-  and the Owner member route. Native registration/job/OIDC must be verified;
-  being inside a hosted VM does not establish Self-hosted identity.
+- One explicitly registered repository-level Self-hosted Runner. Repository
+  registration and an Owner routing label do not restrict which workflow can
+  execute on it. Native registration/job/OIDC must be verified; being inside a
+  hosted VM does not establish Self-hosted identity.
 - One original work item: Scope Issue #2. No extra prerequisite Issues,
   replacement scheduler, shared Runner pool or persistent control service.
 - Administrator-owned verified Core installation and policies; a dedicated
@@ -64,9 +66,48 @@ executables, sockets, policies or adapters. Agents and Hooks receive neither
 the controller credential nor another role's private state.
 
 All external fork contributors require workflow-run approval. Keep CI hosted
-and read-only; permit only reviewed fixed entry workflows to reach the adopted
-Runner. A routing label is not authorization. Never approve an untrusted fork
-workflow merely to exercise a negative test.
+and read-only. A routing label is not authorization. Never approve an untrusted
+fork workflow merely to exercise a negative test.
+
+## Prerequisites found in independent review
+
+### Admission before workflow steps
+
+Environment-secret protection and Core admission do not prevent an arbitrary
+workflow shell from running before Core. Personal repository registration must
+not be treated as an organization Runner-group workflow allowlist.
+
+Investigate a fixed administrator-owned pre-job hook outside the Runner
+installation. GitHub documents that a nonzero pre-job hook exit blocks the job
+and cannot be overridden with `continue-on-error`. Reuse Core's native identity
+checks instead of implementing another authorization policy. The real Runner
+must prove availability of the required job/OIDC identity at that point and
+rejection before any workflow step, container action or untrusted code runs.
+This mechanism is a candidate, not verified protection.
+
+Any initial remote safety evaluation must have no model authentication, no
+controller write credential and no permission to execute Issue #2. Its bounded
+registration credential must be unavailable to test jobs. Review the fixed
+evaluation implementation before requesting its execution authorization.
+
+### Journal survival after host loss
+
+The existing private OperationJournal must survive cancellation and host loss
+before an effect-bearing delivery can run. A final cleanup step or post-job
+hook is insufficient: abrupt cancellation and VM destruction can prevent it.
+Public repository artifacts are not an approved private journal destination.
+
+The proposed hosted VM alone does not satisfy this requirement. A private
+persistent POSIX state volume on a legally available remote host is a candidate
+that retains the existing journal without a second delivery database. No such
+host or volume is currently available or authorized. Its persistence, access
+controls and recovery must be tested before adoption. Alternatively, a bounded
+safe retention mechanism would need explicit technical review; none is claimed
+here. Do not add an artifact checkpoint service or new controller implicitly.
+
+Do not place Agent credentials or execute effect-bearing stages until both
+prerequisites pass. A lost host must remain unresolved; no automatic replacement
+or clean-state retry may erase that uncertainty.
 
 ## Verification and execution order
 
@@ -106,11 +147,13 @@ database or alternate delivery state machine is introduced.
 
 ## Approval still needed
 
-Owner approval must cover the bounded remote VM/Runner setup and the private
-dedicated GitHub/Codex identity-provisioning channel. Repository/Issue approval
-alone does not grant those privileges. This document is a plan, not evidence
-that the host, authenticated Agent or complete protected E2E has passed.
+First resolve and review the concrete admission and private persistence plan.
+Then Owner approval must cover its actual remote resource, Runner setup and
+private dedicated GitHub/Codex identity-provisioning channel. Repository/Issue
+approval alone does not grant those privileges. Approval of this document
+cannot substitute for the missing technical verification.
 
 References: [Core host adoption](https://github.com/taco3064/nibfin-core/blob/f0db1b5c678461b759ba5f4d8b2100822dd98960/docs/host-launcher.md),
 [GitHub environment protection](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments),
+[GitHub pre-job hooks](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/run-scripts),
 [official Codex headless authentication](https://learn.chatgpt.com/docs/auth#login-on-headless-devices).
