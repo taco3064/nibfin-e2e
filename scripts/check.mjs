@@ -3,6 +3,10 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
+// Scope authorization and delivery artifacts are data, not program sources.
+// These are the JSON manifests used as program configuration in this project.
+const programJSON = new Set(['package.json', 'package-lock.json', 'producer-pins.json']);
+
 async function check(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     if (['.git', 'node_modules', 'coverage'].includes(entry.name)) continue;
@@ -12,7 +16,7 @@ async function check(directory) {
       await check(path);
       continue;
     }
-    if (!/\.(?:mjs|js|cjs|json|ya?ml)$/.test(path)) continue;
+    if (!/\.(?:mjs|js|cjs|ya?ml)$/.test(path) && !programJSON.has(entry.name)) continue;
     const text = (await readFile(path, 'utf8')).replaceAll('\r\n', '\n');
     const lines = text.split('\n');
     if (lines.at(-1) === '') lines.pop();

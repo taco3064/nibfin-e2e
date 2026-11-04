@@ -29,6 +29,9 @@ npm run verify
 Every program source file must remain within 90 characters per line and 1,000
 lines per file. Changes go through a reviewed PR and applicable native CI.
 Zero required human Approvals does not remove independent Agent review.
+The checker covers JavaScript, workflow YAML and known JSON program manifests.
+Scope authorization records and delivery artifact data are verified through
+their Core contracts; they are not program source files.
 
 This initial repository foundation is administrative preparation. It must not
 be counted as Nibfin's delivery of the later CRLF Issue. No model credentials,
