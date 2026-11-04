@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "issue": {
+    "id": "I_kwDOViTe1c8AAAABcWuvZA",
+    "repository": "taco3064/nibfin-e2e",
+    "repositoryId": 1445256917,
+    "number": 2
+  },
+  "scope": {
+    "body": "## Problem\n\nThe current `splitLines(text)` splits at LF but leaves a trailing carriage return on lines read from a Windows CRLF file. For example, `splitLines('first\\r\\nsecond')` returns `['first\\r', 'second']`. Support CRLF input without changing the existing LF behavior.\n\n## Required behavior\n\n- Treat each CRLF pair as one line separator, removing both separator characters.\n- Preserve LF separators and support mixed LF/CRLF input.\n- Preserve leading, consecutive and trailing empty fields; empty input remains `['']`.\n- Preserve a standalone CR that is not followed by LF as ordinary content.\n- Continue rejecting non-string input with TypeError, without coercion.\n- Preserve Unicode content and line order.\n\n## Scope\n\nUpdate `src/lines.mjs` and `test/lines.test.mjs`; update README behavior documentation if needed. Add focused regression cases for CRLF, mixed separators, empty lines, terminal separators and standalone CR. Existing baseline tests must continue to pass. Any delivery artifacts required by the formal Shape must use explicitly bounded repository paths.\n\nDo not change CI workflows, runtime pins, package dependencies, repository protection, authorization records, Runner configuration or model credentials to implement this feature. Use the existing Node 24.22.1 / npm 11.9.0 toolchain and `npm run verify`.\n\n## Acceptance\n\nA reviewed Candidate must demonstrate the required cases, pass the existing protected verify Check on its current Head/test-merge, and preserve the 90-character / 1,000-line whole-file source limits. Nibfin must execute real Shape, independent validation, delivery, Hooks, acceptance, final review, protected merge and closure. Administrative repository setup, unit tests alone or a manually implemented CRLF fix do not count as this Issue's delivery.\n\n## Authorization boundary\n\nThe Owner approved this external test repository and this finite work scope. The original Scope is this Issue body at creation. Protected execution additionally requires a reviewed, immutable Core approval and an adopted safe Runner/Agent environment. Creating this Issue does not itself authorize privileged host changes, credential transfer or a formal Nibfin Release.\n",
+    "hash": "a16328093dcce4460a77712e4053ea12f413f2431172968606cf7575124dd7b0"
+  },
+  "prerequisites": [],
+  "operations": [
+    "shape",
+    "validate-shape",
+    "publish-shape",
+    "deliver",
+    "hooks",
+    "accept",
+    "commit-pr",
+    "review-pr",
+    "merge",
+    "close",
+    "wake"
+  ],
+  "roles": {
+    "author": 127829492,
+    "validator": 127829492,
+    "publisher": 127829492,
+    "writer": 127829492,
+    "acceptor": 127829492
+  },
+  "source": {
+    "repository": "taco3064/nibfin-core",
+    "commit": "f0db1b5c678461b759ba5f4d8b2100822dd98960",
+    "policyHash": "95bfd210322fef4c555652b728b7d6ca727b424bcae750b4556017a225060a13",
+    "skillsHash": "99f9529dd4884fbac7f76f74a7f52b1a3bd93159246dc1f1b4dbcd626ff692df"
+  },
+  "validFrom": "2026-11-04T07:07:31.692Z",
+  "expiresAt": "2026-11-07T07:07:31.692Z"
+}
