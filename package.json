@@ -1,0 +1,17 @@
+{
+  "name": "nibfin-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A small line parser for authorized Nibfin delivery verification",
+  "engines": {
+    "node": "24.22.1",
+    "npm": "11.9.0"
+  },
+  "packageManager": "npm@11.9.0",
+  "scripts": {
+    "check": "node scripts/check.mjs",
+    "test": "node --test test/*.test.mjs",
+    "verify": "npm run check && npm test"
+  }
+}
