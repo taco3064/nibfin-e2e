@@ -1,0 +1,27 @@
+name: Nibfin Issue wake
+on:
+  issues:
+    types:
+      - opened
+      - edited
+      - labeled
+      - unlabeled
+      - assigned
+      - unassigned
+      - reopened
+      - closed
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: nibfin-event-${{ github.repository_id }}-${{ github.event.issue.number }}
+  cancel-in-progress: false
+jobs:
+  wake:
+    uses: "taco3064/nibfin-core/.github/workflows/issue.yml@\
+      f0db1b5c678461b759ba5f4d8b2100822dd98960"
+    with:
+      core_commit: f0db1b5c678461b759ba5f4d8b2100822dd98960
+    secrets:
+      NIBFIN_WAKE_ADOPTION: ${{ secrets.NIBFIN_WAKE_ADOPTION }}
+      NIBFIN_WAKE_TOKEN: ${{ secrets.NIBFIN_WAKE_TOKEN }}
