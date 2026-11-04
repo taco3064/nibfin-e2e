@@ -1,4 +1,5 @@
-name: Nibfin adopted wake
+name: Nibfin adopted Action wake
+# Core source: 573f8875086294d6caedcfc4cac3274147b967fb
 on:
   workflow_dispatch:
     inputs:
@@ -12,11 +13,11 @@ concurrency:
   group: nibfin-${{ github.repository_id }}-${{ inputs.issue_number }}
   cancel-in-progress: false
 jobs:
-  wake:
-    uses: "taco3064/nibfin-core/.github/workflows/wake.yml@\
-      f0db1b5c678461b759ba5f4d8b2100822dd98960"
-    with:
-      core_commit: f0db1b5c678461b759ba5f4d8b2100822dd98960
-    secrets:
-      NIBFIN_WAKE_ADOPTION: ${{ secrets.NIBFIN_WAKE_ADOPTION }}
-      NIBFIN_READ_TOKEN: ${{ secrets.NIBFIN_READ_TOKEN }}
+  adopted-stage:
+    runs-on: [self-hosted, Linux, nibfin-user-127829492]
+    steps:
+      - uses: "taco3064/nibfin-act@\
+          a7526cc3b2d1ac327b6a71cd1df519aaa175e842"
+        with:
+          issue-number: ${{ inputs.issue_number }}
+          stage: continue

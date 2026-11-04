@@ -33,6 +33,12 @@ The checker covers JavaScript, workflow YAML and known JSON program manifests.
 Scope authorization records and delivery artifact data are verified through
 their Core contracts; they are not program source files.
 
+Project-managed commit hooks are tracked at `.githooks/pre-commit` and
+`.githooks/commit-msg`. The first runs the existing `npm run verify`; the second
+requires a nonempty commit-message file and never rewrites it. Formal Shape must
+enumerate these source paths and events in execution order. Nibfin executes them
+in its isolated Hooks backend, independently of workstation Git configuration.
+
 This initial repository foundation is administrative preparation. It must not
 be counted as Nibfin's delivery of the later CRLF Issue. No model credentials,
 Runner registrations or host authority are supplied by the source tree.
