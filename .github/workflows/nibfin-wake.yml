@@ -1,5 +1,5 @@
 name: Nibfin adopted Action wake
-# Core source: ca9467bc440a5fcaef108a5365999334977efa8a
+# Core source: 130d61d04afac216be0b2235059cd1248672ca9b
 on:
   workflow_dispatch:
     inputs:
@@ -17,7 +17,7 @@ jobs:
     runs-on: [self-hosted, Linux, nibfin-user-127829492]
     steps:
       - uses: "taco3064/nibfin-act@\
-          522cb1328151a40d038f823a8780a1623a2466ff"
+          e26fe67cf084ca482e2736980c19e537c8da004d"
         with:
           issue-number: ${{ inputs.issue_number }}
           stage: continue
