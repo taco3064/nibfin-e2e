@@ -12,7 +12,8 @@ Agent execution has occurred. The two prerequisites below remain unresolved.
 - Propose one DigitalOcean Basic Regular x86-64 VM: Ubuntu 24.04, 4 vCPU,
   8 GiB RAM and its included 160 GiB boot disk, for at most 24 hours of evaluation
   and delivery. The existing Agent container limit is 4 GiB and 2 CPUs; 8 GiB
-  leaves room for the Runner, Docker and bounded Hooks without changing limits.
+  is proposed headroom for the Runner, Docker and bounded Hooks without changing
+  limits. Actual capacity is unverified; this is not a proven minimum.
 - Add one independent 10 GiB private block volume in the same datacenter for
   Core's existing state, workspace and journal. Use a fixed mounted ext4 path,
   controller ownership and 0700 permissions; Agent mounts remain restricted.
@@ -52,6 +53,12 @@ execution, reconcile what is known, retire the Runner and destroy only the VM
 after checking for required recovery data. Preserve the independent volume if
 effects remain unresolved. Never include it in automatic VM deletion. Report
 any inability to perform retirement promptly; do not silently exceed the budget.
+
+If Pending remains unresolved, escalate before the volume-retention deadline
+for an explicit extension or a reviewed migration of minimum private recovery
+evidence to an authorized durable destination. Neither automatic journal
+deletion nor indefinite unapproved storage billing is permitted. Reaching a
+cost/time limit does not establish that an external effect did not occur.
 
 ## Sources and native authority
 
