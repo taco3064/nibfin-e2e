@@ -1,17 +1,73 @@
-name: Nibfin adopted stage
+name: Temporary OIDC claim observation
 on:
   workflow_dispatch:
-    inputs:
-      issue-number: { required: true, type: string }
-      stage: { required: true, type: string }
 permissions:
   contents: read
   id-token: write
 jobs:
-  adopted-stage:
-    runs-on: [self-hosted, nibfin-user-127829492]
+  observe-oidc:
+    runs-on: [self-hosted, Linux, nibfin-user-127829492]
+    timeout-minutes: 5
     steps:
-      - uses: taco3064/nibfin-act@a8ddbdd7f082f9c880b7fa21232e26a87001bf4c
-        with:
-          issue-number: ${{ inputs.issue-number }}
-          stage: ${{ inputs.stage }}
+      - name: Observe signed claim shape without publishing credentials
+        working-directory: /opt/nibfin/core
+        shell: bash --noprofile --norc -e {0}
+        run: |
+          /usr/bin/node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises';
+          import {
+            requestActionsIdentity, verifyActionsIdentity,
+          } from '/opt/nibfin/core/src/actions-identity.mjs';
+          import { verifyInstalledSource } from
+            '/opt/nibfin/core/src/source-package.mjs';
+          try {
+            const pin = JSON.parse(await readFile(
+              '/etc/nibfin/source-pin-80cb02f.json', 'utf8'));
+            const source = await verifyInstalledSource('/opt/nibfin/core', pin);
+            if (source.commit !== '80cb02f0f8ad7b27e425b793bdefacc3f2bcd95c') {
+              throw Error('Unexpected installed source');
+            }
+            const env = process.env, audience = 'nibfin:diagnostic-claims';
+            const token = await requestActionsIdentity({
+              requestUrl: env.ACTIONS_ID_TOKEN_REQUEST_URL,
+              requestToken: env.ACTIONS_ID_TOKEN_REQUEST_TOKEN, audience,
+            });
+            const payload = JSON.parse(
+              Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+            const expected = {
+              repository: 'taco3064/nibfin-e2e', repositoryId: 1445256917,
+              ownerId: 127829492, actorId: 127829492,
+              runId: Number(env.GITHUB_RUN_ID),
+              attempt: Number(env.GITHUB_RUN_ATTEMPT),
+              checkRunId: Number(payload.check_run_id),
+              sourceCommit: env.GITHUB_SHA, audience,
+              ref: env.GITHUB_REF,
+              workflowRef: 'taco3064/nibfin-e2e/.github/workflows/' +
+                'nibfin-stage.yml@' + env.GITHUB_REF,
+              subject: 'repo:taco3064@127829492/nibfin-e2e@1445256917:ref:' +
+                env.GITHUB_REF,
+            };
+            try {
+              await verifyActionsIdentity(token, expected);
+            } catch (error) {
+              if (error.code !== 'UNEXPECTED_REUSABLE_WORKFLOW') throw error;
+            }
+            // Observation only; compare the signed check ID with the actual
+            // native job separately. This never invokes a stage or Writer.
+            const result = {
+              kind: 'oidc-claim-observation', runId: expected.runId,
+              checkRunId: expected.checkRunId, standardClaimsVerified: true,
+              jobRefPresent: Object.hasOwn(payload, 'job_workflow_ref'),
+              jobShaPresent: Object.hasOwn(payload, 'job_workflow_sha'),
+              jobRefMatchesCaller:
+                payload.job_workflow_ref === expected.workflowRef,
+              jobShaMatchesCaller:
+                payload.job_workflow_sha === expected.sourceCommit,
+              stageAdmitted: false,
+            };
+            console.log('NIBFIN_OIDC_OBSERVATION ' + JSON.stringify(result));
+          } catch {
+            console.error('NIBFIN_OIDC_OBSERVATION_FAILED');
+            process.exitCode = 1;
+          }
+          NODE
