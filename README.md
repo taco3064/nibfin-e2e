@@ -6,15 +6,16 @@ Nibfin Bootstrap or protected E2E is complete.
 
 ## Current behavior
 
-`splitLines(text)` splits a string at LF characters, preserves empty fields and
-standalone carriage returns, and rejects non-string input without coercion.
-CRLF input is not yet normalized. That improvement will be a separate Issue
-for Nibfin to implement through its protected delivery stages.
+`splitLines(text)` splits a string at LF or CRLF separators, including mixed
+input. It preserves leading, consecutive and trailing empty fields, Unicode
+content and line order. Empty input returns `['']`. Standalone carriage returns
+remain ordinary content. Non-string input is rejected without coercion.
 
 ```js
 import { splitLines } from './src/lines.mjs';
 
 splitLines('first\nsecond'); // ['first', 'second']
+splitLines('first\r\nsecond'); // ['first', 'second']
 ```
 
 ## Development
