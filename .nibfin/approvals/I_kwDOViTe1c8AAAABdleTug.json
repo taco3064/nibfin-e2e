@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "issue": {
+    "id": "I_kwDOViTe1c8AAAABdleTug",
+    "repository": "taco3064/nibfin-e2e",
+    "repositoryId": 1445256917,
+    "number": 17
+  },
+  "scope": {
+    "body": "Add `countNonEmptyLines(text)` to `src/lines.mjs`. Reuse `splitLines` to count lines whose contents are not empty. Whitespace-only lines count. Empty input, blank lines, and trailing separators do not add to the count.\n\nAdd tests for empty input, mixed LF and CRLF, whitespace-only lines, trailing separators, and non-string input. Preserve the existing `splitLines` behavior and run the repository's existing checks.\n\nUse this change to exercise protected delivery from a freshly installed Runner using the current pinned candidate versions. Verify the resulting Issue, Actions run, PR checks, merge, closure, and cleanup through the normal Nibfin workflow.\n",
+    "hash": "c3f8706669a60b1bb901ae060e2179e97822ac94c60d01fd4dd335788917bd41"
+  },
+  "prerequisites": [],
+  "operations": [
+    "shape",
+    "validate-shape",
+    "publish-shape",
+    "deliver",
+    "hooks",
+    "accept",
+    "commit-pr",
+    "review-pr",
+    "merge",
+    "close",
+    "wake"
+  ],
+  "roles": {
+    "author": 127829492,
+    "validator": 127829492,
+    "publisher": 127829492,
+    "writer": 127829492,
+    "acceptor": 127829492
+  },
+  "source": {
+    "repository": "taco3064/nibfin-core",
+    "commit": "a395d6fca3df66c2f52426df201f14554c079677",
+    "policyHash": "78485c805307561820120cb1991b055cd39e6e3d21b7e2cab79931ef49c6bf90",
+    "skillsHash": "401c919fe7ec36b4ec7f339530f260722fd887c54767d029c7742ca14ee9d2bf"
+  },
+  "validFrom": "2026-11-09T05:29:09.292Z",
+  "expiresAt": "2026-11-12T05:29:09.292Z"
+}
