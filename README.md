@@ -11,11 +11,18 @@ input. It preserves leading, consecutive and trailing empty fields, Unicode
 content and line order. Empty input returns `['']`. Standalone carriage returns
 remain ordinary content. Non-string input is rejected without coercion.
 
+`countNonEmptyLines(text)` counts the nonempty fields returned by `splitLines`.
+Whitespace-only fields and standalone carriage returns count as content. Empty
+input, blank fields and trailing separators add nothing to the count. It rejects
+non-string input without coercion.
+
 ```js
-import { splitLines } from './src/lines.mjs';
+import { countNonEmptyLines, splitLines } from './src/lines.mjs';
 
 splitLines('first\nsecond'); // ['first', 'second']
 splitLines('first\r\nsecond'); // ['first', 'second']
+countNonEmptyLines('\nfirst\r\n\nsecond\n'); // 2
+countNonEmptyLines(' \n\t\r\n'); // 2
 ```
 
 ## Development
