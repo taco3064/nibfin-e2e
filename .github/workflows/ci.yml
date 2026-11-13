@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify tracked sources
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          git diff --check "$BASE" HEAD
+          git ls-files -z -- '*.mjs' '*.cjs' '*.js' |
+            xargs -0 -r -n 1 node --check
+          if [[ -f package.json ]]; then
+            npm ci --ignore-scripts
+            npm run verify --if-present
+          fi
