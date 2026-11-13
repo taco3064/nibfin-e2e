@@ -1,0 +1,13 @@
+{
+  "name": "nibfin-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "e2e": "node e2e/cli.mjs",
+    "e2e:group": "node e2e/cli.mjs --group",
+    "test": "node --test e2e/test/*.test.mjs",
+    "verify": "node e2e/verify.mjs"
+  }
+}
