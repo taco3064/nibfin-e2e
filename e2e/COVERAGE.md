@@ -1,8 +1,9 @@
 # Behavior coverage library
 
 `coverage-catalog.mjs` maintains intended behaviors for current main of Core,
-Action and CLI. Its initial mappings are empty because no production scenarios
-are registered. Extend entries with `{ id, product, category, scenarioIds }`.
+Action and CLI. Its production mappings remain empty. The registered Issue-wake
+and Action contract fixtures do not establish live behavior coverage.
+Extend entries with `{ id, product, category, scenarioIds }`.
 Products are exactly `Core`, `Action`, `CLI`; IDs and categories use lowercase
 identifier segments separated by dots or hyphens. Unregistered mappings are
 allowed and remain unverified. Duplicate behavior IDs or mappings are errors.
@@ -84,7 +85,9 @@ counts, scenario rows and mapped evidence. `complete` means a nonempty catalog
 with all behaviors passing and no runner errors; it is not live certification.
 `productionPassing` excludes local-test and unknown provenance, and requires an
 explicit environment. It is still only caller-supplied observed passing coverage,
-not proof of production delivery. Callers must label synthetic evidence with local-test provenance. No synthetic fixtures populate the maintained production registry.
+not proof of production delivery. Callers must label synthetic evidence with
+local-test provenance. Registered `wake.*.fixture` scenarios remain unmapped
+from the production catalog; their success cannot certify a live route.
 
 Run `npm --ignore-scripts run verify` for syntax, complete-file source limits
 and local unit tests. These checks establish local implementation evidence only.

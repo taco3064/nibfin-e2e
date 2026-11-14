@@ -22,10 +22,10 @@ function calculate(results = [], extra = {}, options = {}) {
 const run = value => value.environments[0];
 const url = 'https://github.com/owner/repo/actions/runs/123';
 
-test('maintained catalog is honest without registered or live scenarios', () => {
+test('maintained catalog does not equate registered fixtures with live coverage', () => {
   const value = calculateCoverage();
   assert.equal(value.catalogued, 3);
-  assert.equal(value.registeredScenarios, 0);
+  assert.equal(value.registeredScenarios, 2);
   assert.equal(run(value).totals.passed, 0);
   assert.equal(run(value).complete, false);
   assert.equal(run(value).environment, null);
