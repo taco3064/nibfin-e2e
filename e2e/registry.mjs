@@ -33,6 +33,10 @@ const isolation = (id, group, title, module) => ({
 });
 export const scenarios = Object.freeze([
   ...wake,
+  isolation('concurrency.fixture', 'concurrency-contract',
+    'Synthetic concurrency and recovery contracts', 'concurrency-local'),
+  isolation('concurrency.live', 'concurrency',
+    'Protected concurrency and interrupted Runner observations', 'concurrency-live'),
   {
     id: 'dependency.live', group: 'dependency',
     title: 'Native dependency admission and protected downstream continuation',
