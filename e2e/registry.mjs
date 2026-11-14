@@ -22,8 +22,21 @@ export function select(entries, groups = []) {
   return registry.filter(entry => !groups.length || groups.includes(entry.group));
 }
 // These are credential-free contract fixtures, not live-provider verification.
-export const scenarios = Object.freeze(['shared-issue', 'action'].map(leg => ({
+const wake = ['shared-issue', 'action'].map(leg => ({
   id: `wake.${leg}.fixture`, group: 'wake-contract',
   title: `${leg} controlled correlation contract (no live verification)`,
   timeoutMs: 5000, module: new URL(`./scenarios/${leg}.mjs`, import.meta.url).href,
-})));
+}));
+const isolation = (id, group, title, module) => ({
+  id, group, title, timeoutMs: 30000,
+  module: new URL(`./scenarios/${module}.mjs`, import.meta.url).href,
+});
+export const scenarios = Object.freeze([
+  ...wake,
+  isolation('isolation.local', 'isolation.local',
+    'Synthetic Runner binding and isolation policy contracts', 'isolation-local'),
+  ...['host-path', 'credential', 'role-write', 'network'].map(boundary =>
+    isolation(`isolation.host.${boundary}`, 'isolation.host',
+      `Authorized host ${boundary} rejection (requires protected probes)`,
+      'isolation-host')),
+]);
