@@ -4,10 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { result } from './schema.mjs';
 
-function executeWorker(scenario, tempDir, diagnostic) {
+function executeWorker(scenario, tempDir, diagnostic, sources) {
   return new Promise(resolve => {
     const worker = new Worker(new URL('./worker.mjs', import.meta.url), {
-      workerData: { module: scenario.module, tempDir },
+      workerData: { module: scenario.module, tempDir, sources },
       stdout: true, stderr: true, execArgv: [],
     });
     let settled = false;
@@ -49,7 +49,7 @@ export async function execute(scenario, options = {}) {
   let outcome;
   try {
     tempDir = await mkdtemp(join(options.tempRoot ?? tmpdir(), 'nibfin-e2e-'));
-    outcome = await executeWorker(scenario, tempDir, options.diagnostic);
+    outcome = await executeWorker(scenario, tempDir, options.diagnostic, options.sources);
   } catch (error) {
     outcome = result(scenario, 'failing', 'INFRASTRUCTURE_ERROR', String(error));
   }

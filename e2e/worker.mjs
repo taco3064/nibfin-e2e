@@ -5,7 +5,9 @@ async function execute() {
   if (typeof scenario.run !== 'function' || typeof scenario.verify !== 'function') {
     return ['unverified', 'UNIMPLEMENTED', 'Execution and assertions are required'];
   }
-  const context = Object.freeze({ tempDir: workerData.tempDir });
+  const context = Object.freeze({
+    tempDir: workerData.tempDir, sources: workerData.sources,
+  });
   if (scenario.prerequisite !== undefined) {
     if (typeof scenario.prerequisite !== 'function') {
       throw new Error('prerequisite must be a function');
