@@ -13,8 +13,7 @@ function withoutVersion(value, lock) {
 }
 
 // This function is called only by the retained source owner after mandatory E2E.
-// The returned value is deliberately empty: staged paths never form a reusable
-// serialized readiness result, and all outputs remain inside the owned root.
+// Staged paths remain private to the source owner and its protected consumer.
 export async function prepareRelease(sources, version, context) {
   const bounded = { ...context, command: context.command ?? sourceCommand };
   const git = async (source, args) => (await bounded.command('git', args, {
@@ -48,4 +47,5 @@ export async function prepareRelease(sources, version, context) {
       throw new Error('RELEASE: Action metadata changed beyond version');
     }
   }
+  return staged;
 }
