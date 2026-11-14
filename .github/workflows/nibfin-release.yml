@@ -1,0 +1,43 @@
+name: Nibfin release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Common semantic version for Core, Action and CLI
+        type: string
+        required: true
+
+permissions: {}
+concurrency:
+  group: nibfin-release
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    if: >-
+      github.repository == 'taco3064/nibfin-e2e' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' && github.ref_protected
+    environment: nibfin-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Run the production release gate
+        env:
+          NIBFIN_RELEASE_VERSION: ${{ inputs.version }}
+          NIBFIN_RELEASE_CONTEXT: ${{ github.workflow_ref }}
+          NIBFIN_RELEASE_REF_PROTECTED: ${{ github.ref_protected }}
+          GH_TOKEN: ${{ github.token }}
+        run: node e2e/release-entry.mjs
