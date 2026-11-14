@@ -1,7 +1,7 @@
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import { scenarios } from './registry.mjs';
-import { run } from './runner.mjs';
+import { run, runPrepared } from './runner.mjs';
 import { exitCode, report } from './schema.mjs';
 
 export async function command(args, entries = scenarios) {
@@ -14,7 +14,8 @@ export async function command(args, entries = scenarios) {
       }
       groups.push(args[++index]);
     }
-    return await run(entries, groups, {
+    const execute = entries === scenarios ? runPrepared : run;
+    return await execute(entries, groups, {
       diagnostic: chunk => process.stderr.write(chunk),
     });
   } catch (error) {

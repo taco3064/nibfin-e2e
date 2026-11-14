@@ -62,3 +62,61 @@ skips remain explicit and convey no verification. Blocked and unverified results
 are also non-passing, even when other scenarios pass. Results contain no live
 coverage claims. Full Git-dependent PR checks and independent acceptance belong
 to the existing protected process; local verification cannot substitute for them.
+
+## Run-owned product sources
+
+`e2e/sources.mjs` exports `prepareSources()` and
+`withPreparedSources(async prepared => { ... })`. Preparation acquires the three
+public product repositories from their official `refs/heads/main` branches once.
+These are three independent branch observations. The frozen `prepared.sources`
+object contains `core`, `action` and `cli`, each with repository, URL, ref,
+observed commit, checkout directory and producer output. There is no revision
+configuration or fallback. A new preparation creates new checkouts.
+
+Core runs `node scripts/package-ci.mjs` with the acquired `SOURCE_COMMIT`; its
+output is the verified archive and producer pin in `distribution/`. Action runs
+`npm ci --ignore-scripts`, then `npm run build`, and uses its own metadata reader
+to locate the Node entry. CLI runs `go build -trimpath -o gh-nibfin .`, letting Go
+honor `go.mod`. Consumer Core declarations must match the produced repository,
+commit, archive and manifest identities. CLI's declared Action must also match.
+The adapter never edits those declarations or installs Core on a host.
+
+Use a retained set for both testing and later release preparation:
+
+```js
+import { withPreparedSources } from './e2e/sources.mjs';
+import { run } from './e2e/runner.mjs';
+
+await withPreparedSources(async prepared => {
+  const document = await run(entries, groups, { sources: prepared.sources });
+  // Later authorized release code consumes these same checkouts and outputs.
+  return document;
+});
+```
+
+Scenario workers receive `context.sources`; their temporary directory cleanup
+leaves these run-owned checkouts intact. `prepareSources()` callers instead own
+an explicit awaited `prepared.dispose()`. The callback helper disposes after
+success or failure. Cleanup failures reject and identify the retained directory;
+explicit disposal can be retried. Callers must await all uses before disposal.
+
+`runPrepared` owns preparation and cleanup for one scenario run, returning
+preparation/cleanup failures in the existing JSON `errors` array. The production
+CLI uses this entry for runnable registered scenarios. Empty selection and
+policy exclusions retain their existing behavior and do not fetch sources.
+The injected CLI registry remains a local framework-test seam.
+
+Preparation child processes run outside scenario workers, in private POSIX
+process groups with finite time and output limits. They are awaited before
+cleanup; timeout terminates the group. This implementation requires POSIX
+process-group support and rejects Windows preparation explicitly. It requires
+Git, the producer-declared Node/npm and Go tools, and permitted dependency
+access. It inherits no Git credentials or Git configuration. All temporary
+homes, build caches and outputs belong to the disposable run directory.
+
+Tests inject checkout/preparation functions or command execution through the
+library options; production URLs and branch selection have no user overrides.
+These credential-free tests include producer failure, pin incompatibility,
+upstream movement, source lifetime and real local process cleanup. They do not
+establish live three-product compatibility, protected execution or release
+coverage. The production scenario registry remains empty.
