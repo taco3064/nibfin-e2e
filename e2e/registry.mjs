@@ -21,5 +21,9 @@ export function select(entries, groups = []) {
   }
   return registry.filter(entry => !groups.length || groups.includes(entry.group));
 }
-// Live scenarios are deliberately absent until implemented by their owning Issues.
-export const scenarios = Object.freeze([]);
+// These are credential-free contract fixtures, not live-provider verification.
+export const scenarios = Object.freeze(['shared-issue', 'action'].map(leg => ({
+  id: `wake.${leg}.fixture`, group: 'wake-contract',
+  title: `${leg} controlled correlation contract (no live verification)`,
+  timeoutMs: 5000, module: new URL(`./scenarios/${leg}.mjs`, import.meta.url).href,
+})));

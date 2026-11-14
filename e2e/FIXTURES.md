@@ -31,7 +31,8 @@ is not fixture authorization. The runner supplies all of the following:
   exactly `true` only for an explicitly authorized repository, owner, actor and
   operation. Target selection cannot enlarge this grant. Operation names are
   `create-issue`, `create-branch`, `create-pull`, `close-issue`, `close-pull`,
-  `delete-branch` and read-only `reconcile`.
+  `delete-branch`, `edit-issue-body`, `add-issue-label`, `remove-issue-label`
+  and read-only `reconcile`.
 - A protected `context.idle(inventory)` capability returning exactly `true` only
   after complete, fresh evidence that no running work uses these resources.
   The runner must hold exclusion against new work throughout teardown. Missing,
@@ -50,6 +51,7 @@ Construct `fixtureLifecycle({inventory, provider, context, bounds?})`. Operation
 | `setup('issue')` | Create the controlled Issue | Authorized exact target/actor |
 | `setup('branch', {sha})` | Create the uniquely owned ref | Absent ref, existing base commit |
 | `setup('pull', {base})` | Create a PR from the owned branch | Owned head, bounded generated diff |
+| `mutateIssue(operation, input, target?)` | Edit body or add/remove one label | Exact owned open Issue, operation authorization |
 | `reconcile()` | Read and classify unresolved effects | Exact native identity or protected receipt |
 | `teardown()` | Close owned PR/Issue; delete unchanged ref | Authorized, fresh native state, idle work |
 
@@ -105,3 +107,15 @@ settled; the library never guesses that a lock is stale. Retain unresolved ledge
 and minimum recovery evidence. Once all resources are cleaned or explicitly
 retained and recovery is no longer needed, the runner owns retiring the ledger.
 This library never erases recovery records as part of worker cleanup.
+
+Issue mutation input is a body string (up to 60,000 characters) or one label
+name (up to 50 characters). Body editing preserves the ownership marker; label
+transitions preserve unrelated labels. Optional `target` is the expected
+`{repository, number}` and must match the durable owned identity before writing.
+An independent native read confirms the requested effect. A persisted mutation
+intent blocks setup, further mutations and teardown until `reconcile()` confirms
+the exact effect and protected `idle` confirms that prior requests and users have
+settled. A different body or incomplete label observation remains unresolved;
+the library cannot abandon or retry an unknown write. Retain that recovery ledger.
+
+See [WAKE.md](WAKE.md) for protected live composition and credential-free scenarios.

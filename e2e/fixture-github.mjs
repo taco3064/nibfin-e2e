@@ -101,6 +101,17 @@ export function fixtureGithub({ token, fetcher = fetch }) {
         }
         return { ...result.data, merged: linked.some(pull => !!pull.merged_at) };
       },
+      async mutateIssue(record) {
+        const { kind, body, label } = record.mutation;
+        const path = `${root}/issues/${record.native.number}`;
+        if (kind === 'edit-issue-body') {
+          await request('PATCH', path, { body });
+        } else if (kind === 'add-issue-label') {
+          await request('POST', `${path}/labels`, { labels: [label] });
+        } else if (kind === 'remove-issue-label') {
+          await request('DELETE', `${path}/labels/${encodeURIComponent(label)}`);
+        } else throw new Error('Unsupported Issue mutation');
+      },
       async cleanup(record) {
         if (record.kind === 'branch') {
           await request('DELETE', `${root}/git/refs/heads/${definition.name}`);

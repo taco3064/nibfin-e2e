@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { issueMutation, mutationObserved } from './fixture-issue.mjs';
 import { operations, setupPayload } from './fixture-definition.mjs';
 import { fixtureBudget } from './fixture-budget.mjs';
 import { FixtureError, fixtureErrorCode } from './fixture-errors.mjs';
@@ -32,7 +33,7 @@ function nativeIdentity(record, native) {
     { id: native.id, number: native.number };
 }
 const unresolved = state => state.resources.some(record =>
-  ['intent', 'unknown', 'cleanup-intent'].includes(record.state));
+  record.mutation || ['intent', 'unknown', 'cleanup-intent'].includes(record.state));
 
 // context is an in-process protected-runner capability, never fixture input.
 // authorize, idle and receipt must consult protected/native evidence. A plain
@@ -128,9 +129,50 @@ export function fixtureLifecycle({ inventory, provider, context, bounds = {} }) 
         await save();
       });
     },
+    mutateIssue(operation, input, target) {
+      return execute(async ({ state, save, budget, api, authorize, readOwned }) => {
+        budget.operation();
+        if (unresolved(state)) throw new FixtureError('FIXTURE_RECONCILIATION_REQUIRED');
+        const record = state.resources.find(item => item.kind === 'issue');
+        if (!record || record.state !== 'owned') {
+          throw new FixtureError('FIXTURE_OWNED_ISSUE_REQUIRED');
+        }
+        if (target && (target.repository !== state.definition.repository ||
+            target.number !== record.native.number)) {
+          throw new FixtureError('FIXTURE_IDENTITY_MISMATCH');
+        }
+        const mutation = issueMutation(state.definition, operation, input);
+        await authorize(operation);
+        const before = await readOwned(record);
+        if (before.absent || before.state !== 'open') {
+          throw new FixtureError('FIXTURE_OWNED_RESOURCE_MISSING');
+        }
+        record.mutation = { ...mutation, operation: randomUUID() };
+        await save();
+        // Persist before writing. Failure or crash forbids replay until read-back.
+        await api.mutateIssue(clone(record));
+        if (!mutationObserved(await readOwned(record), mutation)) {
+          throw new FixtureError('FIXTURE_MUTATION_EFFECT_UNKNOWN');
+        }
+        delete record.mutation;
+        await save();
+      });
+    },
     reconcile() {
       return execute(async ({ state, save, budget, api, call, authorize, readOwned }) => {
         for (const record of state.resources) {
+          if (record.mutation) {
+            budget.operation();
+            await authorize('reconcile');
+            if (await call(() => context.idle(clone(state))) !== true) {
+              throw new FixtureError('FIXTURE_USAGE_UNRESOLVED');
+            }
+            if (!mutationObserved(await readOwned(record), record.mutation)) {
+              throw new FixtureError('FIXTURE_MUTATION_EFFECT_UNKNOWN');
+            }
+            delete record.mutation;
+            await save();
+          }
           if (!['intent', 'unknown', 'cleanup-intent'].includes(record.state)) continue;
           budget.operation();
           await authorize('reconcile');
