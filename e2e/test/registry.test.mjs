@@ -15,6 +15,7 @@ const groups = {
   dependency: ['dependency.live'],
   'concurrency-contract': ['concurrency.fixture'],
   concurrency: ['concurrency.live'],
+  pause: ['pause.live', 'pause.recovery.fixture'],
 };
 
 test('maintained registry preserves each scenario and group selection', () => {

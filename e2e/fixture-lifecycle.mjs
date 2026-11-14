@@ -35,6 +35,7 @@ function nativeIdentity(record, native) {
     { id: native.id, number: native.number };
 }
 const unresolved = state => state.dependencyExecution?.state === 'intent' ||
+  state.pauseExecution?.state === 'intent' ||
   state.resources.some(record =>
   record.mutation || ['intent', 'unknown', 'cleanup-intent'].includes(record.state));
 
