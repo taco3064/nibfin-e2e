@@ -69,7 +69,7 @@ export async function prepareSources(options = {}) {
         throw new Error('RELEASE: stale or disposed source ownership');
       }
       releaseStarted = true;
-      await prepareRelease(sources, version, context);
+      return prepareRelease(sources, version, context);
     },
     async dispose() {
       if (disposed) return;

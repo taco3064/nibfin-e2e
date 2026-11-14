@@ -74,13 +74,18 @@ function buildGate(capabilities, dependencies, mode) {
           JSON.stringify(sources)) throw new Error('SOURCES: identities changed');
       validateRemoteMains(await observeMains(), sources);
       validateConflicts(await observeConflicts(version), version);
-      await prepared.preflightRelease(version);
+      const staged = await prepared.preflightRelease(version);
       if (prepared.disposed || JSON.stringify(sourceIdentities(prepared.sources)) !==
           JSON.stringify(sources)) throw new Error('SOURCES: identities changed');
       validateRemoteMains(await observeMains(), sources);
       validateConflicts(await observeConflicts(version), version);
       handoff = { schemaVersion: 1, mode, version, invocation, sources,
         mandatory: { outcome: 'passed', scenarioIds: ids }, resources: 'disposed' };
+      if (capabilities.consumeRelease) {
+        await capabilities.consumeRelease({
+          handoff: structuredClone(handoff), prepared, staged,
+        });
+      }
     } catch (error) {
       unsettled ||= sourceTerminationUnknown(error);
       reason = String(error) || 'Unknown release preflight failure';
