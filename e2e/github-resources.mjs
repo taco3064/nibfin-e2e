@@ -8,6 +8,10 @@ export function resource(target) {
   if (['issue', 'pull'].includes(kind) && integer(number)) {
     return { url: `${base}/${kind === 'issue' ? 'issues' : 'pulls'}/${number}` };
   }
+  if (['blocked_by', 'blocking'].includes(kind) && integer(number)) {
+    return { url: `${base}/issues/${number}/dependencies/${kind}?per_page=100`,
+      collection: 'array' };
+  }
   if (kind === 'run' && integer(runId)) {
     return { url: `${base}/actions/runs/${runId}` };
   }
@@ -31,6 +35,10 @@ export function matches(item, target) {
     return item.number === target.number &&
       item.url === `${base}/${path}/${target.number}` &&
       (target.kind !== 'issue' || !item.pull_request);
+  }
+  if (['blocked_by', 'blocking'].includes(target.kind)) {
+    return integer(item.number) && !item.pull_request &&
+      item.url === `${base}/issues/${item.number}`;
   }
   if (target.kind === 'run') {
     return item.id === target.runId &&

@@ -34,6 +34,12 @@ const isolation = (id, group, title, module) => ({
 export const scenarios = Object.freeze([
   ...wake,
   {
+    id: 'dependency.live', group: 'dependency',
+    title: 'Native dependency admission and protected downstream continuation',
+    timeoutMs: 5000,
+    module: new URL('./scenarios/dependency.mjs', import.meta.url).href,
+  },
+  {
     id: 'delivery.live', group: 'delivery',
     title: 'Fresh protected Issue-to-closure delivery', timeoutMs: 5000,
     module: new URL('./scenarios/delivery.mjs', import.meta.url).href,

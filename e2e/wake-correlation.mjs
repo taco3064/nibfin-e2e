@@ -21,12 +21,12 @@ function validExpected(expected, leg) {
     ['invocation', 'stage', 'code'].every(key => text(expected[key])) &&
     decisions.includes(expected.status);
 }
-function observed(observation, target) {
+export function observed(observation, target) {
   return observation?.complete === true &&
     same(observation.target, target, Object.keys(target)) &&
     matches(observation.data, target);
 }
-function nativeExecution(evidence, expected) {
+export function nativeExecution(evidence, expected, completed = true) {
   const { runRepository: repository, runId, attempt, jobId } = expected;
   if (!observed(evidence.run, { kind: 'run', repository, runId, attempt })) {
     return false;
@@ -39,6 +39,8 @@ function nativeExecution(evidence, expected) {
       !jobs.data.every(job => matches(job, target)) ||
       new Set(jobs.data.map(job => job.id)).size !== jobs.data.length) return false;
   const job = jobs.data.find(job => job.id === jobId);
+  if (!completed) return ['in_progress', 'completed'].includes(job?.status) &&
+    ['in_progress', 'completed'].includes(evidence.run.data.status);
   return job?.status === 'completed' && typeof job.conclusion === 'string' &&
     evidence.run.data.status === 'completed' &&
     typeof evidence.run.data.conclusion === 'string';
