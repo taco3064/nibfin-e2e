@@ -9,6 +9,9 @@ export const sourceRepositories = Object.freeze([
 
 // No inherited Git configuration, credential helper, hooks or interactive auth.
 export function sourceEnvironment(root) {
+  // Writer commands have a trusted loopback proxy. Preserve that route when
+  // clearing inherited Git configuration and credentials for source acquisition.
+  const writerProxy = 'http://127.0.0.1:3128';
   return {
     PATH: process.env.PATH ?? '/usr/bin:/bin', LANG: 'C.UTF-8',
     HOME: root, TMPDIR: root, TMP: root, TEMP: root,
@@ -17,6 +20,7 @@ export function sourceEnvironment(root) {
     GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'core.hooksPath',
     GIT_CONFIG_VALUE_0: '/dev/null', GIT_CONFIG_KEY_1: 'core.fsmonitor',
     GIT_CONFIG_VALUE_1: 'false',
+    ...(process.env.HTTPS_PROXY === writerProxy ? { HTTPS_PROXY: writerProxy } : {}),
   };
 }
 
