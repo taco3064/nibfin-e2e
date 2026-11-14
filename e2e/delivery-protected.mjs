@@ -8,12 +8,13 @@ import { validateDelivery } from './delivery-evidence.mjs';
 import { verifyDeliveryNative } from './delivery-native.mjs';
 
 /**
+ * Low-level composition for protected scenarios that acquire sources once.
  * @param {import('./delivery-contract.mjs').DeliveryRequest} request
  * @param {import('./delivery-contract.mjs').DeliveryCaller} caller
  * @param {object} bounds
  * @returns {Promise<object>} Bounded public result; never raw receipts or errors.
  */
-async function observeDelivery(request, caller, bounds = {}) {
+export async function observeDelivery(request, caller, bounds = {}) {
   const mode = caller?.mode;
   const output = (state, code) => ({ state, code,
     mode: mode === 'fixture' ? 'fixture' : 'live', liveVerified: false });

@@ -24,7 +24,9 @@ export function fixtureGithub({ token, fetcher = fetch }) {
     async function collection(path) {
       const items = [];
       for (let page = 1; page <= 20; page++) {
-        const result = await request('GET', `${root}/${path}&per_page=100&page=${page}`);
+        const separator = path.includes('?') ? '&' : '?';
+        const result = await request('GET',
+          `${root}/${path}${separator}per_page=100&page=${page}`);
         if (!Array.isArray(result.data)) throw new Error('Incomplete collection');
         items.push(...result.data);
         if (!result.link?.includes('rel="next"')) return items;
@@ -101,10 +103,17 @@ export function fixtureGithub({ token, fetcher = fetch }) {
         }
         return { ...result.data, merged: linked.some(pull => !!pull.merged_at) };
       },
+      async dependencies(record) {
+        return collection(`issues/${record.native.number}/` +
+          'dependencies/blocked_by');
+      },
       async mutateIssue(record) {
         const { kind, body, label } = record.mutation;
         const path = `${root}/issues/${record.native.number}`;
-        if (kind === 'edit-issue-body') {
+        if (kind === 'add-blocked-by') {
+          await request('POST', `${path}/dependencies/blocked_by`,
+            { issue_id: record.mutation.upstream.id });
+        } else if (kind === 'edit-issue-body') {
           await request('PATCH', path, { body });
         } else if (kind === 'add-issue-label') {
           await request('POST', `${path}/labels`, { labels: [label] });

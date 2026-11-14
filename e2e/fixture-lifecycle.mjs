@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { addOwnedDependency } from './fixture-dependency.mjs';
+import { matches } from './github-resources.mjs';
 import { issueMutation, mutationObserved } from './fixture-issue.mjs';
 import { operations, setupPayload } from './fixture-definition.mjs';
 import { fixtureBudget } from './fixture-budget.mjs';
@@ -32,7 +34,8 @@ function nativeIdentity(record, native) {
   return record.kind === 'branch' ? { ref: native.ref, sha: native.object.sha } :
     { id: native.id, number: native.number };
 }
-const unresolved = state => state.resources.some(record =>
+const unresolved = state => state.dependencyExecution?.state === 'intent' ||
+  state.resources.some(record =>
   record.mutation || ['intent', 'unknown', 'cleanup-intent'].includes(record.state));
 
 // context is an in-process protected-runner capability, never fixture input.
@@ -65,6 +68,16 @@ export function fixtureLifecycle({ inventory, provider, context, bounds = {} }) 
             !sameNative(record, native)) {
           throw new FixtureError('FIXTURE_IDENTITY_MISMATCH');
         }
+        if (record.mutation?.kind === 'add-blocked-by') {
+          const dependencies = await api.dependencies(clone(record));
+          const target = { kind: 'blocked_by', repository: definition.repository };
+          if (!Array.isArray(dependencies) ||
+              !dependencies.every(item => matches(item, target)) ||
+              new Set(dependencies.map(item => item.id)).size !== dependencies.length) {
+            throw new FixtureError('FIXTURE_DEPENDENCY_READ_UNKNOWN');
+          }
+          return { ...native, dependencies };
+        }
         return native;
       };
       const tools = { state, save, budget, api, call, authorize, readOwned };
@@ -85,6 +98,13 @@ export function fixtureLifecycle({ inventory, provider, context, bounds = {} }) 
     });
   }
   return {
+    addDependency(upstream) {
+      if (upstream?.path === inventory.path) {
+        throw new FixtureError('FIXTURE_DISTINCT_ISSUES_REQUIRED');
+      }
+      return upstream.exclusive(peer => execute(tools =>
+        addOwnedDependency(tools, peer, { identity, unresolved, clone })));
+    },
     setup(kind, input) {
       return execute(async ({ state, save, budget, api, authorize, readOwned }) => {
         budget.operation();
@@ -169,6 +189,9 @@ export function fixtureLifecycle({ inventory, provider, context, bounds = {} }) 
             }
             if (!mutationObserved(await readOwned(record), record.mutation)) {
               throw new FixtureError('FIXTURE_MUTATION_EFFECT_UNKNOWN');
+            }
+            if (record.mutation.kind === 'add-blocked-by') {
+              record.dependency = clone(record.mutation.upstream);
             }
             delete record.mutation;
             await save();

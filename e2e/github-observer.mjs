@@ -104,9 +104,12 @@ export function githubObserver(provider, options = {}) {
           if (!matches(data, target)) return unresolved('identity-mismatch');
           return { target, complete: true, data };
         }
-        const values = data?.[descriptor.collection];
-        if (!Array.isArray(values) || !Number.isSafeInteger(data.total_count) ||
-            data.total_count < 0) return unresolved('malformed');
+        const array = descriptor.collection === 'array';
+        const values = array ? data : data?.[descriptor.collection];
+        if (!Array.isArray(values) || (!array &&
+            (!Number.isSafeInteger(data.total_count) || data.total_count < 0))) {
+          return unresolved('malformed');
+        }
         if (total !== undefined && total !== data.total_count) {
           return unresolved('collection-changed');
         }
@@ -121,7 +124,7 @@ export function githubObserver(provider, options = {}) {
         try { url = nextPage(response.headers, url); }
         catch { return unresolved('invalid-pagination'); }
         if (!url) {
-          if (items.length !== total) return unresolved('truncated');
+          if (!array && items.length !== total) return unresolved('truncated');
           return { target, complete: true, data: items };
         }
       }

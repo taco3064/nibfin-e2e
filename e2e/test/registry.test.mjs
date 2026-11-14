@@ -11,6 +11,7 @@ const groups = {
   ],
   runner: ['cli.runner-contract'],
   delivery: ['delivery.live'],
+  dependency: ['dependency.live'],
 };
 
 test('maintained registry preserves each scenario and group selection', () => {

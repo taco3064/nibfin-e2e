@@ -14,6 +14,11 @@ export function issueMutation(definition, kind, input) {
 
 export function mutationObserved(native, mutation) {
   if (!native || native.absent || native.state !== 'open') return false;
+  if (mutation.kind === 'add-blocked-by') {
+    return Array.isArray(native.dependencies) &&
+      native.dependencies.some(item => item.id === mutation.upstream.id &&
+        item.number === mutation.upstream.number);
+  }
   if (mutation.kind === 'edit-issue-body') return native.body === mutation.body;
   if (!Array.isArray(native.labels) || native.labels.some(label =>
     typeof label?.name !== 'string')) return false;
