@@ -5,6 +5,8 @@ import {
   acquireSource, sourceEnvironment, sourceRepositories,
 } from './source-checkout.mjs';
 import { prepareProducer, verifyCompatibility } from './source-producers.mjs';
+import { sourceTerminationUnknown } from './source-process.mjs';
+import { prepareRelease } from './release-preflight.mjs';
 
 // A set is returned only after every operation and compatibility check succeeds.
 // Its owner keeps it across scenarios and release preparation, then disposes it.
@@ -44,6 +46,11 @@ export async function prepareSources(options = {}) {
       sources[id] = Object.freeze({ ...source, output: Object.freeze(outputs[id]) });
     }
   } catch (error) {
+    if (sourceTerminationUnknown(error)) {
+      throw new Error(`SOURCE_TERMINATION_UNKNOWN: retained ${root}`, {
+        cause: error,
+      });
+    }
     try { await remove(root, { recursive: true, force: true }); }
     catch (cleanup) {
       throw new AggregateError([error, cleanup],
@@ -52,10 +59,18 @@ export async function prepareSources(options = {}) {
     throw new Error(`SOURCE_PREPARATION_ERROR: ${error}`, { cause: error });
   }
   let disposed = false;
+  let releaseStarted = false;
   let disposing;
   return Object.freeze({
     root, sources: Object.freeze(sources),
     get disposed() { return disposed; },
+    async preflightRelease(version) {
+      if (disposed || disposing || releaseStarted) {
+        throw new Error('RELEASE: stale or disposed source ownership');
+      }
+      releaseStarted = true;
+      await prepareRelease(sources, version, context);
+    },
     async dispose() {
       if (disposed) return;
       disposing ??= Promise.resolve().then(() =>
@@ -79,6 +94,7 @@ export async function withPreparedSources(use, options = {}) {
   let failed = false;
   try { value = await use(prepared); }
   catch (error) { failure = error; failed = true; }
+  if (failed && sourceTerminationUnknown(failure)) throw failure;
   try { await prepared.dispose(); }
   catch (error) {
     if (failed) throw new AggregateError([failure, error], `${failure}; ${error}`);

@@ -39,6 +39,9 @@ export async function acquireSource(source, checkout, context) {
   ]);
   const commit = observed.stdout.trim();
   if (!/^[a-f0-9]{40}$/.test(commit)) throw new Error('INVALID_CHECKOUT_IDENTITY');
-  await invoke(['-C', checkout, 'checkout', '--detach', commit]);
+  // Core's release producer requires local main. Bind it to the acquired
+  // commit now; this never fetches or substitutes a later remote main.
+  const branch = source.id === 'core' ? ['-B', 'main'] : ['--detach'];
+  await invoke(['-C', checkout, 'checkout', ...branch, commit]);
   return commit;
 }

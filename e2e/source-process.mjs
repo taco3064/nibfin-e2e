@@ -1,5 +1,13 @@
 import { spawn } from 'node:child_process';
 
+// Cleanup callers must preserve resources whenever process-group termination
+// could not be confirmed, including errors wrapped by preparation boundaries.
+export function sourceTerminationUnknown(error) {
+  return error?.terminationUnknown === true ||
+    (error?.cause !== undefined && sourceTerminationUnknown(error.cause)) ||
+    (Array.isArray(error?.errors) && error.errors.some(sourceTerminationUnknown));
+}
+
 // Preparation runs outside scenario workers. A private process group bounds the
 // producer and its children; worker termination is never used as process cleanup.
 export function sourceCommand(file, args, options = {}) {
@@ -16,10 +24,13 @@ export function sourceCommand(file, args, options = {}) {
     const output = { stdout: [], stderr: [] };
     let size = 0;
     let failure;
+    let terminationFailure;
     const stop = () => {
       if (!child.pid) return;
       try { process.kill(-child.pid, 'SIGKILL'); }
-      catch (error) { if (error.code !== 'ESRCH') failure ??= error; }
+      catch (error) {
+        if (error.code !== 'ESRCH') terminationFailure ??= error;
+      }
     };
     const cancel = () => {
       failure ??= new Error('SOURCE_COMMAND_ABORTED');
@@ -49,6 +60,14 @@ export function sourceCommand(file, args, options = {}) {
       abort?.removeEventListener('abort', cancel);
       const stdout = Buffer.concat(output.stdout).toString();
       const stderr = Buffer.concat(output.stderr).toString();
+      if (terminationFailure) {
+        const error = new Error('SOURCE_TERMINATION_UNKNOWN', {
+          cause: new AggregateError([failure, terminationFailure].filter(Boolean)),
+        });
+        error.terminationUnknown = true;
+        reject(error);
+        return;
+      }
       if (failure || code !== 0 || signal) {
         const error = failure ?? new Error(
           `SOURCE_COMMAND_FAILED: ${file} (${signal ?? code}); ${stderr}`,

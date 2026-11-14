@@ -1,4 +1,4 @@
-import { lstat, readFile, realpath } from 'node:fs/promises';
+import { lstat, readFile, realpath, rename } from 'node:fs/promises';
 import { isAbsolute, join, relative } from 'node:path';
 import { sourceCommand } from './source-process.mjs';
 import { buildRunnerContract } from './runner-build.mjs';
@@ -62,9 +62,14 @@ export async function prepareProducer(source, context) {
       throw new Error('UNSUPPORTED_CORE_PACKAGE');
     }
     matchingPin(result, pin);
+    // The release producer requires a clean worktree, including untracked files.
+    // Keep ordinary test outputs under the same owner, outside the Core checkout.
+    const output = join(context.root, 'core-test-output');
+    await producerFile(checkout, 'distribution/nibfin-core.tar.gz');
+    await rename(join(checkout, 'distribution'), output);
     return {
-      archive: await producerFile(checkout, 'distribution/nibfin-core.tar.gz'),
-      pinPath, pin: Object.freeze(pin),
+      archive: await producerFile(output, 'nibfin-core.tar.gz'),
+      pinPath: await producerFile(output, 'source-pin.json'), pin: Object.freeze(pin),
     };
   }
   if (id === 'action') {

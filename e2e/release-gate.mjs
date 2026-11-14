@@ -3,9 +3,10 @@ import { run } from './runner.mjs';
 import { scenarios, register } from './registry.mjs';
 import { catalog, validateCatalog, products } from './coverage-catalog.mjs';
 import { calculateCoverage } from './coverage.mjs';
+import { sourceTerminationUnknown } from './source-process.mjs';
 import {
   validateVersion, validateInvocation, validateConflicts, sourceIdentities,
-  validateHandoff,
+  validateHandoff, validateRemoteMains,
 } from './release-contract.mjs';
 
 function requiredSuite(requirements, entries) {
@@ -29,8 +30,11 @@ function requiredSuite(requirements, entries) {
 
 function buildGate(capabilities, dependencies, mode) {
   // Composition is privileged: none of these functions come from invocation input.
-  const { verifyInvocation, observeConflicts, expected } = capabilities ?? {};
+  const {
+    verifyInvocation, observeConflicts, observeMains, expected,
+  } = capabilities ?? {};
   if (typeof verifyInvocation !== 'function' || typeof observeConflicts !== 'function' ||
+      typeof observeMains !== 'function' ||
       !expected || ['repository', 'workflow', 'environment'].some(key =>
         typeof expected[key] !== 'string' || !expected[key].trim())) {
     throw new Error('CONFIGURATION: trusted capabilities and context required');
@@ -54,6 +58,7 @@ function buildGate(capabilities, dependencies, mode) {
         throw new Error('SOURCES: invalid ownership');
       }
       const sources = sourceIdentities(prepared.sources);
+      validateRemoteMains(await observeMains(), sources);
       const document = await dependencies.run(selected, [], {
         sources: prepared.sources, workerEnv: {},
       });
@@ -67,9 +72,17 @@ function buildGate(capabilities, dependencies, mode) {
       }
       if (prepared.disposed || JSON.stringify(sourceIdentities(prepared.sources)) !==
           JSON.stringify(sources)) throw new Error('SOURCES: identities changed');
+      validateRemoteMains(await observeMains(), sources);
+      validateConflicts(await observeConflicts(version), version);
+      await prepared.preflightRelease(version);
+      if (prepared.disposed || JSON.stringify(sourceIdentities(prepared.sources)) !==
+          JSON.stringify(sources)) throw new Error('SOURCES: identities changed');
+      validateRemoteMains(await observeMains(), sources);
+      validateConflicts(await observeConflicts(version), version);
       handoff = { schemaVersion: 1, mode, version, invocation, sources,
         mandatory: { outcome: 'passed', scenarioIds: ids }, resources: 'disposed' };
     } catch (error) {
+      unsettled ||= sourceTerminationUnknown(error);
       reason = String(error) || 'Unknown release preflight failure';
     }
     if (prepared && !unsettled) {

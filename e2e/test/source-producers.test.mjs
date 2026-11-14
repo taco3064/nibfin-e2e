@@ -53,6 +53,12 @@ test('production preparation invokes maintained entries and retains their output
         assert.equal(call.options.env.TMPDIR, set.root);
       }
       assert.equal(set.sources.core.output.pin.commit, pin.commit);
+      assert.equal(set.sources.core.output.archive,
+        join(set.root, 'core-test-output/nibfin-core.tar.gz'));
+      assert.equal(await readFile(set.sources.core.output.archive, 'utf8'),
+        'fake archive');
+      await assert.rejects(readFile(join(set.sources.core.checkout,
+        'distribution/source-pin.json')), { code: 'ENOENT' });
       assert.equal(set.sources.action.output.entry,
         join(set.sources.action.checkout, 'src/main.mjs'));
       assert.equal(await readFile(set.sources.cli.output.entry, 'utf8'), 'fake binary');
