@@ -48,6 +48,9 @@ export const scenarios = Object.freeze([
     title: 'Protected owned Issue pause and lawful resume', timeoutMs: 5000,
     module: new URL('./scenarios/pause-live.mjs', import.meta.url).href,
   },
+  isolation('project-configuration.local', 'project-configuration',
+    'Local target Job and role Skill contracts (no live verification)',
+    'project-configuration'),
   {
     id: 'dependency.live', group: 'dependency',
     title: 'Native dependency admission and protected downstream continuation',
