@@ -1,8 +1,8 @@
 # Local E2E runner foundation
 
 This credential-free framework does not certify Nibfin support, live E2E,
-GitHub delivery or releases. Production registration in `e2e/registry.mjs` is
-currently empty. Synthetic fixtures under `e2e/test/fixtures/` are used only
+GitHub delivery or releases. The `runner` group exercises actual current-main CLI commands with controlled
+inputs; see [Runner scenarios](e2e/RUNNERS.md). Synthetic fixtures under `e2e/test/fixtures/` are used only
 by the unit tests and never registered as production coverage.
 
 Use Node 24 or later:
@@ -14,8 +14,8 @@ Use Node 24 or later:
 - `npm run e2e:group -- NAME`: select a group.
 - `npm run e2e -- --group NAME --group OTHER`: select multiple groups.
 
-With the empty production registry, the runner exits 1 with a `NO_SCENARIOS`
-error. Unknown groups and invalid arguments also fail. Use `npm run --silent`
+An empty selection exits 1 with a `NO_SCENARIOS` error. Unknown groups and
+invalid arguments also fail. Use `npm run --silent`
 when redirecting npm command output to a JSON consumer (npm otherwise prints
 its own command banner). Direct `node e2e/cli.mjs` emits only JSON to stdout.
 Scenario diagnostics are drained separately and forwarded to stderr.
@@ -119,7 +119,7 @@ library options; production URLs and branch selection have no user overrides.
 These credential-free tests include producer failure, pin incompatibility,
 upstream movement, source lifetime and real local process cleanup. They do not
 establish live three-product compatibility, protected execution or release
-coverage. The production scenario registry remains empty.
+coverage. Registered controlled Runner scenarios remain separate from live E2E.
 
 ## Read-only GitHub observations
 
