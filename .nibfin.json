@@ -1,3 +1,6 @@
 {
-  "allowedDomains": ["github.com"]
+  "allowedDomains": [
+    "github.com",
+    "codeload.github.com"
+  ]
 }
