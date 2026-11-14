@@ -46,11 +46,29 @@ export function validateConflicts(observations, version) {
     const row = rows[0];
     if (rows.length !== 1 || row.version !== version || row.complete !== true ||
         !Array.isArray(row.tags) || !Array.isArray(row.releases) ||
-        [...row.tags, ...row.releases].some(name => !text(name))) {
+        !Array.isArray(row.activePublications) ||
+        [...row.tags, ...row.releases, ...row.activePublications].some(name =>
+          !text(name))) {
       fail('CONFLICTS: invalid or unavailable observation');
     }
     // Observer returns all matching tags/releases, including v-prefixed aliases.
     if (row.tags.length || row.releases.length) fail('CONFLICTS: version exists');
+    if (row.activePublications.length) fail('CONFLICTS: publication active');
+  }
+}
+
+export function validateRemoteMains(observations, identities) {
+  if (!Array.isArray(observations) || observations.length !== identities.length) {
+    fail('REMOTE_MAIN: incomplete observation');
+  }
+  for (const source of identities) {
+    const rows = observations.filter(row => row?.repository === source.repository);
+    const row = rows[0];
+    if (rows.length !== 1 || row.complete !== true || row.ref !== source.ref ||
+        !/^[a-f0-9]{40}$/.test(row.commit ?? '')) {
+      fail('REMOTE_MAIN: invalid or unavailable observation');
+    }
+    if (row.commit !== source.commit) fail('REMOTE_MAIN: acquired main changed');
   }
 }
 

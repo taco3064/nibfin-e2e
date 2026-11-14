@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { sourceCommand } from '../source-process.mjs';
+import { sourceCommand, sourceTerminationUnknown } from '../source-process.mjs';
 
 const invoke = (script, options) => sourceCommand(process.execPath,
   ['--input-type=module', '-e', script], options);
@@ -26,6 +26,34 @@ test('timeouts and excessive output fail after owned process cleanup', async () 
     /SOURCE_COMMAND_TIMEOUT/);
   await assert.rejects(invoke("console.log('x'.repeat(10000))", { limit: 10 }),
     /SOURCE_COMMAND_OUTPUT_LIMIT/);
+});
+
+test('failed process-group termination cannot be reported as a settled command',
+  async () => {
+  // This inner producer exits naturally and has no descendants. Simulate only
+  // the group signal failure, without leaving a running test process behind.
+  const script = [
+    `const { sourceCommand } = await import(${JSON.stringify(
+      new URL('../source-process.mjs', import.meta.url).href,
+    )});`,
+    'process.kill = () => {',
+    "  throw Object.assign(new Error('signal denied'), { code: 'EPERM' });",
+    '};',
+    'try {',
+    "  await sourceCommand(process.execPath, ['-e', 'process.exit(0)']);",
+    "  console.log('unexpected success');",
+    '} catch (error) {',
+    '  console.log(JSON.stringify({ message: error.message,',
+    '    terminationUnknown: error.terminationUnknown }));',
+    '}',
+  ].join('\n');
+  const observed = JSON.parse((await invoke(script)).stdout);
+  assert.equal(observed.message, 'SOURCE_TERMINATION_UNKNOWN');
+  assert.equal(sourceTerminationUnknown(observed), true);
+  assert.equal(sourceTerminationUnknown(new Error('wrapped', {
+    cause: new AggregateError([observed]),
+  })), true);
+  assert.equal(sourceTerminationUnknown(new Error('ordinary failure')), false);
 });
 
 async function within(promise, message, timeoutMs = 4000) {
@@ -122,8 +150,22 @@ test('timeout stops producer descendants before disposable directory removal',
 
 test('failed commands retain bounded diagnostics for native assertion failures',
   async () => {
-    await assert.rejects(invoke("console.log('assertion failed'); process.exit(1)"),
-      error => error.stdout === 'assertion failed\n' && error.stderr === '');
+    await assert.rejects(invoke([
+      "console.log('assertion failed');",
+      "console.error('native diagnostic'); process.exit(1);",
+    ].join('\n')), error => error.stdout === 'assertion failed\n' &&
+      error.stderr === 'native diagnostic\n');
+    await assert.rejects(invoke([
+      "process.stdout.write('x'.repeat(10000));",
+      "process.stderr.write('y'.repeat(10000));",
+      'process.exit(1);',
+    ].join('\n'), { limit: 100 }), error => {
+      assert.match(error.message, /SOURCE_COMMAND_OUTPUT_LIMIT/);
+      assert.equal(typeof error.stdout, 'string');
+      assert.equal(typeof error.stderr, 'string');
+      assert.ok(Buffer.byteLength(error.stdout + error.stderr) <= 100);
+      return true;
+    });
   });
 
 test('owned command cancellation settles before cleanup', async () => {
@@ -131,4 +173,12 @@ test('owned command cancellation settles before cleanup', async () => {
   const pending = invoke('setInterval(() => {}, 1000)', { signal: abort.signal });
   abort.abort();
   await assert.rejects(pending, /SOURCE_COMMAND_ABORTED/);
+});
+
+test('already-aborted commands settle as cancellation rather than timeout', async () => {
+  const abort = new AbortController();
+  abort.abort();
+  await assert.rejects(invoke('setInterval(() => {}, 1000)', {
+    signal: abort.signal, timeoutMs: 1000,
+  }), /SOURCE_COMMAND_ABORTED/);
 });

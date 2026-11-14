@@ -168,7 +168,7 @@ test('run owner cleans up on callback failure and reports cleanup as non-success
   });
 });
 
-test('Git acquisition uses an explicit main ref, detached identity and no refetch',
+test('Git acquisition binds Core local main to its acquired commit without refetch',
   async () => {
   const calls = [];
   const command = async (file, args, options) => {
@@ -186,7 +186,7 @@ test('Git acquisition uses an explicit main ref, detached identity and no refetc
   ]);
   assert(calls[1].args.includes('refs/remotes/origin/main^{commit}'));
   assert.deepEqual(calls[2].args,
-    ['-C', '/owned/core', 'checkout', '--detach', commits.core]);
+    ['-C', '/owned/core', 'checkout', '-B', 'main', commits.core]);
   await assert.rejects(acquireSource(sourceRepositories[0], '/owned/core', {
     root: '/owned', env: {}, command: async () => { throw new Error('missing main'); },
   }), /missing main/);
@@ -246,6 +246,78 @@ test('a callback throwing a falsy value still rejects and disposes', async () =>
       assert.equal(error, undefined);
     }
     assert(rejected);
+    assert.deepEqual(await readdir(tempRoot), []);
+  });
+});
+
+test('unknown acquisition or producer termination retains owned resources', async () => {
+  for (const phase of ['acquire', 'prepare']) {
+    await isolated(async tempRoot => {
+      const fake = fakeSources();
+      const original = fake[phase];
+      let removals = 0;
+      await assert.rejects(prepareSources({ ...fake, tempRoot,
+        [phase]: async (...args) => {
+          await original(...args);
+          throw Object.assign(new Error('unconfirmed process termination'), {
+            terminationUnknown: true,
+          });
+        },
+        remove: async () => { removals++; },
+      }), /SOURCE_TERMINATION_UNKNOWN: retained/);
+      assert.equal(removals, 0);
+      const retained = await readdir(tempRoot);
+      assert.equal(retained.length, 1);
+      await access(join(tempRoot, retained[0], 'core'));
+      // These fixtures have no live producers. isolated() removes the retained
+      // test-only resources after the assertions; production recovery is external.
+    });
+  }
+});
+
+test('unknown consumer termination retains the prepared set for recovery', async () => {
+  await isolated(async tempRoot => {
+    let retained;
+    await assert.rejects(withPreparedSources(async set => {
+      retained = set;
+      throw new Error('wrapped producer failure', {
+        cause: Object.assign(new Error('termination unknown'), {
+          terminationUnknown: true,
+        }),
+      });
+    }, { ...fakeSources(), tempRoot }), /wrapped producer failure/);
+    assert.equal(retained.disposed, false);
+    await access(retained.sources.core.checkout);
+    // No process was started by this fixture; explicit test recovery is safe.
+    await retained.dispose();
+    assert.deepEqual(await readdir(tempRoot), []);
+  });
+});
+
+test('consumer checkouts retain detached identities', async () => {
+  for (const source of sourceRepositories.filter(row => row.id !== 'core')) {
+    const calls = [];
+    await acquireSource(source, '/owned/consumer', {
+      root: '/owned', env: {}, command: async (file, args) => {
+        calls.push(args);
+        return { stdout: `${commits[source.id]}\n` };
+      },
+    });
+    assert.equal(calls.length, 3);
+    assert.deepEqual(calls[2], ['-C', '/owned/consumer', 'checkout',
+      '--detach', commits[source.id]]);
+  }
+});
+
+test('release ownership cannot be reused after failure or disposal', async () => {
+  await isolated(async tempRoot => {
+    const set = await prepareSources({ ...fakeSources(), tempRoot,
+      command: async () => ({ stdout: 'invalid source identity' }),
+    });
+    await assert.rejects(set.preflightRelease('1.2.3'), /source commit changed/);
+    await assert.rejects(set.preflightRelease('1.2.3'), /stale or disposed/);
+    await set.dispose();
+    await assert.rejects(set.preflightRelease('1.2.3'), /stale or disposed/);
     assert.deepEqual(await readdir(tempRoot), []);
   });
 });

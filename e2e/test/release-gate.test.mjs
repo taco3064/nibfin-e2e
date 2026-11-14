@@ -22,15 +22,24 @@ function fixture() {
   const sources = Object.fromEntries(sourceRepositories.map(source => [source.id,
     { ...source, commit: 'a'.repeat(40), checkout: '/disposable/path', output: {} }]));
   const state = { prepared: 0, ran: 0, disposed: 0 };
-  const prepared = { sources, disposed: false, async dispose() {
+  const prepared = { sources, disposed: false,
+    async preflightRelease(version) {
+      assert.equal(version, '1.2.3');
+      assert.equal(state.prepared, 1);
+      assert.equal(this.disposed, false);
+    }, async dispose() {
     state.disposed++;
     this.disposed = true;
   } };
   const observations = sourceRepositories.map(({ repository }) => ({
     repository, version: '1.2.3', complete: true, tags: [], releases: [],
+    activePublications: [],
+  }));
+  const mains = sourceRepositories.map(({ repository, ref }) => ({
+    repository, ref, complete: true, commit: 'a'.repeat(40),
   }));
   const capabilities = { expected, verifyInvocation: async () => identity,
-    observeConflicts: async () => observations };
+    observeConflicts: async () => observations, observeMains: async () => mains };
   const dependencies = { catalog, registry,
     prepare: async () => { state.prepared++; return prepared; },
     run: async (selected, groups, options) => {
@@ -41,7 +50,7 @@ function fixture() {
       return report(selected.map(row => result(row, 'passed', 'PASS', 'executed')));
     } };
   return { expected, identity, capabilities, dependencies, prepared, state,
-    observations, registry, catalog, sources };
+    observations, registry, catalog, sources, mains };
 }
 async function invoke(f, inputs = ['1.2.3']) {
   return createContractGate(f.capabilities, f.dependencies)(inputs);
@@ -103,7 +112,7 @@ test('requires trusted process functions rather than approval fields', () => {
   assert.throws(() => createReleaseGate({ authorized: true }), /CONFIGURATION/);
 });
 for (const id of [0, 1, 2]) {
-  for (const kind of ['tags', 'releases']) {
+  for (const kind of ['tags', 'releases', 'activePublications']) {
     test(`rejects ${kind} conflict in product ${id}`, async () => {
       const f = fixture();
       f.observations[id][kind] = ['v1.2.3'];
@@ -119,6 +128,7 @@ for (const modify of [
   f => { f.observations[0].version = '2.0.0'; },
   f => { f.observations[0].tags = null; },
   f => { f.observations[0].releases = [null]; },
+  f => { delete f.observations[0].activePublications; },
   f => { f.capabilities.observeConflicts = async () => { throw Error('offline'); }; },
 ]) {
   test('incomplete, malformed or unavailable observations fail closed', async () => {
@@ -184,6 +194,78 @@ test('preparation and execution exceptions produce no handoff', async () => {
     assert.equal(f.state.disposed, phase === 'run' ? 1 : 0);
   }
 });
+
+test('unknown source-command termination retains sources without a handoff', async () => {
+  const f = fixture();
+  f.dependencies.run = async () => {
+    throw new Error('source command did not settle', {
+      cause: Object.assign(new Error('group signal failed'), {
+        terminationUnknown: true,
+      }),
+    });
+  };
+  await blocked(f, /did not settle/);
+  assert.equal(f.state.disposed, 0);
+  assert.equal(f.prepared.disposed, false);
+});
+
+for (const modify of [
+  f => { f.mains.pop(); },
+  f => { f.mains[0] = f.mains[1]; },
+  f => { f.mains[0].complete = false; },
+  f => { f.mains[0].commit = 'unknown'; },
+  f => { f.mains[0].ref = 'refs/tags/main'; },
+  f => { f.mains[0].commit = 'b'.repeat(40); },
+  f => { f.capabilities.observeMains = async () => { throw Error('main offline'); }; },
+]) {
+  test('remote main observations must completely match the acquired source set',
+    async () => {
+    const f = fixture();
+    modify(f);
+    await blocked(f, /REMOTE_MAIN|main offline/);
+    assert.equal(f.state.ran, 0);
+    assert.equal(f.state.disposed, 1);
+  });
+}
+
+test('fresh authoritative observations detect remote changes after mandatory E2E',
+  async () => {
+  const f = fixture();
+  let reads = 0;
+  f.capabilities.observeMains = async () => {
+    reads++;
+    return structuredClone(f.mains);
+  };
+  const execute = f.dependencies.run;
+  f.dependencies.run = async (...args) => {
+    const document = await execute(...args);
+    // The in-memory prepared source identities remain unchanged.
+    f.mains[2].commit = 'b'.repeat(40);
+    return document;
+  };
+  await blocked(f, /REMOTE_MAIN: acquired main changed/);
+  assert.equal(reads, 2);
+  assert.equal(f.state.ran, 1);
+  assert.equal(f.state.disposed, 1);
+  assert.equal(f.sources.cli.commit, 'a'.repeat(40));
+});
+
+test('version conflicts and publication activity are reobserved after E2E', async () => {
+  for (const kind of ['tags', 'releases', 'activePublications']) {
+    const f = fixture();
+    let reads = 0;
+    f.capabilities.observeConflicts = async () => {
+      reads++;
+      if (reads === 2) f.observations[0][kind] = ['v1.2.3'];
+      return structuredClone(f.observations);
+    };
+    await blocked(f, /CONFLICTS/);
+    assert.equal(reads, 2);
+    assert.equal(f.state.ran, 1);
+    assert.equal(f.state.disposed, 1);
+  }
+});
+
 test('rejects source substitutions and invalid source identity', async () => {
   for (const duringRun of [false, true]) {
     const f = fixture();
@@ -245,4 +327,35 @@ test('unknown worker termination retains sources and never claims cleanup', asyn
     result(row, 'failing', 'TERMINATION_ERROR', 'unsettled')));
   await blocked(f, /termination unknown/);
   assert.equal(f.state.disposed, 0);
+});
+
+for (const reason of ['missing producer', 'build failed', 'partial staging']) {
+  test(`release failure blocks handoff and disposes: ${reason}`, async () => {
+    const f = fixture();
+    f.prepared.preflightRelease = async () => { throw new Error(reason); };
+    await blocked(f, new RegExp(reason));
+    assert.equal(f.state.ran, 1);
+    assert.equal(f.state.disposed, 1);
+  });
+}
+test('unknown producer termination retains staging and sources', async () => {
+  const f = fixture();
+  f.prepared.preflightRelease = async () => {
+    throw Object.assign(new Error('producer unsettled'), { terminationUnknown: true });
+  };
+  await blocked(f, /producer unsettled/);
+  assert.equal(f.state.disposed, 0);
+});
+test('serialized success cannot replace invocation or execution', async () => {
+  const f = fixture();
+  const prior = await invoke(f);
+  const fresh = fixture();
+  await blocked(fresh, /VERSION/, [prior.handoff]);
+  assert.equal(fresh.state.ran, 0);
+});
+test('main movement during release builds prevents readiness', async () => {
+  const f = fixture();
+  f.prepared.preflightRelease = async () => { f.mains[0].commit = 'b'.repeat(40); };
+  await blocked(f, /REMOTE_MAIN/);
+  assert.equal(f.state.disposed, 1);
 });
