@@ -12,6 +12,10 @@ export function resource(target) {
     return { url: `${base}/issues/${number}/dependencies/${kind}?per_page=100`,
       collection: 'array' };
   }
+  if (kind === 'issue-events' && integer(number)) {
+    return { url: `${base}/issues/${number}/events?per_page=100`,
+      collection: 'array' };
+  }
   if (kind === 'run' && integer(runId)) {
     return { url: `${base}/actions/runs/${runId}` };
   }
@@ -30,6 +34,12 @@ export function resource(target) {
 export function matches(item, target) {
   if (!item || typeof item !== 'object' || !integer(item.id)) return false;
   const base = `https://api.github.com/repos/${target.repository}`;
+  if (target.kind === 'issue-events') {
+    return item.url === `${base}/issues/events/${item.id}` &&
+      typeof item.event === 'string' && item.event.length > 0 &&
+      typeof item.created_at === 'string' &&
+      Number.isFinite(Date.parse(item.created_at));
+  }
   if (target.kind === 'issue' || target.kind === 'pull') {
     const path = target.kind === 'issue' ? 'issues' : 'pulls';
     return item.number === target.number &&

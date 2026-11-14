@@ -38,6 +38,17 @@ export const scenarios = Object.freeze([
   isolation('concurrency.live', 'concurrency',
     'Protected concurrency and interrupted Runner observations', 'concurrency-live'),
   {
+    id: 'pause.recovery.fixture', group: 'pause',
+    title: 'Controlled actual Core pause and bounded recovery contracts',
+    timeoutMs: 40000,
+    module: new URL('./scenarios/pause-recovery.mjs', import.meta.url).href,
+  },
+  {
+    id: 'pause.live', group: 'pause',
+    title: 'Protected owned Issue pause and lawful resume', timeoutMs: 5000,
+    module: new URL('./scenarios/pause-live.mjs', import.meta.url).href,
+  },
+  {
     id: 'dependency.live', group: 'dependency',
     title: 'Native dependency admission and protected downstream continuation',
     timeoutMs: 5000,
