@@ -21,10 +21,14 @@ async function execute() {
     }
   }
   const actual = await scenario.run(context);
+  const description = typeof scenario.describe === 'function'
+    ? `; ${scenario.describe(actual)}` : '';
   if (await scenario.verify(actual, context) !== true) {
-    return ['unverified', 'ASSERTIONS_INCOMPLETE', 'verify did not confirm assertions'];
+    return ['unverified', 'ASSERTIONS_INCOMPLETE',
+      `verify did not confirm assertions${description}`];
   }
-  return ['passed', 'ASSERTIONS_PASSED', 'Execution and assertions completed'];
+  return ['passed', 'ASSERTIONS_PASSED',
+    `Execution and assertions completed${description}`];
 }
 try {
   parentPort.postMessage(await execute());

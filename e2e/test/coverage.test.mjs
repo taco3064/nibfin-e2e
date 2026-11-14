@@ -4,6 +4,7 @@ import { calculateCoverage, exportCoverage } from '../coverage.mjs';
 import { summarizeCoverage } from '../coverage-summary.mjs';
 import { safeEvidenceUrl } from '../coverage-input.mjs';
 import { outcomes, result, report } from '../schema.mjs';
+import { scenarios } from '../registry.mjs';
 
 const registry = ['a', 'b'].map(id => ({ id, group: 'local', title: 'Synthetic',
   timeoutMs: 1000, module: new URL('./fixtures/behaviors.mjs', import.meta.url).href }));
@@ -25,7 +26,7 @@ const url = 'https://github.com/owner/repo/actions/runs/123';
 test('maintained catalog does not equate registered fixtures with live coverage', () => {
   const value = calculateCoverage();
   assert.equal(value.catalogued, 3);
-  assert.equal(value.registeredScenarios, 2);
+  assert.equal(value.registeredScenarios, scenarios.length);
   assert.equal(run(value).totals.passed, 0);
   assert.equal(run(value).complete, false);
   assert.equal(run(value).environment, null);
