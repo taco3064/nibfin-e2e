@@ -12,6 +12,8 @@ const groups = {
   runner: ['cli.runner-contract'],
   delivery: ['delivery.live'],
   dependency: ['dependency.live'],
+  'concurrency-contract': ['concurrency.fixture'],
+  concurrency: ['concurrency.live'],
 };
 
 test('maintained registry preserves each scenario and group selection', () => {
