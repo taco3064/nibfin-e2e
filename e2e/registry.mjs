@@ -21,7 +21,7 @@ export function select(entries, groups = []) {
   }
   return registry.filter(entry => !groups.length || groups.includes(entry.group));
 }
-// These are credential-free contract fixtures, not live-provider verification.
+// Wake entries are controlled fixtures; delivery requires protected capabilities.
 const wake = ['shared-issue', 'action'].map(leg => ({
   id: `wake.${leg}.fixture`, group: 'wake-contract',
   title: `${leg} controlled correlation contract (no live verification)`,
@@ -33,6 +33,11 @@ const isolation = (id, group, title, module) => ({
 });
 export const scenarios = Object.freeze([
   ...wake,
+  {
+    id: 'delivery.live', group: 'delivery',
+    title: 'Fresh protected Issue-to-closure delivery', timeoutMs: 5000,
+    module: new URL('./scenarios/delivery.mjs', import.meta.url).href,
+  },
   isolation('isolation.local', 'isolation.local',
     'Synthetic Runner binding and isolation policy contracts', 'isolation-local'),
   ...['host-path', 'credential', 'role-write', 'network'].map(boundary =>
