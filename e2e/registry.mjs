@@ -39,4 +39,10 @@ export const scenarios = Object.freeze([
     isolation(`isolation.host.${boundary}`, 'isolation.host',
       `Authorized host ${boundary} rejection (requires protected probes)`,
       'isolation-host')),
+  {
+    id: 'cli.runner-contract', group: 'runner',
+    title: 'Controlled actual CLI Runner lifecycle and host preflight',
+    timeoutMs: 90000,
+    module: new URL('./runner-scenario.mjs', import.meta.url).href,
+  },
 ]);

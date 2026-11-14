@@ -1,6 +1,7 @@
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative } from 'node:path';
 import { sourceCommand } from './source-process.mjs';
+import { buildRunnerContract } from './runner-build.mjs';
 
 const readJson = async path => JSON.parse(await readFile(path, 'utf8'));
 export async function producerFile(root, path) {
@@ -92,7 +93,10 @@ export async function prepareProducer(source, context) {
     // Go reads the producer's go/toolchain declarations; do not override them.
     const name = process.platform === 'win32' ? 'gh-nibfin.exe' : 'gh-nibfin';
     await invoke('go', ['build', '-trimpath', '-o', name, '.']);
-    return { entry: await producerFile(checkout, name) };
+    return {
+      entry: await producerFile(checkout, name),
+      runnerContract: await buildRunnerContract(checkout, invoke),
+    };
   }
   throw new Error('UNSUPPORTED_PRODUCER');
 }

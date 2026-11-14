@@ -39,6 +39,9 @@ test('production preparation invokes maintained entries and retains their output
         ['npm', ['run', 'build']],
         [process.execPath, ['--input-type=module', '-e']],
         ['go', ['build', '-trimpath']],
+        ['go', ['build', '-trimpath']],
+        [join(set.sources.cli.checkout,
+          'nibfin-e2e-runner-contract/contract'), []],
       ]);
       assert.equal(calls[0].options.env.SOURCE_COMMIT, pin.commit);
       assert.equal(calls[0].options.env.GITHUB_OUTPUT, undefined);
@@ -53,6 +56,7 @@ test('production preparation invokes maintained entries and retains their output
       assert.equal(set.sources.action.output.entry,
         join(set.sources.action.checkout, 'src/main.mjs'));
       assert.equal(await readFile(set.sources.cli.output.entry, 'utf8'), 'fake binary');
+      assert.equal(await readFile(set.sources.cli.output.runnerContract, 'utf8'), '');
       assert.deepEqual(JSON.parse(await readFile(join(set.sources.action.checkout,
         'core-source.json'), 'utf8')), pin);
     } finally { await set.dispose(); }
