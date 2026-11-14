@@ -1,8 +1,9 @@
 # Behavior coverage library
 
 `coverage-catalog.mjs` maintains intended behaviors for current main of Core,
-Action and CLI. Its production mappings remain empty. The registered Issue-wake
-and Action contract fixtures do not establish live behavior coverage.
+Action and CLI. Its production mappings remain empty. Registered Issue-wake,
+Action and CLI onboarding contract fixtures use synthetic observations and do
+not establish live behavior coverage.
 Extend entries with `{ id, product, category, scenarioIds }`.
 Products are exactly `Core`, `Action`, `CLI`; IDs and categories use lowercase
 identifier segments separated by dots or hyphens. Unregistered mappings are

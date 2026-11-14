@@ -119,3 +119,16 @@ test('timeout stops producer descendants before disposable directory removal',
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('failed commands retain bounded diagnostics for native assertion failures',
+  async () => {
+    await assert.rejects(invoke("console.log('assertion failed'); process.exit(1)"),
+      error => error.stdout === 'assertion failed\n' && error.stderr === '');
+  });
+
+test('owned command cancellation settles before cleanup', async () => {
+  const abort = new AbortController();
+  const pending = invoke('setInterval(() => {}, 1000)', { signal: abort.signal });
+  abort.abort();
+  await assert.rejects(pending, /SOURCE_COMMAND_ABORTED/);
+});

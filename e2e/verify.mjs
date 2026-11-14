@@ -6,7 +6,7 @@ async function sources(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const path = `${directory}/${entry.name}`;
     if (entry.isDirectory()) files.push(...await sources(path));
-    else if (entry.name.endsWith('.mjs')) files.push(path);
+    else if (/\.(mjs|go|ts)$/.test(entry.name)) files.push(path);
   }
   return files;
 }
@@ -16,6 +16,7 @@ for (const path of await sources('e2e')) {
   if (lines.length > 1000 || lines.some(line => line.length > 90)) {
     throw new Error(`Source size limit exceeded: ${path}`);
   }
+  if (!path.endsWith('.mjs')) continue;
   const check = spawnSync(process.execPath, ['--check', path], { stdio: 'inherit' });
   if (check.status !== 0) process.exit(1);
 }

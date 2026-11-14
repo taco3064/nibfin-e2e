@@ -30,6 +30,14 @@ test('maintained catalog does not equate registered fixtures with live coverage'
   assert.equal(run(value).totals.passed, 0);
   assert.equal(run(value).complete, false);
   assert.equal(run(value).environment, null);
+  const onboarding = scenarios.find(row => row.group === 'cli-onboarding');
+  const contract = calculateCoverage({ runs: [{
+    document: report([result(onboarding, 'passed', 'CONTRACT', 'Synthetic')]),
+    provenance: 'local-test', environment: 'contract',
+  }] });
+  assert.equal(run(contract).totals.passed, 0);
+  assert.equal(run(contract).productionPassing, 0);
+  assert.equal(run(contract).complete, false);
 });
 test('denominator is stable for every runner outcome and partial selection', () => {
   for (const outcome of outcomes) {

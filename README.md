@@ -1,16 +1,19 @@
 # Local E2E runner foundation
 
 This credential-free framework does not certify Nibfin support, live E2E,
-GitHub delivery or releases. The `runner` group exercises actual current-main CLI commands with controlled
-inputs; see [Runner scenarios](e2e/RUNNERS.md). Synthetic fixtures under `e2e/test/fixtures/` are used only
-by the unit tests and never registered as production coverage.
+GitHub delivery or releases. The `runner` group exercises actual current-main
+CLI commands with controlled inputs; see [Runner scenarios](e2e/RUNNERS.md).
+The [CLI onboarding contract](e2e/scenarios/cli-onboarding/README.md) uses
+synthetic provider observations and does not establish live coverage.
+Fixtures under `e2e/test/fixtures/` remain framework unit tests only.
 
 Use Node 24 or later:
 
 - `npm ci --ignore-scripts`: install from the dependency-free lockfile.
 - `npm test`: run local framework tests.
 - `npm run verify`: check source syntax, source size limits and run tests.
-- `npm run e2e`: select all registered production scenarios.
+- `npm run e2e`: select all registered scenarios.
+- `npm run e2e -- --group cli-onboarding`: exercise actual CLI contract logic.
 - `npm run e2e:group -- NAME`: select a group.
 - `npm run e2e -- --group NAME --group OTHER`: select multiple groups.
 
@@ -119,7 +122,8 @@ library options; production URLs and branch selection have no user overrides.
 These credential-free tests include producer failure, pin incompatibility,
 upstream movement, source lifetime and real local process cleanup. They do not
 establish live three-product compatibility, protected execution or release
-coverage. Registered controlled Runner scenarios remain separate from live E2E.
+coverage. Registered controlled Runner and CLI onboarding scenarios remain
+separate from live E2E.
 
 ## Read-only GitHub observations
 

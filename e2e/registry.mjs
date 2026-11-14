@@ -48,6 +48,12 @@ export const scenarios = Object.freeze([
     title: 'Fresh protected Issue-to-closure delivery', timeoutMs: 5000,
     module: new URL('./scenarios/delivery.mjs', import.meta.url).href,
   },
+  Object.freeze({
+    id: 'cli-onboarding.contract', group: 'cli-onboarding',
+    title: 'Actual CLI onboarding with synthetic provider observations',
+    timeoutMs: 180000,
+    module: new URL('./scenarios/cli-onboarding/contract.mjs', import.meta.url).href,
+  }),
   isolation('isolation.local', 'isolation.local',
     'Synthetic Runner binding and isolation policy contracts', 'isolation-local'),
   ...['host-path', 'credential', 'role-write', 'network'].map(boundary =>
