@@ -10,6 +10,7 @@ const groups = {
     'isolation.host.role-write', 'isolation.host.network',
   ],
   runner: ['cli.runner-contract'],
+  delivery: ['delivery.live'],
 };
 
 test('maintained registry preserves each scenario and group selection', () => {
