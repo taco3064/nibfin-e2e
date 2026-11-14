@@ -120,3 +120,56 @@ These credential-free tests include producer failure, pin incompatibility,
 upstream movement, source lifetime and real local process cleanup. They do not
 establish live three-product compatibility, protected execution or release
 coverage. The production scenario registry remains empty.
+
+## Read-only GitHub observations
+
+`e2e/github-transport.mjs` exports `githubTransport({ token, fetcher })`.
+Tokens are supplied explicitly; the transport only performs GET requests to
+`https://api.github.com`, rejects redirects, and returns no raw error body.
+`fetcher` defaults to native fetch. No network or credentials are required for
+fake-provider tests. An injectable provider has signature
+`async (url, { signal }) => ({ status, headers, data })`, where headers may be
+native Headers or a lowercase-key object and data is parsed native GitHub JSON.
+Providers should honor abort signals; the observer bounds its own wait even
+when a provider does not. Callers remain responsible for provider resources.
+
+`githubObserver(provider, options)` from `e2e/github-observer.mjs` returns
+`observe(target, expected?)`. Targets always include `repository: 'owner/repo'`
+and one of these explicit resource identities:
+
+- `kind: 'issue'` or `'pull'`, with positive `number`.
+- `kind: 'run'`, with positive `runId`; optional `attempt` and `sha` constrain it.
+- `kind: 'jobs'`, with `runId` and `attempt`; optional `sha` constrains every job.
+- `kind: 'checks'`, with the full commit `sha`.
+
+Collections use 100 items per page and require stable total counts, unique
+identities and complete pagination. Unsafe links, mismatches and truncated
+collections remain incomplete. Native objects are transient observations, not
+a lifecycle database. Options are positive integers: `maxRequests` (50),
+`maxPages` per snapshot (10), `timeoutMs` (30000), `requestTimeoutMs` (5000),
+and `intervalMs` (250). Requests, pages, retry waits and polling share the
+same request and elapsed-time budgets. Retry-After and quota reset headers
+are honored when their wait fits that budget.
+
+Without an expectation, observation returns a single bounded snapshot with
+`target`, `complete`, `data` on success or a sanitized `reason` on inability,
+and `requests`. With an expectation, observation polls unknown evidence until
+it resolves or exhausts the budget and also returns `assertion`. Exhaustion
+is incomplete even if the last snapshot contained some objects.
+
+`assertObservation(observation, expected)` in `e2e/github-assertions.mjs`
+returns `{ state, reason }`, with state `satisfied`, `contradicted`, or `unknown`.
+Expectations are `{ merged: true }` for PRs, `{ closed: true }` for Issues
+(optionally `stateReason: 'completed'`), or `{ conclusion: 'success' }` for
+runs. Jobs and Checks additionally require explicit `ids: [123, 456]`.
+No check names, approvals, protection rules or delivery gates are inferred.
+Missing objects and pending work remain unknown; completed contrary outcomes
+are contradictions. Native merge and closure fields are evaluated separately.
+
+Scenarios may use `confirmed(assertion)` as their final boolean confirmation
+only after all of their required observations/assertions have completed.
+For example, a scenario can return the result of
+`observe({ repository: 'owner/repo', kind: 'pull', number: 42 }, { merged: true })`
+and implement `verify(actual)` as `return confirmed(actual.assertion)`.
+Local contract tests demonstrate library behavior only; live-provider E2E,
+support certification, release and publication remain unverified here.
