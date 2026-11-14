@@ -3,6 +3,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { result } from './schema.mjs';
+import {
+  invokeNative, nativeFailure,
+} from './scenarios/cli-onboarding/native-command.mjs';
 
 function executeWorker(scenario, tempDir, diagnostic, sources, env) {
   return new Promise(resolve => {
@@ -12,11 +15,18 @@ function executeWorker(scenario, tempDir, diagnostic, sources, env) {
     });
     let settled = false;
     let timer;
+    const abort = new AbortController();
+    let native;
+    const nativeModule = new URL(
+      './scenarios/cli-onboarding/contract.mjs', import.meta.url,
+    ).href;
     const settle = async fields => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       try {
+        abort.abort();
+        await native;
         await worker.terminate();
         resolve(result(scenario, ...fields));
       } catch (error) {
@@ -29,7 +39,27 @@ function executeWorker(scenario, tempDir, diagnostic, sources, env) {
         try { diagnostic?.(chunk); } catch { /* Diagnostics cannot grant a pass. */ }
       });
     }
-    worker.once('message', fields => { void settle(fields); });
+    worker.on('message', fields => {
+      if (fields?.type === 'cli-onboarding-native') {
+        if (settled || native || scenario.module !== nativeModule) {
+          void settle(['failing', 'INVALID_NATIVE_REQUEST', 'Invalid native request']);
+          return;
+        }
+        // The command is parent-owned and has no worker-controlled parameters.
+        native = invokeNative(tempDir, abort.signal).then(commandResult => {
+          if (!settled) worker.postMessage({
+            type: 'cli-onboarding-result', result: commandResult,
+          });
+        }, error => {
+          if (!settled) worker.postMessage({
+            type: 'cli-onboarding-result',
+            error: nativeFailure(error),
+          });
+        });
+        return;
+      }
+      void settle(fields);
+    });
     worker.once('error', error => {
       void settle(['failing', 'WORKER_ERROR', error.message]);
     });

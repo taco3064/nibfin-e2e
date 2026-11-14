@@ -10,6 +10,7 @@ const groups = {
     'isolation.host.role-write', 'isolation.host.network',
   ],
   runner: ['cli.runner-contract'],
+  'cli-onboarding': ['cli-onboarding.contract'],
   delivery: ['delivery.live'],
   dependency: ['dependency.live'],
   'concurrency-contract': ['concurrency.fixture'],

@@ -6,7 +6,9 @@ export function sourceCommand(file, args, options = {}) {
   if (process.platform === 'win32') {
     throw new Error('SOURCE_PROCESS_UNSUPPORTED: process-group ownership required');
   }
-  const { cwd, env, timeoutMs = 600000, limit = 4 * 1024 * 1024 } = options;
+  const {
+    cwd, env, timeoutMs = 600000, limit = 4 * 1024 * 1024, signal: abort,
+  } = options;
   return new Promise((resolve, reject) => {
     const child = spawn(file, args, {
       cwd, env, detached: true, shell: false, stdio: ['ignore', 'pipe', 'pipe'],
@@ -19,6 +21,12 @@ export function sourceCommand(file, args, options = {}) {
       try { process.kill(-child.pid, 'SIGKILL'); }
       catch (error) { if (error.code !== 'ESRCH') failure ??= error; }
     };
+    const cancel = () => {
+      failure ??= new Error('SOURCE_COMMAND_ABORTED');
+      stop();
+    };
+    abort?.addEventListener('abort', cancel, { once: true });
+    if (abort?.aborted) cancel();
     const timer = setTimeout(() => {
       failure = new Error('SOURCE_COMMAND_TIMEOUT');
       stop();
@@ -38,12 +46,16 @@ export function sourceCommand(file, args, options = {}) {
     child.once('exit', stop);
     child.once('close', (code, signal) => {
       clearTimeout(timer);
+      abort?.removeEventListener('abort', cancel);
       const stdout = Buffer.concat(output.stdout).toString();
       const stderr = Buffer.concat(output.stderr).toString();
       if (failure || code !== 0 || signal) {
-        reject(failure ?? new Error(
+        const error = failure ?? new Error(
           `SOURCE_COMMAND_FAILED: ${file} (${signal ?? code}); ${stderr}`,
-        ));
+        );
+        error.stdout = stdout;
+        error.stderr = stderr;
+        reject(error);
       } else resolve({ stdout, stderr });
     });
   });

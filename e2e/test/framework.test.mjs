@@ -112,7 +112,9 @@ test('CLI rejects invalid arguments and fails truthfully', async () => {
     assert.equal(exitCode(await command(args, [scenario()])), 1);
   }
   assert.equal(exitCode(await command(['--group', 'local'], [scenario()])), 0);
-  const child = spawnSync(process.execPath, ['e2e/cli.mjs'], { encoding: 'utf8' });
+  const child = spawnSync(process.execPath, ['e2e/cli.mjs', '--group', 'unknown'], {
+    encoding: 'utf8',
+  });
   assert.equal(child.status, 1);
   assert.equal(JSON.parse(child.stdout).schemaVersion, 1);
 });
