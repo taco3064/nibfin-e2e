@@ -61,6 +61,9 @@ func e2eRun(t *testing.T, api API, command string, apply bool) (
 ) {
 	t.Helper()
 	args := []string{command, "--repo", "example/project"}
+	if command == "init" {
+		args = append(args, "--execution-repo", "example/project")
+	}
 	if apply {
 		args = append(args, "--apply")
 	}
