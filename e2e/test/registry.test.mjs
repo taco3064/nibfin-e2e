@@ -11,6 +11,7 @@ const groups = {
     'isolation.host.role-write', 'isolation.host.network',
   ],
   runner: ['cli.runner-contract'],
+  'cli-invocation': ['cli.invocation'],
   'cli-onboarding': ['cli-onboarding.contract'],
   delivery: ['delivery.live', 'delivery.paired.live'],
   dependency: ['dependency.live'],

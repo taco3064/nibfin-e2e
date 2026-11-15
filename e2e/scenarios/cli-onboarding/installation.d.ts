@@ -38,7 +38,16 @@ export interface InstallationObservation {
   runnerCount: number | null;
   runners: SharedRegistration[] | null;
 }
-export interface InstallationIntent { operation: 'init'; sequence: number }
+export interface InvocationIdentity {
+  runId: string; attempt: number; id: string; entry: string;
+}
+export interface InvocationReadback extends InvocationIdentity {
+  origin: 'native' | 'synthetic';
+  fresh: boolean; terminated: boolean; effects: 'reconciled' | 'unknown';
+}
+export interface InstallationIntent {
+  operation: 'init'; sequence: number; invocation?: InvocationIdentity;
+}
 export interface InstallationResult {
   origin: 'synthetic' | 'operator';
   binding: InstallationBinding;
@@ -50,6 +59,11 @@ export interface InstallationResult {
   disposition: 'success' | 'incomplete' | 'denied' | 'contradiction';
   refused: { operation: string; memberId: number; expectedRole: string } | null;
   observation: InstallationObservation | null;
+  invocation?: InvocationIdentity & {
+    invoked: boolean; terminated: boolean; confirmed: boolean;
+    observations: Record<'github' | 'host', InvocationReadback> | null;
+    evidence: 'native' | 'controlled' | 'unverified';
+  };
   protectedExecution: 'unverified';
   inventory: {
     path: string;
@@ -63,6 +77,7 @@ export interface InstallationResult {
 export interface InstallationCall {
   signal: AbortSignal;
   intent?: InstallationIntent | null;
+  invocation?: InvocationIdentity | null;
 }
 // Only the separately authorized operator implements these capabilities.
 // command owns deadlines, cancellation, group termination and private credentials.
@@ -96,6 +111,7 @@ export function protectedSharedInstallation(options: {
     state: Record<string, unknown>, save: () => Promise<void>,
   ) => Promise<T>): Promise<T> };
   context: InstallationContext;
+  invocationRun?: { runId: string; attempt: number };
   bounds?: { requests?: number; operations?: number;
     timeoutMs?: number; requestTimeoutMs?: number };
 }): { install(): Promise<InstallationResult> };

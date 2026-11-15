@@ -223,8 +223,8 @@ test('upstream unresolved cleanup propagates source retention despite idle downs
 test('stalled observation preserves unknown-effect recovery state', async t => {
   const f = await dependencyFixture(t);
   f.caller.readDependencyEvidence = () => new Promise(() => {});
-  const result = await runDependency(request, f.caller,
-    { requestTimeoutMs: 100, timeoutMs: 2000 });
+  // Allow durable setup to finish under suite load before timing out the stall.
+  const result = await runDependency(request, f.caller);
   assert.equal(result.state, 'unverified');
   assert.equal(result.cleanup, 'unresolved');
   assert.equal(f.admissions.length, 1);

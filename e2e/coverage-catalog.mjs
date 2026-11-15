@@ -4,7 +4,8 @@ export const catalog = Object.freeze([
   { id: 'core.delivery', product: 'Core', category: 'delivery', scenarioIds: [] },
   { id: 'action.invocation', product: 'Action', category: 'integration',
     scenarioIds: [] },
-  { id: 'cli.invocation', product: 'CLI', category: 'integration', scenarioIds: [] },
+  { id: 'cli.invocation', product: 'CLI', category: 'integration',
+    scenarioIds: ['cli.invocation'] },
 ].map(item => Object.freeze({ ...item, scenarioIds: Object.freeze(item.scenarioIds) })));
 
 export function identity(value) {
