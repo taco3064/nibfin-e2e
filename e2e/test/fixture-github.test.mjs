@@ -189,3 +189,13 @@ test('incomplete PR observations block lifecycle branch deletion until resolved'
     assert.equal(retained.resources[0].disposition, 'merged-history');
     assert.deepEqual(writes, []);
   });
+
+test('native assignment replaces assignees through the owned Issue endpoint',
+  async () => {
+    const f = adapter([response({})]);
+    await f.api.mutateIssue({ native: { number: 10 },
+      mutation: { kind: 'assign-issue', assignee: { id: 8, login: 'adopted-target' } } });
+    assert.equal(f.calls[0].method, 'PATCH');
+    assert.ok(f.calls[0].url.endsWith('/issues/10'));
+    assert.deepEqual(JSON.parse(f.calls[0].body), { assignees: ['adopted-target'] });
+});

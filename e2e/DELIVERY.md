@@ -124,3 +124,65 @@ Local verification is `npm --ignore-scripts run verify`, using existing PR CI.
 A real protected caller and complete authorized reader are external runtime
 prerequisites; their absence is not a local implementation test success or a
 claim that the live acceptance has occurred.
+
+## Paired JavaScript delivery
+
+`runDeliveryPair({repository, assignee: {id, login}}, caller, bounds)` in
+`delivery-pair.mjs` (registry entry `delivery.paired.live`) prepares two owned,
+independent English Issues using the configured fixture account. The adopted actor is supplied by the protected
+caller. The lifecycle's `prepareDelivery` persists and confirms the body, replaces
+and confirms assignment, then rereads both before adding `scope` last. Unknown
+assignment effects retain the mutation intent for read-only reconciliation;
+preparation never blindly retries them. The native adapter supports only the
+owned Issue assignment endpoint, without changing credential discovery.
+
+The maintained programs are `ready.mjs` and `ready-b.mjs` beneath separate UUID
+ownership roots. Their exact stdout is `NIBFIN_E2E_READY\n` and
+`NIBFIN_E2E_READY_B\n`. Both are triggered before waiting for either terminal
+chain. `trigger` observes/correlates the scope event already produced by
+preparation; it must not repeat the eligibility write. Existing Wake observation
+consumes the native enrollment/forwarding producer output from #89.
+
+The caller additionally implements `readConcurrencyEvidence(pair, signal)` using
+the existing protected concurrency history producer. The argument includes fresh
+pair identity, `case: independent`, ordered Issue numbers and each delivery
+binding. Results use the existing `assertConcurrency` contract: complete native
+admissions, Writer execution history, sufficient eligible capacity, independent
+progress before the other Issue finishes, and reconciled effects. Writer identities
+and admissions must match the corresponding delivery chain. Cross-Issue reuse of
+executions, sessions, Candidates, Shapes, PRs, heads or native admissions cannot
+pass. Native identities remain in the protected reader/recovery interface.
+Incomplete history or unknown termination retains both inventories and prepared
+sources; only confirmed terminal history and the existing idle lifecycle permit
+cleanup. A failed cleanup prevents live success.
+
+For paired source observations, `assertSource` must additionally return exact
+`stdout`, `exitCode: 0`, and `checkout: {commit: mergeCommit, clean: true}`.
+`assertMergedJavaScript(binding, checkoutMerge, signal)` is the reusable source
+assertion. The protected acquisition callback supplies a disposable checkout and
+`dispose`; native Git reads independently verify HEAD and clean status. The
+assertion checks the scoped regular file's exact bytes, executes Node with bounded
+output and compares all stdout. It disposes only after confirmed process
+termination. The acquisition owner retains unknown-termination checkouts for
+recovery. Unit tests execute real Node programs with explicitly synthetic Git
+observations; they establish neither native merge checkout nor provider support.
+
+PR check observations now require the complete observed check inventory to match
+the declared applicable IDs; omission of an unsuccessful check cannot produce a
+pass. No applicable check may be pending, skipped, stale or unsuccessful.
+
+Project configuration scenarios use distinct target directories and repository
+identities for Node/extension/first-domain and Python/override/second-domain
+settings, alongside a separate dispatcher decoy. These remain synthetic staging
+and plan assertions. The separate #90 admission/isolation producer and actual
+host/tool/egress probes remain the protected suite's observations; a paired fixture
+pass cannot certify Personal, Organization or optional MCP support.
+
+`readIsolationEvidence(binding, signal)` reads the existing #90 protected producer
+output for the selected execution Runner. Return the fresh request/Issue/repository
+binding and `result`, the unchanged completed `observeIsolation` result. Its
+rejection/recovery must be from the same native execution repository and Runner;
+missing, unsuccessful or substituted output prevents paired success. Fixture mode
+requires the producer's `synthetic` provenance; only actual `live` producer
+observations may satisfy live mode. The reader retains the underlying native
+observations and inventory; this scenario does not start another isolation probe.

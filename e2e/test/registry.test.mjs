@@ -12,7 +12,7 @@ const groups = {
   ],
   runner: ['cli.runner-contract'],
   'cli-onboarding': ['cli-onboarding.contract'],
-  delivery: ['delivery.live'],
+  delivery: ['delivery.live', 'delivery.paired.live'],
   dependency: ['dependency.live'],
   'concurrency-contract': ['concurrency.fixture'],
   concurrency: ['concurrency.live'],

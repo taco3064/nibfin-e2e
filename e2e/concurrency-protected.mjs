@@ -10,7 +10,7 @@ const capabilities = ['createFixture', 'trigger', 'readConcurrencyEvidence', 'ob
 const valid = request => request && cases.includes(request.case) &&
   /^[\w.-]+\/[\w.-]+$/.test(request.repository ?? '') && positive(request.memberId);
 
-async function nativeEvidence(binding, evidence, call, caller) {
+export async function verifyConcurrencyNative(binding, evidence, call, caller) {
   for (const a of evidence.admissions) {
     const { runRepository: repository, runId, attempt } = a;
     for (const kind of ['run', 'jobs']) {
@@ -107,7 +107,9 @@ async function execute(request, caller, bounds, sources) {
       JSON.stringify(evidence.issues) === JSON.stringify(binding.issues);
     if (assertion.state === 'passed') {
       phase = 'NATIVE_EXECUTION_UNAVAILABLE';
-      if (!await nativeEvidence(binding, evidence, call, caller)) throw new Error();
+      if (!await verifyConcurrencyNative(binding, evidence, call, caller)) {
+        throw new Error();
+      }
       outcome = { ...outcome, liveVerified: mode === 'live',
         code: mode === 'live' ? 'LIVE_CONCURRENCY_OBSERVED' :
           'SYNTHETIC_CONCURRENCY_CONFIRMED' };

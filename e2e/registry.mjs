@@ -62,6 +62,11 @@ export const scenarios = Object.freeze([
     title: 'Fresh protected Issue-to-closure delivery', timeoutMs: 5000,
     module: new URL('./scenarios/delivery.mjs', import.meta.url).href,
   },
+  {
+    id: 'delivery.paired.live', group: 'delivery',
+    title: 'Two independent protected JavaScript deliveries', timeoutMs: 5000,
+    module: new URL('./scenarios/delivery.mjs', import.meta.url).href,
+  },
   Object.freeze({
     id: 'cli-onboarding.contract', group: 'cli-onboarding',
     title: 'Actual CLI onboarding with synthetic provider observations',
