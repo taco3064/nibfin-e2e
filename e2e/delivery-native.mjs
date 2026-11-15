@@ -42,8 +42,10 @@ export async function verifyDeliveryNative(binding, evidence, observe) {
   }
   const complete = confirmed(assertObservation(pull, { merged: true })) &&
     pull.data.head?.sha === head && pull.data.merge_commit_sha === mergeCommit &&
-    confirmed(ci) &&
+    confirmed(ci) && checks.data.length === checkIds.length &&
+    checks.data.every(item => checkIds.includes(item.id)) &&
     confirmed(assertObservation(closed, { closed: true })) &&
+    (binding.issueId === undefined || closed.data.id === binding.issueId) &&
     closed.data.labels?.some(label => label.name === 'delivered') === true;
   return complete
     ? { state: 'satisfied', code: 'NATIVE_DELIVERY_OBSERVED' } : unavailable;

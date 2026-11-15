@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { addOwnedDependency } from './fixture-dependency.mjs';
 import { matches } from './github-resources.mjs';
-import { issueMutation, mutationObserved } from './fixture-issue.mjs';
+import { issueMutation, mutationObserved, preparationObserved } from
+  './fixture-issue.mjs';
 import { operations, setupPayload } from './fixture-definition.mjs';
 import { fixtureBudget } from './fixture-budget.mjs';
 import { FixtureError, fixtureErrorCode } from './fixture-errors.mjs';
@@ -99,6 +100,25 @@ export function fixtureLifecycle({ inventory, provider, context, bounds = {} }) 
     });
   }
   return {
+    async prepareDelivery(body, assignee, target) {
+      const initial = await execute(async ({ state, readOwned }) => {
+        const record = state.resources.find(item => item.kind === 'issue');
+        const native = record && await readOwned(record);
+        if (!Array.isArray(native?.labels) ||
+            native.labels.some(label => label?.name === 'scope')) {
+          throw new FixtureError('FIXTURE_PREPARATION_UNCONFIRMED');
+        }
+      });
+      if (initial.state !== 'passing') return initial;
+      for (const [kind, input] of [['edit-issue-body', body],
+        ['assign-issue', assignee], ['add-issue-label', 'scope']]) {
+        const preparation = kind === 'add-issue-label'
+          ? { body, assignee } : undefined;
+        const result = await this.mutateIssue(kind, input, target, preparation);
+        if (result.state !== 'passing') return result;
+      }
+      return { state: 'passing' };
+    },
     addDependency(upstream) {
       if (upstream?.path === inventory.path) {
         throw new FixtureError('FIXTURE_DISTINCT_ISSUES_REQUIRED');
@@ -150,7 +170,7 @@ export function fixtureLifecycle({ inventory, provider, context, bounds = {} }) 
         await save();
       });
     },
-    mutateIssue(operation, input, target) {
+    mutateIssue(operation, input, target, preparation) {
       return execute(async ({ state, save, budget, api, authorize, readOwned }) => {
         budget.operation();
         if (unresolved(state)) throw new FixtureError('FIXTURE_RECONCILIATION_REQUIRED');
@@ -167,6 +187,11 @@ export function fixtureLifecycle({ inventory, provider, context, bounds = {} }) 
         const before = await readOwned(record);
         if (before.absent || before.state !== 'open') {
           throw new FixtureError('FIXTURE_OWNED_RESOURCE_MISSING');
+        }
+        if (preparation && (operation !== 'add-issue-label' ||
+            input !== 'scope' || !preparationObserved(before, { ...preparation,
+              body: `${state.definition.marker}\n${preparation.body}` }))) {
+          throw new FixtureError('FIXTURE_PREPARATION_UNCONFIRMED');
         }
         record.mutation = { ...mutation, operation: randomUUID() };
         await save();

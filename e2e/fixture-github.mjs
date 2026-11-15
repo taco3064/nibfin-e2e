@@ -122,6 +122,9 @@ export function fixtureGithub({ fetcher = fetch, ...configuration }) {
         if (kind === 'add-blocked-by') {
           await request('POST', `${path}/dependencies/blocked_by`,
             { issue_id: record.mutation.upstream.id });
+        } else if (kind === 'assign-issue') {
+          await request('PATCH', path,
+            { assignees: [record.mutation.assignee.login] });
         } else if (kind === 'edit-issue-body') {
           await request('PATCH', path, { body });
         } else if (kind === 'add-issue-label') {

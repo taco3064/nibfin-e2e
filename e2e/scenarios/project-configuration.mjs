@@ -24,7 +24,14 @@ export async function jobControls(context, work, dispatch) {
   const first = { tools: { node: '22.15.0' },
     allowedDomains: ['first.example.com'] };
   const second = { tools: { python: '3.13.7' },
-    allowedDomains: ['second.example.com'] };
+    allowedDomains: ['second.example.com'],
+    skills: { shape: { mode: 'override', path: 'second.md' } } };
+  first.skills = { shape: { mode: 'extend', path: 'first.md' } };
+  await writeFile(join(work, 'first.md'), 'First target Skill extension');
+  const secondWork = join(context.tempDir, 'target-b');
+  await mkdir(secondWork);
+  await writeFile(join(secondWork, 'second.md'), 'Second target Skill override');
+  await writeFile(join(secondWork, '.nibfin.json'), JSON.stringify(second));
   await writeFile(file, JSON.stringify(first));
   const job = await setup();
   const a = job({});
@@ -32,7 +39,9 @@ export async function jobControls(context, work, dispatch) {
   assert.deepEqual(job({}).project, first);
   assert.equal(job({}).project, a.project);
   assert.throws(() => a.project.allowedDomains.push('foreign.example.com'));
-  const b = (await setup())({});
+  const secondIssue = { repository: 'fixture/target-b', repositoryId: 3 };
+  const b = (await projectJob({ workspace: { work: secondWork },
+    runner: { ...runner, target: secondIssue }, issue: secondIssue }, x => x))({});
   assert.deepEqual(b.project, second);
   for (const selected of [a, b, absent]) {
     const captured = [];
@@ -69,7 +78,7 @@ export async function jobControls(context, work, dispatch) {
   await rm(file);
   assert.equal(await readFile(sentinel, 'utf8'), decoy);
   assert.equal(process.env.PATH, hostPath);
-  return { a, b };
+  return { a, b, secondWork };
 }
 
 export async function run(context) {

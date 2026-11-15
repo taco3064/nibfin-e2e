@@ -2,10 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { withDeliverySources } from './delivery-sources.mjs';
 import { fixtureDefinition, generatedPath } from './fixture-definition.mjs';
 import { fixtureBudget } from './fixture-budget.mjs';
-import { observeLiveWake } from './wake-protected.mjs';
 import { capabilityNames, validRequest, same, positive } from './delivery-contract.mjs';
-import { validateDelivery } from './delivery-evidence.mjs';
-import { verifyDeliveryNative } from './delivery-native.mjs';
+import { finishDelivery } from './delivery-observation.mjs';
 
 /**
  * Low-level composition for protected scenarios that acquire sources once.
@@ -64,42 +62,7 @@ export async function observeDelivery(request, caller, bounds = {}) {
       if (!same(wake, binding, ['repository', 'issue']) ||
           wake.status !== 'completed') throw new Error();
       binding.wake = wake;
-      phase = 'WAKE_UNAVAILABLE';
-      const observed = await observeLiveWake({
-        leg: 'shared-issue', expected: wake, mode,
-        observe: (target, _, options) => call(signal => caller.observe(target,
-          AbortSignal.any([signal, options.signal]))),
-        readEvidence: signal => caller.readWakeEvidence({ ...binding }, signal),
-        bounds });
-      if (observed.state !== 'passed') throw new Error();
-      phase = 'STAGES_UNAVAILABLE';
-      const evidence = await call(signal =>
-        caller.readDeliveryEvidence(structuredClone(binding), signal));
-      const chain = validateDelivery(binding, evidence);
-      outcome = output(chain.state, chain.code);
-      if (chain.state === 'satisfied') {
-        phase = 'NATIVE_DELIVERY_UNAVAILABLE';
-        const native = await verifyDeliveryNative(binding, evidence,
-          target => call(signal => caller.observe(target, signal)));
-        if (native.state !== 'satisfied') {
-          outcome = output(native.state, native.code);
-        } else {
-          phase = 'SOURCE_ASSERTION_UNAVAILABLE';
-          const source = await call(signal => caller.assertSource({ ...binding,
-            head: evidence.pull.head, mergeCommit: evidence.pull.mergeCommit }, signal));
-          if (source?.state === 'contradicted') {
-            outcome = output('failed', 'SOURCE_BEHAVIOR_FAILED');
-          } else if (source?.state !== 'satisfied' ||
-              !same(source, { ...binding, head: evidence.pull.head,
-                mergeCommit: evidence.pull.mergeCommit },
-              ['requestId', 'repository', 'issue', 'path', 'content', 'head',
-                'mergeCommit'])) {
-            throw new Error();
-          } else outcome = { ...output('passed', mode === 'fixture'
-            ? 'FIXTURE_CONTRACT_CONFIRMED' : 'LIVE_DELIVERY_OBSERVED'),
-          liveVerified: mode === 'live' };
-        }
-      }
+      outcome = await finishDelivery(binding, caller, call, bounds);
     }
   } catch { outcome = output('unverified', phase); }
   // No retry or reconciliation after an unknown external effect. The lifecycle

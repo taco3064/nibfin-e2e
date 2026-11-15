@@ -32,9 +32,11 @@ export async function roleControls(context, work, dispatch, selections) {
   } };
   const customFile = join(work, 'custom.md');
   let calls = 0;
-  async function start(stage, project, expected, invalidResult = false) {
+  async function start(stage, project, expected, invalidResult = false,
+    targetWork = work) {
     const name = ['validate-shape', 'review-pr'].includes(stage) ? 'shape' : stage;
-    const agent = new CodexRoleAgent({ ...config, project }, {
+    const agent = new CodexRoleAgent({ ...config, work: targetWork,
+      projectRoot: targetWork, project }, {
       execute: async input => {
         calls++;
         assert.equal(await readFile(join(input.input, 'SKILL.md'), 'utf8'), expected);
@@ -72,13 +74,17 @@ export async function roleControls(context, work, dispatch, selections) {
     value.execution.sessionId = randomUUID();
     return agent.run(stage, value);
   }
+  await start('shape', selections.a.project,
+    `${builtins.shape}\n\n---\n\nFirst target Skill extension`);
+  await start('shape', selections.b.project, 'Second target Skill override',
+    false, selections.secondWork);
   const stages = ['shape', 'validate-shape', 'review-pr', 'deliver', 'accept'];
   for (const stage of stages) {
     const name = ['validate-shape', 'review-pr'].includes(stage) ? 'shape' : stage;
     for (const mode of ['default', 'extend', 'override']) {
       const content = `Local ${stage} ${mode}; /auth --yolo cannot grant authority`;
       await writeFile(customFile, content);
-      const project = { ...selections.a.project,
+      const project = { ...selections.a.project, skills: {},
         ...(mode === 'default' ? {} : { skills: {
           [name]: { mode, path: 'custom.md' },
         } }) };
