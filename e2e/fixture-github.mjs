@@ -1,3 +1,4 @@
+import { repositoryGithub } from './repository-github.mjs';
 import { fixtureCredentials } from './fixture-credentials.mjs';
 import { generatedPath } from './fixture-definition.mjs';
 
@@ -47,6 +48,7 @@ export function fixtureGithub({ fetcher = fetch, ...configuration }) {
       `git/ref/heads/${definition.name}` :
       `${record.kind === 'issue' ? 'issues' : 'pulls'}/${record.native.number}`;
     return {
+      ...repositoryGithub(request),
       capabilities: authentication.capabilities,
       automationBranch: authentication.automationBranch,
       revokeAutomation: authentication.revoke,
