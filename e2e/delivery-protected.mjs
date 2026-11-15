@@ -66,8 +66,9 @@ export async function observeDelivery(request, caller, bounds = {}) {
       binding.wake = wake;
       phase = 'WAKE_UNAVAILABLE';
       const observed = await observeLiveWake({
-        leg: 'shared-issue', expected: wake,
-        observe: target => call(signal => caller.observe(target, signal)),
+        leg: 'shared-issue', expected: wake, mode,
+        observe: (target, _, options) => call(signal => caller.observe(target,
+          AbortSignal.any([signal, options.signal]))),
         readEvidence: signal => caller.readWakeEvidence({ ...binding }, signal),
         bounds });
       if (observed.state !== 'passed') throw new Error();

@@ -29,7 +29,8 @@ export async function dependencyFixture(t) {
       preflight: async () => 7,
       beforeCreate: async () => {},
       async create(record) {
-        const issue = { ...record.payload, id, number, user: { id: 7 },
+        const issue = { ...record.payload, id, node_id: `I_fixture_${id}`, number,
+          user: { id: 7 },
           state: 'open', labels: [],
           url: `https://api.github.com/repos/${definition.repository}/issues/${number}` };
         issues.set(number, issue);
@@ -66,7 +67,7 @@ export async function dependencyFixture(t) {
     const jobId = after ? 602 : 601;
     evidence = { admission: { ...binding, authorized: true, executed: true,
       runRepository: binding.repository, runId, attempt: 1, jobId,
-      invocation: `dependency-${runId}`, originEvent: 'issues',
+      invocation: `dependency-${runId}`, originEvent: 'workflow_dispatch',
       decision: after ? 'dispatched' : 'blocked',
       reason: after ? 'DISPATCHED' : 'NATIVE_DEPENDENCY_INCOMPLETE' } };
     const base = `https://api.github.com/repos/${binding.repository}`;

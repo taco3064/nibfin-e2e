@@ -89,6 +89,7 @@ test('Action identity, outputs, step execution and denial contract must agree', 
 test('protected composition uses native reads and does not pass unavailable evidence',
   async () => {
     const { expected, evidence } = wakeFixture();
+    evidence.enrollment.origin = 'operator';
     const observe = async target => Object.values(evidence).find(value =>
       value?.target && JSON.stringify(value.target) === JSON.stringify(target));
     const result = await observeLiveWake({ leg: 'shared-issue', expected, observe,
@@ -209,6 +210,7 @@ test('protected owned mutation and separate wake observation compose end to end'
     const { expected, evidence } = wakeFixture('shared-issue', 'completed', {
       repository: f.definition.repository, issue: issue.number,
     });
+    evidence.enrollment.origin = 'operator';
     let writes = 0;
     f.api.mutateIssue = async record => {
       writes++;

@@ -24,6 +24,25 @@ export function exercise(leg) {
   duplicate.evidence.core.push(structuredClone(duplicate.evidence.core[0]));
   results.push(check(duplicate, 'unverified'));
   if (leg === 'shared-issue') {
+    for (const key of ['enrollment', 'forwarding', 'oidc']) {
+      const fixture = wakeFixture(leg);
+      delete fixture.evidence[key];
+      results.push(check(fixture, 'unverified'));
+    }
+    for (const mutate of [
+      e => { e.run.data.repository.id++; },
+      e => { e.run.data.actor.id++; },
+      e => { e.run.data.head_sha = 'f'.repeat(40); },
+      e => { e.forwarding.runId++; },
+      e => { e.enrollment.targetRunnerCount++; },
+      e => { e.oidc.checkRunId++; },
+      e => { e.permission = 'unavailable'; },
+    ]) {
+      const fixture = wakeFixture(leg);
+      mutate(fixture.evidence);
+      results.push(check(fixture, 'unverified'));
+    }
+    results.push(check(wakeFixture(leg, 'pending'), 'unverified'));
     const fixture = wakeFixture(leg);
     fixture.evidence.route = { ...fixture.expected, decision: 'no-eligible-assignee',
       forwarded: false };
