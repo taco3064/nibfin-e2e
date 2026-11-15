@@ -50,6 +50,8 @@ export async function fixtureInventory(directory, definition, actor, workerRoot)
             await file.sync();
           } finally { await file.close(); }
           await rename(pending, path);
+          const directory = await open(root, 'r');
+          try { await directory.sync(); } finally { await directory.close(); }
         };
         await save();
         return await action(state, save);

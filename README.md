@@ -177,3 +177,41 @@ For example, a scenario can return the result of
 and implement `verify(actual)` as `return confirmed(actual.assertion)`.
 Local contract tests demonstrate library behavior only; live-provider E2E,
 support certification, release and publication remain unverified here.
+
+### Disposable repository provisioning
+
+Protected operations can compose `repositoryDefinition(account, repository)` from
+`e2e/repository-definition.mjs`, `fixtureInventory`, `fixtureGithub` and
+`repositoryLifecycle` from `e2e/repository-lifecycle.mjs`. The account is an
+explicitly authorized disposable **User** account (`id`, `login`); `repository`
+is the existing credential-validation repository, not a provisioning target.
+The authenticated User must be that disposable account. This interface does not
+provision organization repositories or expose Installation helper credentials.
+
+Persist the returned definition in protected run state and reuse it unchanged
+when reopening the inventory. Its two random run-specific names, ownership
+marker and account are saved in the inventory before creation. Keep inventory
+outside the disposable worker root. Supply protected `context.authorize` for
+each operation and `context.idle` to confirm prior producers have stopped before
+recovery. A lost creation response additionally requires `context.receipt` to
+return `{ operation, native }` from protected native evidence bound to the exact
+creation intent; resource names and markers alone cannot supply that evidence.
+These callbacks are capabilities supplied by the trusted operations composition,
+never scenario input or environment credential discovery.
+
+`provision()` returns `state`, the inventory path and both repository records.
+Each record retains its intended name, account, marker, creation operation,
+creation settlement, seed settlement and acknowledged native identity. Native
+identity includes the full name, positive repository ID, owner and default
+branch. Installation consumers must require `state === 'ready'`; teardown
+consumers must retain every record, including unresolved effects. This module
+performs no installation or teardown.
+
+Seeds are maintained in `repositorySeed`: a small deterministic Node project
+with an exported greeting and an executable test. A single non-force default
+branch update publishes all project files. Read-back verifies their content at
+one observed commit. Unknown creation is never replayed, and unknown seed writes
+must be observed before any more writes to that repository. An absent or
+contradictory observation remains unresolved. Local provider-seam tests certify
+implementation behavior only; real provider creation and installation require
+the later authorized operations route.
