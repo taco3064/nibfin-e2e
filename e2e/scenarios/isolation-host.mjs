@@ -20,3 +20,7 @@ export function verify() {
 export function describe(actual) {
   return JSON.stringify(actual);
 }
+
+// Library composition for separately authorized callers. Ordinary scenario
+// context and verify() deliberately cannot activate or certify these operations.
+export { observeIsolation } from '../isolation-protected.mjs';
