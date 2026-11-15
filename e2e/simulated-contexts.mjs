@@ -77,7 +77,7 @@ export function simulatedContexts(provider, prepared, scope) {
   const teardown = {
     async authorize(definition) {
       scope('cleanup');
-      return definition.owner === d.owner;
+      return definition.owner === d.owner && provider.pending.size === 0;
     },
     async exclude() { provider.exclude(); },
     async execution() {
@@ -116,14 +116,10 @@ export function simulatedContexts(provider, prepared, scope) {
         target.owner === d.owner || !target.absent);
     },
     async repository(record) {
-      provider.authorize('observe', record.repository);
-      const native = provider.repositories.get(record.repository)?.native;
-      return { independent: true, complete: true, access: 'verified',
-        repository: record.repository, id: record.native.id, accountId: d.account.id,
-        absent: !native, native: clone(native) };
+      return provider.repositoryEvidence(record);
     },
     async deleteRepository(record) { provider.remove(record.repository); },
-    async receipt() { return null; },
+    async receipt(record) { return provider.receipt(record); },
     credentials: { revoke: async () => {
       provider.revoke();
       return { status: 'revoked' };
@@ -133,7 +129,8 @@ export function simulatedContexts(provider, prepared, scope) {
     context: { authorize: async request => {
       scope('provision');
       return request.owner === d.owner && request.actor === d.account.id;
-    }, idle: async () => provider.settled },
+    }, idle: async () => provider.settled,
+    receipt: async record => provider.receipt(record) },
     provider: () => ({ preflight: async () => d.account.id,
       observe: async record => {
         provider.authorize('observe', record.repository);
@@ -148,7 +145,15 @@ export function simulatedContexts(provider, prepared, scope) {
             headCommit: 'a'.repeat(40), repositoryId: row.native.id },
           checks: 'passed', reviewed: true, merged: true, contentMatches: true };
         }),
-      seedObserved: async record => provider.repository(record.repository).seeded,
+      seedObserved: async record => {
+        const seeded = provider.repository(record.repository).seeded;
+        // The lifecycle has already independently verified this original create
+        // and recorded settlement before it asks about the seed.
+        if (seeded && record.creation === 'settled') {
+          provider.resolve('create', record.repository);
+        }
+        return seeded;
+      },
     }),
   };
   return { repository: provisioning, installation: { context: installation },

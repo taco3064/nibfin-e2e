@@ -5,8 +5,7 @@ import { simulatedSourceAssertion } from './simulated-local.mjs';
 
 const clone = value => structuredClone(value);
 
-export function simulatedCaller(provider, repository) {
-  const legs = [];
+export function simulatedCaller(provider, repository, legs = []) {
   const offset = provider.executions.size;
   const peer = provider.definition.repositories.find(name => name !== repository);
   const issueLeg = binding => {

@@ -13,27 +13,27 @@ const operations = new Set(['create', 'seed', 'install', 'fixture', 'prepare',
 
 // This capability is composed by trusted local code, never selected by a request.
 // Only IDs, operation names and finite diagnostic codes enter the retained trace.
-export function simulatedProvider(definition) {
-  const repositories = new Map();
-  const observations = new Map();
-  const executions = new Map();
-  const registrations = new Map();
-  const targets = new Map();
-  const localResources = new Map();
-  let sourceOwner = null;
-  const trace = [];
+export function simulatedProvider(definition, retained, controls = {}) {
+  const state = retained ?? {
+    repositories: new Map(), observations: new Map(), executions: new Map(),
+    registrations: new Map(), targets: new Map(), localResources: new Map(),
+    receipts: new Map(), phases: new Map(), pending: new Set(), trace: [],
+    sourceOwner: null, excluded: false, revoked: false, active: 0,
+    effects: 'reconciled',
+  };
+  const { repositories, observations, executions, registrations, targets,
+    localResources, receipts, phases, pending, trace } = state;
   let phase = 'provision';
   let runId = null;
-  let excluded = false;
-  let revoked = false;
-  let active = 0;
-  let effects = 'reconciled';
   const repositoryId = name => repositoryIds[definition.repositories.indexOf(name)];
   const sharedRegistrations = name => [...registrations.values()].filter(row =>
     row.repositoryId === repositoryId(name) && row.memberId === definition.account.id);
+  const pendingKey = (operation, repository) =>
+    JSON.stringify([runId, phase, operation, repository]);
   const record = (operation, repository, outcome, resource = null) => {
     trace.push({ sequence: trace.length + 1, owner: definition.owner,
-      runId, phase, sourceOwner, operation, repository, resource, outcome });
+      runId, phase, sourceOwner: state.sourceOwner, operation, repository,
+      resource, outcome });
   };
   const reject = (code, operation, repository) => {
     record(operations.has(operation) ? operation : 'rejected',
@@ -47,13 +47,19 @@ export function simulatedProvider(definition) {
     if (!definition.repositories.includes(repository)) {
       reject('SIM_RESOURCE_UNRELATED', operation, repository);
     }
-    if ((excluded || revoked) && !['observe', 'remove', 'exclude', 'revoke']
+    if ((state.excluded || state.revoked) && !['observe', 'remove', 'exclude', 'revoke']
       .includes(operation)) reject('SIM_RUN_EXCLUDED', operation, repository);
   };
   const perform = (operation, repository, action, actor) => {
     authorize(operation, repository, actor);
     const result = action();
     record(operation, repository, 'observed');
+    if (['create', 'trigger', 'remove'].includes(operation) &&
+        controls.dropReply?.(operation, repository) === true) {
+      if (operation !== 'remove') pending.add(pendingKey(operation, repository));
+      record(operation, repository, 'reply-lost');
+      throw new Error('SIM_REPLY_LOST');
+    }
     return result;
   };
   const repository = name => {
@@ -74,14 +80,35 @@ export function simulatedProvider(definition) {
   };
   return {
     definition, repositories, executions, registrations, targets, localResources,
-    bindSources(owner) {
-      if (sourceOwner !== null) throw new Error('SIM_SOURCE_OWNER_CONFLICT');
-      sourceOwner = owner;
+    phases, pending,
+    snapshot: () => clone(state),
+    resolve(operation, repository) { pending.delete(pendingKey(operation, repository)); },
+    receipt(record) {
+      const receipt = receipts.get(record.operation);
+      if (!receipt || receipt.operation !== record.operation ||
+          receipt.repository !== record.repository ||
+          receipt.runId !== runId || receipt.sourceOwner !== state.sourceOwner ||
+          receipt.owner !== definition.owner) return null;
+      return clone(receipt);
     },
-    get excluded() { return excluded; },
-    get revoked() { return revoked; },
-    get settled() { return active === 0 && effects === 'reconciled'; },
-    get effects() { return effects; },
+    repositoryEvidence(record) {
+      authorize('observe', record.repository);
+      const receipt = this.receipt(record);
+      const native = repositories.get(record.repository)?.native;
+      return { independent: true, complete: Boolean(receipt), access: 'verified',
+        repository: record.repository, id: receipt?.native.id,
+        accountId: definition.account.id, absent: !native, native: clone(native) };
+    },
+    bindSources(owner) {
+      if (state.sourceOwner !== null && state.sourceOwner !== owner) {
+        throw new Error('SIM_SOURCE_OWNER_CONFLICT');
+      }
+      state.sourceOwner = owner;
+    },
+    get excluded() { return state.excluded; },
+    get revoked() { return state.revoked; },
+    get settled() { return state.active === 0 && state.effects === 'reconciled'; },
+    get effects() { return state.effects; },
     trace: () => clone(trace),
     scope(id, name) { runId = id; phase = name; },
     authorize, perform, repository, store, repositoryId, sharedRegistrations, slotIds,
@@ -107,6 +134,9 @@ export function simulatedProvider(definition) {
           archived: false, disabled: false, visibility: 'public', private: false };
         repositories.set(record.repository, { owner: definition.owner, native,
           seeded: false, installed: false, service: 'inactive' });
+        receipts.set(record.operation, { operation: record.operation,
+          repository: record.repository, native: clone(native), runId,
+          sourceOwner: state.sourceOwner, owner: definition.owner });
         return clone(native);
       });
     },
@@ -117,12 +147,12 @@ export function simulatedProvider(definition) {
       }
       return row;
     },
-    exclude() { excluded = true; record('exclude', null, 'observed'); },
-    revoke() { revoked = true; record('revoke', null, 'observed'); },
-    begin() { active++; },
+    exclude() { state.excluded = true; record('exclude', null, 'observed'); },
+    revoke() { state.revoked = true; record('revoke', null, 'observed'); },
+    begin() { state.active++; },
     end(known = true) {
-      active--;
-      if (!known) effects = 'unknown';
+      state.active--;
+      if (!known) state.effects = 'unknown';
     },
     sourceResult(repository, issue, state) {
       if (!['satisfied', 'contradicted', 'unknown'].includes(state)) {
@@ -134,7 +164,8 @@ export function simulatedProvider(definition) {
     remove(name) {
       return perform('remove', name, () => {
         const row = repository(name);
-        if (!excluded || !this.settled || row.owner !== definition.owner) {
+        if (!state.excluded || pending.size || !this.settled ||
+            row.owner !== definition.owner) {
           reject('SIM_REMOVAL_UNSAFE', 'remove', name);
         }
         repositories.delete(name);
