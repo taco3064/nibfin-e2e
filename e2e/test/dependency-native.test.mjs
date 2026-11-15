@@ -4,6 +4,8 @@ import { readFile } from 'node:fs/promises';
 import { fixtureDefinition } from '../fixture-definition.mjs';
 import { fixtureGithub } from '../fixture-github.mjs';
 import { fixtureBudget } from '../fixture-budget.mjs';
+import { credentialConfiguration, credentialObservation }
+  from './credential-support.mjs';
 import { githubObserver } from '../github-observer.mjs';
 import { dependencyFixture } from './dependency-support.mjs';
 
@@ -81,7 +83,10 @@ test('native dependency write uses Issue ID, then independent paginated GET coll
   async () => {
     const calls = [];
     const responses = [null, [issue(29)], [issue(31)]];
-    const provider = fixtureGithub({ token: 'SYNTHETIC', fetcher: async (url, init) => {
+    const provider = fixtureGithub({ ...credentialConfiguration('SYNTHETIC',
+      'fixture/repository'), fetcher: async (url, init) => {
+      const observation = credentialObservation(url, 'fixture/repository');
+      if (observation) return observation;
       calls.push({ url, ...init });
       const index = calls.length - 1;
       return { status: index === 0 ? 201 : 200,

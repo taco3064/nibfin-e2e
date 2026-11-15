@@ -5,33 +5,43 @@ import { fixtureBudget } from '../fixture-budget.mjs';
 import { fixtureDefinition } from '../fixture-definition.mjs';
 import { fixture, sha } from './fixture-support.mjs';
 import { fixtureLifecycle } from '../fixture-lifecycle.mjs';
+import { credentialConfiguration as configuration, credentialRepository,
+  credentialObservation } from './credential-support.mjs';
 
 const response = (data, status = 200, link = null) => ({
-  status, headers: { get: () => link }, json: async () => data,
+  status, headers: { get: key => key === 'x-oauth-scopes' ? 'repo' : link },
+  json: async () => data,
 });
-function adapter(responses, definition = fixtureDefinition('native-adapter')) {
+const repository = definition => credentialRepository(definition.repository);
+function adapter(responses, definition = fixtureDefinition('native-adapter'),
+  nativePreflight = false) {
   const calls = [];
-  const provider = fixtureGithub({ token: 'PRIVATE', fetcher: async (url, init) => {
-    calls.push({ url, ...init });
-    assert.equal(init.redirect, 'error');
-    assert.equal(init.headers.authorization, 'Bearer PRIVATE');
-    if (!responses.length) throw new Error('Unexpected request');
-    return responses.shift();
-  } });
+  const provider = fixtureGithub({ ...configuration('PRIVATE'),
+    fetcher: async (url, init) => {
+      const observation = credentialObservation(url, definition.repository);
+      if (!nativePreflight && observation) return observation;
+      calls.push({ url, ...init });
+      assert.equal(init.redirect, 'error');
+      assert.equal(init.headers.authorization, 'Bearer PRIVATE');
+      if (!responses.length) throw new Error('Unexpected request');
+      return responses.shift();
+    } });
   return { api: provider(fixtureBudget(), definition), calls, definition };
 }
 
 test('native preflight observes the authenticated actor and exact target', async () => {
   const definition = fixtureDefinition('native-adapter');
-  const repo = { full_name: definition.repository, archived: false, disabled: false };
-  const f = adapter([response({ id: 7 }), response(repo)], definition);
+  const repo = repository(definition);
+  const f = adapter([response({ id: 7, type: 'User' }), response(repo)],
+    definition, true);
   assert.equal(await f.api.preflight(), 7);
   assert.equal(f.calls[0].url, 'https://api.github.com/user');
   assert.equal(f.calls[1].url,
     `https://api.github.com/repos/${definition.repository}`);
   for (const data of [{ ...repo, full_name: 'other/repo' },
     { ...repo, archived: true }, { full_name: definition.repository }]) {
-    await assert.rejects(adapter([response({ id: 7 }), response(data)], definition)
+    await assert.rejects(adapter([response({ id: 7, type: 'User' }), response(data)],
+      definition, true)
       .api.preflight());
   }
 });
@@ -106,20 +116,20 @@ test('native adapter lifecycle covers fresh reads and bounded writes',
     const f = await fixture(t);
     const calls = [];
     let issue;
-    const provider = fixtureGithub({ token: 'SYNTHETIC', fetcher: async (url, init) => {
-      calls.push([url, init.method]);
-      if (url.endsWith('/user')) return response({ id: 7 });
-      const root = `https://api.github.com/repos/${f.definition.repository}`;
-      if (url === root) return response({ full_name: f.definition.repository,
-        archived: false, disabled: false });
-      if (init.method === 'POST') {
-        issue = { ...JSON.parse(init.body), id: 100, number: 10,
-          user: { id: 7 }, state: 'open', url: `${root}/issues/10` };
-        return response(issue, 201);
-      }
-      if (init.method === 'PATCH') issue.state = 'closed';
-      return response(structuredClone(issue));
-    } });
+    const provider = fixtureGithub({ ...configuration('SYNTHETIC'),
+      fetcher: async (url, init) => {
+        calls.push([url, init.method]);
+        if (url.endsWith('/user')) return response({ id: 7, type: 'User' });
+        const root = `https://api.github.com/repos/${f.definition.repository}`;
+        if (url === root) return response(repository(f.definition));
+        if (init.method === 'POST') {
+          issue = { ...JSON.parse(init.body), id: 100, number: 10,
+            user: { id: 7 }, state: 'open', url: `${root}/issues/10` };
+          return response(issue, 201);
+        }
+        if (init.method === 'PATCH') issue.state = 'closed';
+        return response(structuredClone(issue));
+      } });
     const lifecycle = fixtureLifecycle({ inventory: f.inventory, provider,
       context: f.context });
     assert.equal((await lifecycle.setup('issue')).state, 'passing');
@@ -129,7 +139,7 @@ test('native adapter lifecycle covers fresh reads and bounded writes',
   });
 
 test('native adapter timeout includes stalled response body consumption', async () => {
-  const provider = fixtureGithub({ token: 'SYNTHETIC', fetcher: async () => ({
+  const provider = fixtureGithub({ ...configuration('SYNTHETIC'), fetcher: async () => ({
     status: 200, headers: { get: () => null }, json: () => new Promise(() => {}),
   }) });
   const api = provider(fixtureBudget({ requestTimeoutMs: 5 }),
@@ -147,17 +157,17 @@ test('incomplete PR observations block lifecycle branch deletion until resolved'
       repo: { full_name: f.definition.repository } };
     let pulls;
     const writes = [];
-    const provider = fixtureGithub({ token: 'SYNTHETIC', fetcher: async (url, init) => {
-      if (init.method !== 'GET') {
-        writes.push(init.method);
-        return response(null, 204);
-      }
-      if (url.endsWith('/user')) return response({ id: 7 });
-      if (url.includes('/pulls?')) return response(pulls);
-      if (url.includes('/git/ref/')) return response(branch);
-      return response({ full_name: f.definition.repository,
-        archived: false, disabled: false });
-    } });
+    const provider = fixtureGithub({ ...configuration('SYNTHETIC'),
+      fetcher: async (url, init) => {
+        if (init.method !== 'GET') {
+          writes.push(init.method);
+          return response(null, 204);
+        }
+        if (url.endsWith('/user')) return response({ id: 7, type: 'User' });
+        if (url.includes('/pulls?')) return response(pulls);
+        if (url.includes('/git/ref/')) return response(branch);
+        return response(repository(f.definition));
+      } });
     const lifecycle = fixtureLifecycle({ inventory: f.inventory, provider,
       context: f.context });
     const incomplete = [null, {}, { head: {} }, { head: { ref: head.ref } },

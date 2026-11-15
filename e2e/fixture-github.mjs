@@ -1,26 +1,36 @@
+import { fixtureCredentials } from './fixture-credentials.mjs';
 import { generatedPath } from './fixture-definition.mjs';
 
 // Narrow REST adapter for the protected runner. The observation transport stays GET-only.
 // No environment, credential discovery, CLI, workflow or worker entry point is provided.
-export function fixtureGithub({ token, fetcher = fetch }) {
-  if (typeof token !== 'string' || !token) throw new Error('Explicit token required');
+export function fixtureGithub({ fetcher = fetch, ...configuration }) {
   return function session(budget, definition) {
+    const credentials = fixtureCredentials({ ...configuration,
+      secretProvider: reference => budget.call(() =>
+        configuration.secretProvider(reference)),
+    });
     const root = `https://api.github.com/repos/${definition.repository}`;
-    async function request(method, url, body, missing = false) {
-      const response = await budget.call(signal => fetcher(url, {
-        method, signal, redirect: 'error',
-        headers: { accept: 'application/vnd.github+json',
-          authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        ...(body ? { body: JSON.stringify(body) } : {}),
-      }).then(async response => ({ status: response.status,
-        link: response.headers.get('link'),
-        data: response.status === 204 ? null : await response.json() })));
-      if (missing && response.status === 404) return null;
-      if (response.status < 200 || response.status >= 300) {
-        throw new Error('Fixture GitHub request unavailable');
-      }
-      return response;
+    async function transport(token, method, url, body, missing = false) {
+      try {
+        const response = await budget.call(signal => fetcher(url, {
+          method, signal, redirect: 'error',
+          headers: { accept: 'application/vnd.github+json',
+            authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          ...(body ? { body: JSON.stringify(body) } : {}),
+        }).then(async response => ({ status: response.status,
+          link: response.headers.get('link'),
+          scopes: response.headers.get('x-oauth-scopes'),
+          data: response.status === 204 ? null : await response.json() })));
+        if (missing === 'revocation' && response.status === 401) return response;
+        if (missing === true && response.status === 404) return null;
+        if (response.status < 200 || response.status >= 300) {
+          throw new Error('Fixture GitHub request unavailable');
+        }
+        return response;
+      } catch { throw new Error('Fixture GitHub request unavailable'); }
     }
+    const authentication = credentials(transport, definition);
+    const request = authentication.userRequest;
     async function collection(path) {
       const items = [];
       for (let page = 1; page <= 20; page++) {
@@ -37,14 +47,11 @@ export function fixtureGithub({ token, fetcher = fetch }) {
       `git/ref/heads/${definition.name}` :
       `${record.kind === 'issue' ? 'issues' : 'pulls'}/${record.native.number}`;
     return {
+      capabilities: authentication.capabilities,
+      automationBranch: authentication.automationBranch,
+      revokeAutomation: authentication.revoke,
       async preflight() {
-        const actor = await request('GET', 'https://api.github.com/user');
-        const repository = await request('GET', root);
-        if (repository.data.full_name !== definition.repository ||
-            repository.data.archived !== false || repository.data.disabled !== false) {
-          throw new Error('Fixture target mismatch');
-        }
-        return actor.data.id;
+        return (await authentication.capabilities()).user.actorId;
       },
       async beforeCreate(record) {
         if (record.kind === 'branch') {
