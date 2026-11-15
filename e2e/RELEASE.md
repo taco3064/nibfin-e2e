@@ -164,3 +164,64 @@ carry `mode: 'contract-test'`. Controlled success is not public-release evidence
 Production coverage remains unmapped and blocks live publication. #65, actual
 mandatory E2E/preflight, protected composition and separate release authorization
 remain prerequisites for a real release.
+
+## Manual entry and protected-maintenance handoff
+
+`releaseEntry(env, request, protectedCapabilities)` in `release-entry.mjs` routes
+`env.NIBFIN_RELEASE_VERSION` through `createPublicationCoordinator`, which builds
+its own production gate. Only this single strict semantic version is ordinary input.
+The entry accepts no serialized handoff, dependency selector or environment-based
+authorization. It returns the coordinator's bounded result. The standalone executable
+has no protected capabilities and exits blocked; environment claims and observation
+credentials cannot enable publication.
+
+A separately authorized protected-maintenance PR must supply the following isolated
+in-process capabilities. The current workflow does **not** configure them, durable
+recovery storage or publication credentials. Its read-only observation token is not
+publication authority. No protected workflow changes are part of this implementation.
+
+- `verifyInvocation`: the independently authenticated protected-main dispatch,
+  Environment approval, actor and original run identity described above. Authenticate
+  native context; do not interpret environment strings as proof. The entry fixes the
+  repository, workflow and Environment to the maintained release workflow and
+  `nibfin-release`. It rechecks the same original invocation before each write.
+- `request`: an authenticated read-only GitHub transport with complete visibility
+  into tags **and draft Releases** in every official repository. If its access cannot
+  establish that visibility, do not supply it as an authoritative observation
+  capability. `release-observations.mjs` exhausts pagination, includes both version
+  aliases and drafts, and rejects failed/malformed reads or bounded pagination
+  exhaustion. It never treats inaccessible state as absence.
+- `observeActivePublications(repository)`: freshly returns the complete array of
+  competing publication identities from the protected serialization authority.
+  An empty array certifies absence; unknown or inaccessible state must throw.
+  The workflow's concurrency declaration alone is not an observation of activity.
+- `native`, `evidence`, and `verifyConditions`: the coordinator capabilities described
+  above, with least-privilege publication access only to the official repositories
+  and necessary Git objects, tags, Releases and assets. The host may construct native
+  access with `createGitHubPublisher`; neither its credential nor evidence access
+  may enter a scenario, Candidate process, ordinary environment or request document.
+- `resume: true`: a protected recovery decision, never a CLI/environment switch.
+  The entry binds the handoff to the original authenticated run and version.
+  `verifyConditions` must reconcile the original source identities, serialization,
+  current approval and native publications against acknowledged run-scoped evidence.
+  During recovery it distinguishes recorded owned objects from competitors using
+  native identities and saved intents, never names alone. Fresh empty-state conflict
+  checks cannot replace this reconciliation: owned partial tags/Releases are expected.
+
+The evidence adapter must durably acknowledge saves before resolving, bind loads to
+this run/version, and return `null` only with authoritative proof of a fresh run.
+Unavailable, expired, inconsistent or untrusted evidence must throw. Retain original
+content, intents and independent native identities until all uncertain effects are
+resolved and the authorized retention period ends. The host owns this operational
+retention and recovery; these records are not Candidate artifacts. Do not substitute
+newer main or regenerate disposed assets. Unknown process termination retains source
+resources under their existing owner. No fresh-run fallback or blind write retry is
+permitted.
+
+`releaseContractEntry` is the explicit credential-free composition test interface.
+It uses the same entry validation/observation path with the existing controlled
+coordinator and fake adapters; results carry `mode: 'contract-test'`. Production has
+no dependency override. Controlled success establishes maintained composition only.
+Mandatory production mappings remain unavailable, so even a protected composition
+continues to block until separately authorized coverage and operational prerequisites
+exist. Actual E2E and separately authorized public release remain distinct outcomes.
