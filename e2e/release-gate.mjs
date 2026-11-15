@@ -1,6 +1,7 @@
 import { runReleaseCoverage, requireReleaseCoverage } from './release-coverage.mjs';
 import { prepareSources } from './sources.mjs';
 import { run } from './runner.mjs';
+import { requireNativeSuite } from './suite-result.mjs';
 import { scenarios, register } from './registry.mjs';
 import { catalog, validateCatalog, products } from './coverage-catalog.mjs';
 import { calculateCoverage } from './coverage.mjs';
@@ -55,7 +56,19 @@ function buildGate(capabilities, dependencies, mode) {
       );
       const native = mode === 'production' || dependencies.nativeCoverage === true;
       if (native) requireReleaseCoverage(capabilities.coverage);
-      prepared = await dependencies.prepare();
+      let suite;
+      if (native) {
+        if (typeof capabilities.suite?.open !== 'function') {
+          throw new Error('SUITE: original suite ownership unavailable');
+        }
+        const owned = await capabilities.suite.open({
+          invocation: structuredClone(invocation),
+        });
+        prepared = owned?.prepared;
+        suite = owned?.result;
+        // Unvalidated suite evidence cannot prove its source owner is disposable.
+        unsettled = true;
+      } else prepared = await dependencies.prepare();
       if (!prepared || prepared.disposed !== false ||
           typeof prepared.dispose !== 'function') {
         throw new Error('SOURCES: invalid ownership');
@@ -63,6 +76,10 @@ function buildGate(capabilities, dependencies, mode) {
       const sources = sourceIdentities(prepared.sources);
       const sourceSnapshot = JSON.stringify(prepared.sources);
       validateRemoteMains(await observeMains(), sources);
+      if (native) {
+        requireNativeSuite(suite, prepared, invocation);
+        unsettled = false;
+      }
       const document = native
         ? await runReleaseCoverage(capabilities.coverage, prepared, invocation,
           selected, mode)
