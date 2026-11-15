@@ -33,6 +33,7 @@ export async function fixtureInventory(directory, definition, actor, workerRoot)
       // Never break a stale lock automatically: the previous owner may still run.
       const lock = await open(lockPath, 'wx', 0o600);
       let state;
+      let retained = false;
       try {
         try { state = JSON.parse(await readFile(path, 'utf8')); }
         catch (error) {
@@ -54,10 +55,12 @@ export async function fixtureInventory(directory, definition, actor, workerRoot)
           try { await directory.sync(); } finally { await directory.close(); }
         };
         await save();
-        return await action(state, save);
+        // Protected callers may retain ownership when native work might run.
+        // Retirement requires independent termination/effect recovery, never age.
+        return await action(state, save, () => { retained = true; });
       } finally {
         await lock.close();
-        await rm(lockPath);
+        if (!retained) await rm(lockPath);
       }
     },
   };
