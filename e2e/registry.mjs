@@ -33,6 +33,8 @@ const isolation = (id, group, title, module) => ({
 });
 export const scenarios = Object.freeze([
   ...wake,
+  isolation('pressure.fixture', 'pressure-contract',
+    'Synthetic Writer pressure and handshake observations', 'pressure'),
   isolation('concurrency.fixture', 'concurrency-contract',
     'Synthetic concurrency and recovery contracts', 'concurrency-local'),
   isolation('concurrency.live', 'concurrency',

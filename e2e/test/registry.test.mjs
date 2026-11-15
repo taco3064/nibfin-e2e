@@ -15,6 +15,7 @@ const groups = {
   delivery: ['delivery.live', 'delivery.paired.live'],
   dependency: ['dependency.live'],
   'concurrency-contract': ['concurrency.fixture'],
+  'pressure-contract': ['pressure.fixture'],
   concurrency: ['concurrency.live'],
   pause: ['pause.live', 'pause.recovery.fixture'],
 };
