@@ -23,48 +23,10 @@ export function assertConcurrency(binding, evidence) {
       new Set(binding.issues).size !== binding.issues.length) {
     return unknown('ISSUE_BINDING_REQUIRED');
   }
-  if (!evidence || !same(evidence, binding, ['requestId', 'repository', 'case']) ||
-      !Array.isArray(evidence.issues) ||
-      JSON.stringify(evidence.issues) !== JSON.stringify(binding.issues)) {
-    return unknown('EVIDENCE_BINDING_REQUIRED');
-  }
+  const history = assertWriterHistory(binding, evidence);
+  if (history.state !== 'passed') return history;
   const { admissions, writers, coverage } = evidence;
-  if (!Array.isArray(admissions) || !Array.isArray(writers) ||
-      admissions.length > 100 || writers.length > 100 ||
-      admissions.some(a => !validAdmission(a) || !binding.issues.includes(a.issue)) ||
-      new Set(admissions.map(admissionKey)).size !== admissions.length) {
-    return unknown('ADMISSION_HISTORY_REQUIRED');
-  }
-  const unique = new Map();
-  for (const w of writers) {
-    if (!w || !text(w.executionId) || !validAdmission(w) ||
-        !admissions.some(a => same(w, a, [...identity, 'memberId'])) ||
-        !time(w.start) || !time(w.activeUntil) || w.activeUntil < w.start ||
-        !(w.end === null || time(w.end) && w.end >= w.activeUntil)) {
-      return unknown('WRITER_IDENTITY_REQUIRED');
-    }
-    const old = unique.get(w.executionId);
-    if (old && !same(w, old, [...identity, 'memberId', 'start', 'end',
-      'activeUntil'])) {
-      return unknown('CONFLICTING_WRITER_HISTORY');
-    }
-    unique.set(w.executionId, w);
-  }
-  const executions = [...unique.values()];
-  for (const a of executions) for (const b of executions) {
-    if (a.issue === b.issue && a.executionId !== b.executionId &&
-        a.start < (b.end ?? b.activeUntil) && b.start < (a.end ?? a.activeUntil)) {
-      return failed('OVERLAPPING_WRITERS');
-    }
-  }
-  if (!coverage || coverage.admissions !== true || coverage.writers !== true ||
-      !time(coverage.start) || !time(coverage.end) ||
-      coverage.end <= coverage.start || executions.some(w =>
-        w.start < coverage.start || w.activeUntil > coverage.end ||
-        w.start > coverage.end ||
-        w.end !== null && w.end > coverage.end)) {
-    return unknown('COMPLETE_PROTECTED_HISTORY_REQUIRED');
-  }
+  const executions = [...new Map(writers.map(w => [w.executionId, w])).values()];
   if (binding.case === 'independent') {
     if (binding.issues.length !== 2 || new Set(binding.issues).size !== 2 ||
         !positive(evidence.capacity) || evidence.capacity < 2 ||
@@ -133,4 +95,56 @@ export function assertConcurrency(binding, evidence) {
     if (route.retainedMember !== binding.memberId) return failed('ROUTE_SWITCHED');
   } else return unknown('CASE_REQUIRED');
   return result('passed', 'CONCURRENCY_CONTRACT_CONFIRMED');
+}
+
+// Shared history proof for lifecycle faults; case-specific policy stays above.
+export function assertWriterHistory(binding, evidence) {
+  if (!binding || !Array.isArray(binding.issues) || !binding.issues.length ||
+      !binding.issues.every(positive) ||
+      new Set(binding.issues).size !== binding.issues.length) {
+    return unknown('ISSUE_BINDING_REQUIRED');
+  }
+  if (!evidence || !same(evidence, binding, ['requestId', 'repository', 'case']) ||
+      !Array.isArray(evidence.issues) ||
+      JSON.stringify(evidence.issues) !== JSON.stringify(binding.issues)) {
+    return unknown('EVIDENCE_BINDING_REQUIRED');
+  }
+  const { admissions, writers, coverage } = evidence;
+  if (!Array.isArray(admissions) || !Array.isArray(writers) ||
+      admissions.length > 100 || writers.length > 100 ||
+      admissions.some(a => !validAdmission(a) || !binding.issues.includes(a.issue)) ||
+      new Set(admissions.map(admissionKey)).size !== admissions.length) {
+    return unknown('ADMISSION_HISTORY_REQUIRED');
+  }
+  const unique = new Map();
+  for (const w of writers) {
+    if (!w || !text(w.executionId) || !validAdmission(w) ||
+        !admissions.some(a => same(w, a, [...identity, 'memberId'])) ||
+        !time(w.start) || !time(w.activeUntil) || w.activeUntil < w.start ||
+        !(w.end === null || time(w.end) && w.end >= w.activeUntil)) {
+      return unknown('WRITER_IDENTITY_REQUIRED');
+    }
+    const old = unique.get(w.executionId);
+    if (old && !same(w, old, [...identity, 'memberId', 'start', 'end',
+      'activeUntil'])) {
+      return unknown('CONFLICTING_WRITER_HISTORY');
+    }
+    unique.set(w.executionId, w);
+  }
+  const executions = [...unique.values()];
+  for (const a of executions) for (const b of executions) {
+    if (a.issue === b.issue && a.executionId !== b.executionId &&
+        a.start < (b.end ?? b.activeUntil) && b.start < (a.end ?? a.activeUntil)) {
+      return failed('OVERLAPPING_WRITERS');
+    }
+  }
+  if (!coverage || coverage.admissions !== true || coverage.writers !== true ||
+      !time(coverage.start) || !time(coverage.end) ||
+      coverage.end <= coverage.start || executions.some(w =>
+        w.start < coverage.start || w.activeUntil > coverage.end ||
+        w.start > coverage.end ||
+        w.end !== null && w.end > coverage.end)) {
+    return unknown('COMPLETE_PROTECTED_HISTORY_REQUIRED');
+  }
+  return result('passed', 'WRITER_HISTORY_CONFIRMED');
 }

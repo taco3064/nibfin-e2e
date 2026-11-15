@@ -39,7 +39,7 @@ function independent(deliveries, history) {
   });
 }
 
-async function execute(request, caller, bounds, sources) {
+async function execute(request, caller, bounds, sources, lifecycle) {
   const mode = caller?.mode === 'fixture' ? 'fixture' : 'live';
   const output = (state, code) => ({ state, code, mode, liveVerified: false });
   if (!valid(request)) return output('blocked', 'INVALID_REQUEST');
@@ -100,6 +100,10 @@ async function execute(request, caller, bounds, sources) {
           wake.status !== 'completed') throw new Error();
       binding.wake = wake;
     }
+    if (lifecycle) {
+      phase = 'FAULT_LIFECYCLE_UNVERIFIED';
+      await lifecycle(bindings, { sourceRoot: sources?.root });
+    }
     for (const binding of bindings) {
       const result = await finishDelivery(binding, caller, call, bounds,
         evidence => deliveries.push(evidence));
@@ -144,14 +148,21 @@ async function execute(request, caller, bounds, sources) {
   return outcome;
 }
 
-export async function runDeliveryPair(request, caller, bounds = {}) {
+export function runDeliveryPair(request, caller, bounds = {}) {
+  return runDeliveryPairWithLifecycle(request, caller, bounds);
+}
+
+// Internal protected composition: lifecycle may settle a fault before terminal
+// delivery observation. Returned Wake identities still require native validation.
+export async function runDeliveryPairWithLifecycle(request, caller, bounds = {},
+  lifecycle) {
   if (caller?.mode !== 'live' || !valid(request) ||
       capabilities.some(name => typeof caller?.[name] !== 'function')) {
-    return execute(request, caller, bounds);
+    return execute(request, caller, bounds, undefined, lifecycle);
   }
   try {
     return await withDeliverySources(sources => execute(request, caller, bounds,
-      sources));
+      sources, lifecycle));
   } catch {
     return { state: 'unverified', code: 'SOURCE_PREPARATION_UNAVAILABLE',
       mode: 'live', liveVerified: false };

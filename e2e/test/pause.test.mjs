@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { runLifecycle } from '../lifecycle.mjs';
 import { runPause } from '../pause-protected.mjs';
 import { reconcilePauseExecution } from '../pause-recovery.mjs';
 import { dependencyFixture } from './dependency-support.mjs';
@@ -58,7 +59,8 @@ async function fixture(t) {
 
 test('owned pause mutation, native history and Core evidence stay distinct', async t => {
   const f = await fixture(t);
-  const result = await runPause('fixture/repository', f.caller);
+  const result = await runLifecycle({ repository: 'fixture/repository',
+    case: 'pause-resume' }, f.caller);
   assert.equal(result.state, 'passed', JSON.stringify(result));
   assert.equal(result.liveVerified, false);
   assert.equal(f.admissions(), 2);
