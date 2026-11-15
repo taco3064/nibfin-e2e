@@ -44,29 +44,43 @@ export function githubObserver(provider, options = {}) {
       throw new Error('Positive finite bounds required');
     }
   }
-  return async function observe(input, expected) {
+  return async function observe(input, expected, { signal } = {}) {
     const target = Object.freeze({ ...input });
     const descriptor = resource(target);
     const deadline = performance.now() + config.timeoutMs;
     let requests = 0;
     const unresolved = reason => ({ target, complete: false, reason });
     async function wait(delay) {
-      if (delay >= deadline - performance.now()) return false;
-      await new Promise(resolve => setTimeout(resolve, delay));
-      return performance.now() < deadline;
+      if (signal?.aborted || delay >= deadline - performance.now()) return false;
+      await new Promise(resolve => {
+        const done = () => {
+          clearTimeout(timer);
+          signal?.removeEventListener('abort', done);
+          resolve();
+        };
+        const timer = setTimeout(done, delay);
+        signal?.addEventListener('abort', done, { once: true });
+      });
+      return !signal?.aborted && performance.now() < deadline;
     }
     async function request(url) {
-      while (requests < config.maxRequests && performance.now() < deadline) {
+      while (!signal?.aborted && requests < config.maxRequests &&
+          performance.now() < deadline) {
         requests++;
         const controller = new AbortController();
         const duration = Math.min(config.requestTimeoutMs,
           deadline - performance.now());
         let timer;
         let response;
+        let abort;
         try {
           response = await Promise.race([
-            Promise.resolve().then(() => provider(url, { signal: controller.signal })),
+            Promise.resolve().then(() => provider(url, { signal: signal ?
+              AbortSignal.any([signal, controller.signal]) : controller.signal })),
             new Promise((_, reject) => {
+              abort = () => reject(new Error('Cancelled'));
+              signal?.addEventListener('abort', abort, { once: true });
+              if (signal?.aborted) abort();
               timer = setTimeout(() => {
                 controller.abort();
                 reject(new Error('Timeout'));
@@ -74,7 +88,10 @@ export function githubObserver(provider, options = {}) {
             }),
           ]);
         } catch { return { reason: 'unavailable' }; }
-        finally { clearTimeout(timer); }
+        finally {
+          clearTimeout(timer);
+          signal?.removeEventListener('abort', abort);
+        }
         if (!Number.isInteger(response?.status)) return { reason: 'malformed' };
         if (response.status === 429 || (response.status === 403 &&
             (header(response.headers, 'x-ratelimit-remaining') === '0' ||
@@ -131,7 +148,8 @@ export function githubObserver(provider, options = {}) {
       return unresolved('page-budget-exhausted');
     }
     let last;
-    while (requests < config.maxRequests && performance.now() < deadline) {
+    while (!signal?.aborted && requests < config.maxRequests &&
+          performance.now() < deadline) {
       last = await snapshot();
       if (expected === undefined) return { ...last, requests };
       const assertion = assertObservation(last, expected);

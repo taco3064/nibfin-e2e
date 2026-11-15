@@ -35,8 +35,9 @@ runner responsibility, unavailable in routine local verification.
 `correlateWake(leg, expected, evidence, mode)` is a pure bounded assertion.
 Explicitly pass the fourth argument `fixture` for
 synthetic evidence; the mode is provenance supplied by the protected caller,
-not an authenticity check. Public output contains only leg, mode, state and a
-maintained diagnostic code. No provider objects, tokens or raw errors are emitted.
+not an authenticity check. Public output contains leg, mode, state, a maintained
+diagnostic code and, for passing shared execution, the allowlisted observed OIDC
+identity binding. No provider objects, tokens or raw errors are emitted.
 
 `expected` binds the Issue's `repository`, Issue number (`issue`), the execution
 `runRepository`, Run ID (`runId`), attempt,
@@ -82,3 +83,75 @@ not sum repeated observations into multiple admissions.
 
 The local tests use synthetic providers even when exercising protected composition.
 No test result here claims a live GitHub event, Action invocation or host support.
+
+## Peer enrollment and shared identity (#89)
+
+`protectedPeerEnrollment` in `peer-protected.mjs` is an operator-only library.
+It receives prepared `sources`, the existing exclusive repository `inventory`,
+and an independently authorized `context`. Ordinary scenarios receive neither
+this context nor privileged callbacks. The context fixes `origin` (`operator`
+or `synthetic`) and `binding`: owner, hostId, memberId, B's repository/name and
+repositoryId, and A's runRepository/name and runRepositoryId. The installation
+record in that inventory must already independently confirm A's installation,
+prepared sources and two distinct native Runner identities.
+
+The context implements `authorize`, `observe`, `adopt`, and `reconcile`.
+`adopt(binding, {sources, intent, signal})` invokes the existing Core peer adoption
+capability through the authorized operator adapter. It cannot select a command,
+credential or host. `reconcile(binding, intent, {signal})` must confirm both
+`terminated: true` and `effects: reconciled`. A lost response or timeout retains
+the adoption intent in `installation.peers` in the same recovery inventory.
+Read retries cannot clear that intent or replay adoption. Repeated successful
+enrollment reads current state and preserves the original pool identities.
+
+`observe(binding, {signal})` supplies independent readback:
+
+- `binding`, prepared `sources`, and `authenticatedMemberId`;
+- `registrations`: B's repository/name, repositoryId, `complete: true`, and a
+  native `runners: []` collection (incomplete data cannot establish absence);
+- `executionRegistrationsComplete: true` and `executionRunners`: A's two original
+  native id, name, memberId and repositoryId associations;
+- `adopted` from the protected adoption readback;
+- `callers.issue`, `callers.action`, and `callers.execution`, each with repository,
+  repositoryId, workflowId, path, sourceCommit, branch, ref, blob, content,
+  `complete: true` and `active: true`.
+
+Caller contents must exactly match recipes imported from prepared Core using
+its prepared Core/Action source identities and enrolled member. The execution
+workflow must match the prepared Core workflow. Full contents and raw provider
+objects are discarded. The observation's sourceCommit identifies the currently
+adopted invocation source; no additional version catalog or historical branch
+head is required. Unrelated branch advancement alone does not reject enrollment.
+
+`enrollAndObserveSharedIssue({enrollment, ...observationOptions})` composes a single
+enrollment with Wake observation, injecting its result into the evidence. It
+never dispatches and never retries enrollment. `observeLiveWake` also accepts
+`maxAttempts` (1 by default, at most 10); one shared request/time budget covers
+all read attempts. `observe(target, undefined, {signal})` forwards cancellation
+to the bounded GitHub observer and provider. Mutation remains outside read retries.
+
+Shared expectations and observed Core/Wake records additionally bind numeric
+repositoryId/runRepositoryId, Issue node identity `issueId`, actorId, checkRunId,
+workflowId, workflowRef, sourceCommit, ref, workflowBlob, originActorId,
+originWorkflowId, originSourceCommit and originWorkflowRef. The route retains
+B's identity and originating actor/workflow/source. The execution actor and
+origin actor are independently checked; neither is inferred from the member.
+The complete native Job must carry the selected pool Runner's id/name and a
+check_run_url for the expected checkRunId. Native repository IDs, actors,
+workflow IDs, source commits and branches must agree with the enrolled callers.
+
+`forwarding` retains the observed originating repository/Issue/Run/attempt and
+actor association, dispatched execution repository/Run/attempt/actor and
+workflow/source identity, with `confirmed: true`. It must come from the explicit
+forwarded Run association, never a latest Run lookup or a dispatch status alone.
+`oidc` retains the protected caller's verified Core identity result: repositoryId
+(of A), runId, attempt, actorId, checkRunId, sourceCommit, expiresAt, identityHash,
+plus its native jobId/runnerId association and `verified: true`. Only the eight
+Core identity fields are retained in a passing public result. Raw tokens,
+request credentials, provider errors and additional OIDC fields never escape.
+
+`permission: unavailable` or the protected adapter's typed
+`WAKE_PERMISSION_DENIED` produces `WAKE_PERMISSION_UNAVAILABLE`, always unverified.
+It is distinct from a fully correlated Core denial. Missing Runs, dispatch-only
+responses, skipped execution and pending outcomes never pass. Synthetic enrollment
+cannot establish live correlation. Action and no-assignee contracts remain separate.

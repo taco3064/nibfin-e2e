@@ -1,3 +1,4 @@
+import { sharedIdentities } from './wake-identities.mjs';
 import { matches } from './github-resources.mjs';
 
 const positive = value => Number.isSafeInteger(value) && value > 0;
@@ -69,6 +70,9 @@ export function correlateWake(leg, expected, evidence, mode = 'live') {
     repository: expected.repository, number: expected.issue })) {
     return result('unverified', 'ISSUE_EVIDENCE_REQUIRED');
   }
+  if (leg === 'shared-issue' && evidence.permission === 'unavailable') {
+    return result('unverified', 'WAKE_PERMISSION_UNAVAILABLE');
+  }
   if (!nativeExecution(evidence, expected) || !coreResult(evidence, expected)) {
     return result('unverified', 'EXECUTION_CORRELATION_REQUIRED');
   }
@@ -78,7 +82,13 @@ export function correlateWake(leg, expected, evidence, mode = 'live') {
         evidence.run.data.conclusion !== 'success')) {
     return result('unverified', 'NATIVE_COMPLETION_REQUIRED');
   }
+  let oidc;
   if (leg === 'shared-issue') {
+    oidc = sharedIdentities(expected, evidence, mode);
+    if (!oidc || !['success', 'failure'].includes(nativeJob.conclusion) ||
+        !['success', 'failure'].includes(evidence.run.data.conclusion)) {
+      return result('unverified', 'SHARED_IDENTITY_EVIDENCE_REQUIRED');
+    }
     const origin = { kind: 'run', repository: expected.repository,
       runId: expected.originRunId, attempt: expected.originAttempt };
     const wake = evidence.wake;
@@ -123,9 +133,11 @@ export function correlateWake(leg, expected, evidence, mode = 'live') {
     }
   }
   // Pending is an observation, never a passing completion or negative assertion.
-  return expected.status === 'pending' ? result('unverified', 'CORE_PENDING') :
+  const correlated = expected.status === 'pending' ?
+    result('unverified', 'CORE_PENDING') :
     result('passed', mode === 'fixture' ? 'FIXTURE_CONTRACT_CONFIRMED' :
       expected.status === 'denied' ? 'EXPECTED_DENIAL_OBSERVED' : 'CORE_COMPLETED');
+  return oidc && correlated.state === 'passed' ? { ...correlated, oidc } : correlated;
 }
 
 export function correlateNoAssignee(expected, evidence, mode = 'live') {
