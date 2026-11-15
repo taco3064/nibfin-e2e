@@ -7,7 +7,7 @@ export const nativeCases = Object.freeze([
   'TestE2EInitPreview', 'TestE2EInitApply', 'TestE2EInitDenials',
   'TestE2EInitSourceBoundary',
   'TestE2EInitUnknown', 'TestE2EUpgradePreview', 'TestE2EUpgradeApply',
-  'TestE2EUpgradeDenials', 'TestE2EUpgradeUnknown',
+  'TestE2EUpgradeDenials', 'TestE2EUpgradeUnknown', 'TestE2EUpgradeAdoption',
 ]);
 const drivers = ['support', 'init', 'upgrade'];
 

@@ -58,5 +58,8 @@ export function wakeFixture(leg = 'shared-issue', status = 'completed', target =
       stepName: 'Native Action', outputs: { status, code: expected.code,
         'receipt-hash': core.receiptHash } },
   };
+  evidence.continuity = { state: 'satisfied', binding: { ...expected },
+    sources: structuredClone(enrollment.sources),
+    callers: structuredClone(enrollment.callers) };
   return { expected, evidence };
 }

@@ -6,6 +6,9 @@ import { tmpdir } from 'node:os';
 import { compareHandoff, validateRequest } from
   '../scenarios/cli-onboarding/handoff.mjs';
 import { executeNative, nativeCases } from '../scenarios/cli-onboarding/native.mjs';
+import { verify as verifyNativeContract } from '../scenarios/cli-onboarding/contract.mjs';
+import { continuityCases } from '../scenarios/cli-onboarding/continuity.mjs';
+import { deliveryCases } from '../scenarios/cli-onboarding/delivery-continuity.mjs';
 import { scenarios, select } from '../registry.mjs';
 import { run } from '../runner.mjs';
 
@@ -285,3 +288,19 @@ for (const state of ['observed', 'unavailable']) {
     }
   });
 }
+
+
+test('native contract requires every producer continuity and delivery assertion', () => {
+  const actual = { evidence: 'synthetic', passed: [...nativeCases],
+    continuity: { evidence: 'synthetic', passed: [...continuityCases] },
+    delivery: { evidence: 'synthetic', passed: [...deliveryCases] } };
+  assert.equal(verifyNativeContract(actual), true);
+  for (const key of ['continuity', 'delivery']) {
+    for (const change of [value => value.passed.pop(),
+      value => { value.evidence = 'live'; }]) {
+      const incomplete = structuredClone(actual);
+      change(incomplete[key]);
+      assert.throws(() => verifyNativeContract(incomplete));
+    }
+  }
+});

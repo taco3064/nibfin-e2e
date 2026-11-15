@@ -1,3 +1,4 @@
+import { applicableDelivery } from './delivery-applicability.mjs';
 import { stages, same, identifier, validAdmission, positive }
   from './delivery-contract.mjs';
 
@@ -13,6 +14,10 @@ export function validateDelivery(binding, evidence) {
       evidence.stages.length !== stages.length ||
       !Array.isArray(evidence.admissions) || evidence.admissions.length === 0 ||
       evidence.admissions.length > 100) return unavailable('STAGES_UNAVAILABLE');
+  if (evidence.applicability !== undefined &&
+      evidence.applicability?.state !== 'satisfied') {
+    return unavailable('PRODUCER_ASSOCIATION_UNAVAILABLE');
+  }
   const admissions = evidence.admissions;
   if (admissions.some(item => !validAdmission(item) ||
       !same(item, binding, bindingKeys)) ||
@@ -55,7 +60,8 @@ export function validateDelivery(binding, evidence) {
   if (!Array.isArray(candidate.artifacts) || candidate.artifacts.length !== 0) {
     return unavailable('ARTIFACT_OBLIGATION_UNSUPPORTED');
   }
-  if (records.slice(3).some(record => record.candidate !== candidate.id)) {
+  if (records.slice(3).some(record => record.candidate !== candidate.id &&
+      !applicableDelivery(binding, evidence, record))) {
     return unavailable('CANDIDATE_MISMATCH');
   }
   const events = ['pre-commit', 'prepare-commit-msg', 'commit-msg'];
@@ -80,7 +86,14 @@ export function validateDelivery(binding, evidence) {
       !Array.isArray(pull.checkIds) || pull.checkIds.length === 0 ||
       pull.checkIds.length > 1000 || !pull.checkIds.every(positive) ||
       new Set(pull.checkIds).size !== pull.checkIds.length ||
-      records.slice(7).some(record => record.head !== pull.head ||
-        record.pull !== pull.number)) return unavailable('PR_ASSOCIATION_MISMATCH');
+      records.slice(7).some(record => record.pull !== pull.number ||
+        (record.head !== pull.head &&
+          !applicableDelivery(binding, evidence, record)))) {
+    return unavailable('PR_ASSOCIATION_MISMATCH');
+  }
+  if (evidence.applicability !== undefined && records.slice(3).some(record =>
+      !applicableDelivery(binding, evidence, record))) {
+    return unavailable('PRODUCER_ASSOCIATION_MISMATCH');
+  }
   return result('satisfied', 'DELIVERY_CHAIN_OBSERVED');
 }

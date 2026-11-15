@@ -47,7 +47,8 @@ test('worker timeout stops native descendants before removing their files', asyn
     const onboarding = scenarios.find(row => row.group === 'cli-onboarding');
     pending = execute({ ...onboarding, timeoutMs: 30000 }, {
       tempRoot: executions,
-      sources: { cli: { checkout, output: { entry: join(tools, 'go') } } },
+      sources: { core: { checkout }, action: { checkout },
+        cli: { checkout, output: { entry: join(tools, 'go') } } },
     });
     const deadline = Date.now() + 30000;
     let started;

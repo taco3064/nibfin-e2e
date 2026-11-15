@@ -188,3 +188,40 @@ diagnostics are never included. Consumers must use this protected producer's
 current result rather than interpreting a serialized result as fresh execution.
 Actual disposable-host execution and protected adapter provisioning remain on the
 separately authorized acceptance/operations route; no live run is claimed here.
+
+## Upgrade and source continuity (#93)
+
+Issue #93 extends the synthetic upgrade sequence through provider merge readback.
+The proposal and open PR retain the old installed pins; only reading the simulated
+merged revision establishes repository adoption. Host adoption remains separate.
+The CLI's maintained planner and compatibility checks supply both source sets;
+this driver never rewrites consumer pins to make source preparation compatible.
+
+The same native contract runs `continuity.mjs` against the prepared Core's
+`readSharedCaller`, and `delivery-continuity.mjs` against its `decideStage`.
+Producer-owned synthetic stage fixtures are required from the prepared source;
+missing interfaces or fixtures are unavailable evidence, never skipped success.
+These assertions cover unrelated advancement, disablement, removal, replacement,
+restoration, forged workflow identity, Candidate equivalence and native merge CI.
+They remain synthetic even when executed by real Go and Node processes.
+
+Protected Wake extractors retain the original admission enrollment and its source
+set for each exact run/attempt/job. They supply `continuity` from
+`readWakeContinuity` using that job's prepared sources, independently resolved
+workflow node IDs and a bounded native GraphQL reader. Its current-main reads
+check revocation; they never select executable code or replace the enrollment.
+Missing continuity is unverified. New jobs require their own adopted enrollment.
+
+Protected delivery extractors can supply `applicability` from
+`readDeliveryApplicability` using the independently resolved Core close context
+and the normalized evidence. This consumes Core's own equivalence, independent
+Acceptance, review and CI rules. No list of equivalent Candidates supplied to the
+E2E validator establishes reuse. A denied producer result remains unverified.
+The observation binds the current Candidate, PR, checks and each original stage
+execution/admission. Native checks are read at the producer-approved tested SHA,
+including a correctly associated merge preview. Raw contexts, credentials and
+producer diagnostics remain inside the protected reader.
+
+The later disposable acceptance executor still supplies real compatible source
+preparation, host adoption, protected revocation and live A/B observations. Local
+synthetic assertions do not certify those external operations or release readiness.
