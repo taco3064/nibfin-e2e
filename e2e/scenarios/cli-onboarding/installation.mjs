@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { invocationReadback } from './invocation-readback.mjs';
 import { fixtureBudget } from '../../fixture-budget.mjs';
 import { verifyCompatibility } from '../../source-producers.mjs';
 import { decodeRunnerCommand } from '../../runner-command.mjs';
@@ -11,7 +13,7 @@ const conflicts = new Set(['binding-conflict', 'source-conflict', 'endpoint-conf
 // Protected composition only. No scenario request can choose a target, executable,
 // host, credentials or authorization. Storage is the upstream exclusive inventory.
 export function protectedSharedInstallation({
-  sources, inventory, context, bounds = {},
+  sources, inventory, context, bounds = {}, invocationRun = null,
 }) {
   const required = ['authorize', 'observe', 'command', 'reconcile'];
   if (typeof inventory?.exclusive !== 'function' ||
@@ -21,6 +23,11 @@ export function protectedSharedInstallation({
       !['synthetic', 'operator'].includes(context.origin)) {
     throw new Error('PROTECTED_INSTALLATION_CONTEXT_REQUIRED');
   }
+  if (invocationRun && (!installationText(invocationRun.runId) ||
+      !installationId(invocationRun.attempt))) {
+    throw new Error('PROTECTED_INVOCATION_RUN_REQUIRED');
+  }
+  const run = invocationRun ? clone(invocationRun) : null;
   const b = context.binding;
   if (!installationText(b?.owner) || !installationText(b?.hostId) ||
       !/^[\w.-]+\/[\w.-]+$/.test(b?.repository ?? '') ||
@@ -35,11 +42,19 @@ export function protectedSharedInstallation({
   )) throw new Error('PREPARED_INSTALLATION_SOURCES_REQUIRED');
   const origin = context.origin;
   const entry = sources.cli.output.entry;
+  if (run && (typeof entry !== 'string' || entry.length > 4096)) {
+    throw new Error('PREPARED_INVOCATION_ENTRY_REQUIRED');
+  }
   return Object.freeze({
     install() {
       return inventory.exclusive(async (state, save) => {
         const budget = fixtureBudget(bounds);
         const call = action => budget.call(action);
+        const invocation = run ? { runId: run.runId, attempt: run.attempt,
+          id: randomUUID(), entry } : null;
+        let invoked = false;
+        let invocationObservations = null;
+        let terminated = false;
         let phase = 'binding';
         let disposition = 'incomplete';
         let refused = null;
@@ -55,9 +70,13 @@ export function protectedSharedInstallation({
           }
         };
         const inspect = async () => {
-          observed = installationObservation(await call(signal => context.observe(
-            clone(binding), { signal, intent: clone(record?.pending ?? null) },
-          )));
+          const raw = await call(signal => context.observe(
+            clone(binding), { signal, intent: clone(record?.pending ?? null),
+              invocation: clone(invocation) },
+          ));
+          observed = installationObservation(raw);
+          invocationObservations = invoked ?
+            invocationReadback(raw, invocation, origin) : null;
           phase = compareInstallation(binding, identities, observed, record.runners);
           if (conflicts.has(phase)) {
             disposition = 'contradiction';
@@ -133,16 +152,18 @@ export function protectedSharedInstallation({
             record.pending = null;
             await save();
           }
-          if (phase === 'installed') {
+          if (phase === 'installed' && !invocation) {
             disposition = 'success';
           } else if (!['installation-pr', 'host-prerequisites'].includes(phase)) {
             await authorize('start-shared-services');
             budget.operation();
-            record.pending = { operation: 'init', sequence: ++record.sequence };
+            record.pending = { operation: 'init', sequence: ++record.sequence,
+              ...(invocation ? { invocation: clone(invocation) } : {}) };
             record.phase = 'apply-pending';
             await save();
             // This invocation can only consume an externally reviewed, merged
             // installation. It never publishes or merges its own installation PR.
+            invoked = true;
             const result = await call(signal => context.command(entry,
               ['init', '--repo', binding.repository, '--apply',
                 '--start-shared-services'], { signal, stdin: 'ignore',
@@ -152,6 +173,7 @@ export function protectedSharedInstallation({
               phase = 'reconciliation';
               throw new Error('INSTALLATION_TERMINATION_UNKNOWN');
             }
+            terminated = true;
             const command = decodeRunnerCommand(result);
             await inspect();
             // A bounded process failure does not establish absence of effects.
@@ -168,7 +190,10 @@ export function protectedSharedInstallation({
             }
             record.pending = null;
             await save();
-            if (phase === 'installed') disposition = 'success';
+            if (invocation) await inspect();
+            if (phase === 'installed' && (!invocation || invocationObservations)) {
+              disposition = 'success';
+            }
           }
         } catch (error) {
           // Adapters may expose this typed refusal, never raw provider errors.
@@ -192,6 +217,11 @@ export function protectedSharedInstallation({
         }
         return { origin, binding: clone(binding), sources: clone(identities),
           phase, disposition, refused, observation: observed,
+          ...(invocation ? { invocation: { ...invocation, invoked, terminated,
+            observations: clone(invocationObservations),
+            confirmed: disposition === 'success' && invocationObservations !== null,
+            evidence: disposition === 'success' && invocationObservations ?
+              (origin === 'operator' ? 'native' : 'controlled') : 'unverified' } } : {}),
           protectedExecution: 'unverified',
           inventory: { path: inventory.path, owner: binding.owner,
             hostId: state.installation?.binding?.hostId ?? binding.hostId,

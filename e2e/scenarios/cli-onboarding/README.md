@@ -149,3 +149,42 @@ synthetic and compare as unverified. Even matching operator results leave protec
 execution unverified. Dedicated-host execution, protected workflow maintenance,
 credential/service configuration, real-host certification and teardown remain on
 their separately authorized routes; ordinary PR verification never operates a host.
+
+### Current-attempt protected invocation (#109)
+
+Trusted consumers import `protectedCliInvocation` from `e2e/cli-invocation.mjs`.
+Supply the existing prepared sources, exclusive upstream inventory, installation
+context, finite bounds and a protected `run: { runId, attempt }`. No credentials,
+host selection or adapters are read from scenario input. The registered worker
+scenario `cli.invocation` always reports its protected prerequisite.
+
+Each call generates a fresh invocation ID and invokes the prepared `init --apply
+--start-shared-services`, including when installation was already complete. The
+existing authorization, compatibility, installation PR and host prerequisites
+remain mandatory. Installation publication/review/merge are external operations.
+The existing pending intent now includes invocation identity before execution.
+Unknown termination or effects retain that intent; recovery must reconcile before
+another apply. Neither timeout nor command output proves safe recovery.
+
+The context's independent `observe` reads receive the invocation identity and
+return the normal installation readback plus `invocation.github` and
+`invocation.host`. Each channel supplies the exact `runId`, `attempt`, `id` and
+prepared executable `entry`, `fresh: true`, `terminated: true`, and
+`effects: 'reconciled'`. Channel `origin` is `native` for actual provider/host reads
+or `synthetic` for controlled transport tests. Adapters must independently
+associate those reads with the process and its effects; echoing request fields,
+loading saved receipts or reading stdout is not native observation. Both channels
+must agree with the protected context's evidence level. An operator label alone
+cannot upgrade synthetic channels. All installation identities and source pins
+are independently checked on the same readback, including after reconciliation.
+
+The typed result adds `invocation` with `invoked`, `terminated`, `confirmed`,
+validated channel `observations` (or null), and evidence level
+`native`, `controlled` or `unverified`. Controlled success is regression evidence
+only. Even native invocation confirmation leaves `protectedExecution` unverified:
+it grants no release authority and does not certify full delivery or readiness.
+Absent capabilities return a sanitized prerequisite result. Errors and subprocess
+diagnostics are never included. Consumers must use this protected producer's
+current result rather than interpreting a serialized result as fresh execution.
+Actual disposable-host execution and protected adapter provisioning remain on the
+separately authorized acceptance/operations route; no live run is claimed here.
