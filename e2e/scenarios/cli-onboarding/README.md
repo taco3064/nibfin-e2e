@@ -81,3 +81,71 @@ The existing local verifier runs handoff and harness assertions without network
 access. Native contract execution additionally runs the acquired current CLI's
 actual Go logic. Full producer acquisition/compatibility remains a separate
 prerequisite in the existing adapter; a direct driver check cannot certify it.
+
+## Bounded shared installation
+
+`protectedSharedInstallation` (also exported by `runner-live.mjs`) composes only
+in the protected operator, alongside the existing Runner lifecycle. Its `install()`
+accepts no worker input. `installation.d.ts` describes the capability and result
+boundary; `runner-observations.mjs` separately compares the normalized results.
+It uses the same `fixtureInventory` object as `repositoryLifecycle`, preserving
+both seeded repository records and an `installation` recovery record in that
+exclusive, flushed inventory. No second resource registry or pin catalog exists.
+
+The protected context binds the inventory owner, authenticated member, selected
+native repository ID and disposable Linux host allocation. Its credential
+capability is the upstream validated User capability for that selected repository;
+secrets stay inside the capability and executor. Source preparation still owns the
+actual producer outputs. Installation reruns `verifyCompatibility` against those
+outputs without rewriting declarations. Native observations must independently
+report matching Core, Action and CLI identities, repository/member/host bindings,
+complete registration readback, local registration identities and native endpoint.
+
+The operator supplies fresh `observe` reads of the installation PR number, head
+commit and repository ID, applicable check state, completed external review/merge
+and installed content match. An unavailable PR or pending prerequisite returns
+incomplete. This driver does not publish or merge an installation PR. Publication,
+review and merge use the separately authorized operations route. The operator must
+establish `contentMatches` from the managed content for the prepared producers,
+not from a PR label or successful command. It must bind that read to the selected
+repository and invoke the command under authorization that excludes unintended
+publication if the target changes. The CLI's own planning/readback and native
+permission checks remain authoritative; the E2E driver does not replace them.
+
+Once those prerequisites and host adoption are confirmed, the driver invokes the
+prepared executable with `init --repo OWNER/REPO --apply --start-shared-services`.
+The protected executor owns credentials, target host, noninteractive stdin,
+deadlines, cancellation, output bounds and process-group termination. It returns
+`terminated: true` only after confirming termination. All capability calls have a
+finite request/total budget, including authorization, provider reads and recovery.
+A timeout leaves a durable intent; it does not prove termination or no effects.
+Never retire a host while that intent is unresolved. The operator must also bound
+its underlying transport and storage operations and preserve exclusive ownership
+while an outstanding request may still execute.
+
+`observe` returns complete selected-host registration inventory, including exactly
+two distinct IDs/names for success, endpoint, member/repository IDs, local ID/name,
+shared registration flag and independently observed GitHub online state. It also
+reports actual service user/state separately from command stdout. Missing values
+normalize to null. Complete readback with more than two registrations, identity
+changes, wrong endpoints, changed sources and failed checks cannot become success.
+A second success preserves the original pair. Confirmed partial registration is
+journaled before continuing, and a pending command must first pass protected
+`reconcile` with both `terminated: true` and `effects: 'reconciled'`. This means
+native inspection has accounted for every effect of the recorded intent, including
+partial registrations and installation PR effects; it is not a timeout receipt.
+Uncertain reconciliation never repeats apply. No installation path deletes resources.
+
+Adapters translate native permission failures into an error with
+`code: 'INSTALLATION_PERMISSION_DENIED'` and a bounded `operation` from
+`read-installation-pr`, `read-runner-registrations`, `register-shared-runners` or
+`start-shared-services`. Returned refusals identify the expected member and role;
+raw errors and subprocess diagnostics are discarded. Other exceptions remain
+incomplete, since they cannot establish a permission denial or lack of effects.
+
+`node --test e2e/test/installation.test.mjs` exercises synthetic process/provider
+capabilities and real flushed inventory recovery. Synthetic successes stay marked
+synthetic and compare as unverified. Even matching operator results leave protected
+execution unverified. Dedicated-host execution, protected workflow maintenance,
+credential/service configuration, real-host certification and teardown remain on
+their separately authorized routes; ordinary PR verification never operates a host.
