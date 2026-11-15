@@ -18,15 +18,24 @@ Framework, tests and workflow paths are outside the generated surface.
 
 Only the separately authorized protected runner may import and compose the live
 API. There is deliberately no live CLI, worker registration, environment switch,
-credential lookup, workflow dispatch or installation behavior. Supplying a token
+host credential discovery or workflow dispatch. Supplying a credential
 is not fixture authorization. The runner supplies all of the following:
 
 - A definition, the authenticated numeric actor, and a private durable recovery
   directory to `fixtureInventory(directory, definition, actor, workerRoot)`.
   Inventory and disposable worker roots must be disjoint. Preserve the inventory
   independently of worker timeout/cleanup; never place credentials there.
-- `fixtureGithub({token})`, with the current restricted test actor's credential
-  obtained through the protected execution context, as the lifecycle provider.
+- `fixtureGithub({secretProvider, user, automation?, clock?, fetcher?})` as the lifecycle provider.
+  `secretProvider(reference)` is an explicitly preconfigured asynchronous capability.
+  `user` contains `secretRef`, numeric `actorId`, numeric repository `ownerId` and
+  exact `repository`. The repository owner ID is unrelated to the fixture UUID.
+  The adapter rejects non-User actors, target/owner mismatches, unavailable access,
+  and credentials without verifiable `repo` (or public `public_repo`) OAuth scope
+  and native repository push access. Fine-grained credentials lacking verifiable
+  scopes are conservatively unsupported here. There is no credential fallback.
+  `provider(budget, definition).capabilities()` validates before provisioning and
+  returns only identity, role, scope, operation and lifecycle metadata. It neither
+  issues helper tokens nor grants Core authorization.
 - A protected in-process `context.authorize(request)` capability. It returns
   exactly `true` only for an explicitly authorized repository, owner, actor and
   operation. Target selection cannot enlarge this grant. Operation names are
@@ -119,3 +128,54 @@ settled. A different body or incomplete label observation remains unresolved;
 the library cannot abandon or retry an unknown write. Retain that recovery ledger.
 
 See [WAKE.md](WAKE.md) for protected live composition and credential-free scenarios.
+
+## Installation credential lifecycle
+
+`fixtureCredentials({secretProvider, user, automation?, clock?})` keeps secrets in
+private session state. The protected composition supplies the same User configuration
+as above. Optional `automation` contains `secretRef` for preconfigured App JWT
+bootstrap, numeric `appId`, numeric `installationId` and explicit `operations`.
+Only `create-branch` and `delete-branch` are supported for automation. User-authored
+Issues, PRs and their mutations remain on the User route in `fixtureGithub`.
+The library does not mint JWTs, configure secrets or install Apps.
+
+Compose a credential session with `credentials(request, definition)` where the
+trusted GitHub provider implements
+`request(token, method, absoluteUrl, body?, missing?)`. It must bound requests and
+response consumption, reject redirects and non-success statuses, and return
+`{status, data, scopes?, link?}`. `scopes` is the native `x-oauth-scopes` header.
+For independent revocation observation only, `missing === 'revocation'` allows a
+native 401 response through. Ordinary failures must throw. Providers and returned
+secrets stay inside the trusted composition, outside workers and recovery records.
+
+The native adapter exposes the same session methods as `api.automationBranch`
+and `api.revokeAutomation`, sharing its request budget and bounded secret-provider
+calls. Call `api.revokeAutomation()` before releasing that native session.
+
+Before an independently authorized automation operation, call
+`session.automationBranch(operation, sha?)`. The operation uses only the definition's
+branch in the configured repository. This credential capability is not an ownership
+or authorization grant: the protected runner must enforce authorization, absence,
+base/ownership, idle and unknown-effect checks before calling it. Existing fixture
+lifecycle operations continue using User authentication and all their existing checks.
+
+Issuance first validates the adopted User, then the installation's App, owner,
+suspension and contents grant. Requests select only the target repository ID and
+`contents: write`; returned permissions and native installation repository access
+must match. The injected millisecond clock checks returned expiration. Expired
+helpers require newly issued, validated replacements with identical scope.
+Failed issuance/renewal blocks further automation; unknown issuance is retained as
+unverified cleanup. A mutating request is never automatically retried.
+
+`session.revoke()` disables automation and revokes every helper issued in that
+session, including replaced or rejected helpers. Bootstrap and User credentials
+are never revoked. Cleanup is successful only after a successful deletion request
+and separate native readback returning 401. Continued access, a failed request,
+unknown issuance or unavailable readback produces `unverified`. Repeat cleanup can
+observe outstanding known tokens; it cannot resolve a lost issuance response.
+Keep the trusted session alive until cleanup completes. If its private state is
+lost, token effects remain unverified; no token is persisted for recovery.
+
+Fake-provider/clock tests are local library evidence. Supported real User bootstrap,
+App permissions and independent revocation readback still require the dedicated
+live test environment. They are not certified by local verification.

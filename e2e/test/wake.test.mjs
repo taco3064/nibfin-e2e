@@ -7,6 +7,8 @@ import { exercise, verify } from '../scenarios/wake-contract.mjs';
 import { fixture } from './fixture-support.mjs';
 import { fixtureGithub } from '../fixture-github.mjs';
 import { fixtureBudget } from '../fixture-budget.mjs';
+import { credentialConfiguration, credentialObservation }
+  from './credential-support.mjs';
 
 for (const leg of ['shared-issue', 'action']) {
   test(`${leg} controlled scenario executes positive and negative assertions`, () => {
@@ -180,7 +182,10 @@ test('mutation target mismatch and invalid input cannot write or observe a wake'
 
 test('REST adapter limits body and label writes to exact Issue endpoints', async () => {
   const calls = [];
-  const api = fixtureGithub({ token: 'SYNTHETIC', fetcher: async (url, init) => {
+  const api = fixtureGithub({ ...credentialConfiguration('SYNTHETIC',
+    'fixture/repository'), fetcher: async (url, init) => {
+    const observation = credentialObservation(url, 'fixture/repository');
+    if (observation) return observation;
     calls.push({ url, ...init });
     return { status: 204, headers: { get: () => null } };
   } })(fixtureBudget(), { repository: 'fixture/repository' });
