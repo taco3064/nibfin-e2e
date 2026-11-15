@@ -31,6 +31,32 @@ and inventory directory. Merged execution trees are removed immediately after
 confirmed process termination. Disposal refuses while execution/effects remain
 unknown or owned repositories/registrations remain. Unknown process trees stay
 listed in `provider.localResources` for the caller's recovery; do not delete
-those trees on a timeout alone. Keep the object and its inventory for continuing
-selected phases. Restart recovery after lost write replies belongs to SIM-02;
-this composition reconciles known completed work without redispatching it.
+those trees on a timeout alone.
+
+## Lost replies and restart recovery
+
+Trusted tests may pass `{ controls: { dropReply(operation, repository) } }` to
+`createSimulatedSuite`. Returning `true` drops a reply **after** a `create`,
+`trigger` or repository `remove` commits. Ordinary `run` requests cannot select
+these controls. The trace records both the committed operation and `reply-lost`;
+count `observed` mutations to check that recovery never repeats the write.
+
+Use `await suite.restart()` to discard the composition and recreate the provider
+client and inventory handle. This copies independently retained simulated remote
+state, including original creation receipts and dispatch evidence, while keeping
+the original durable inventory, source owner and prepared source paths. The old
+composition can no longer run or dispose these resources. Controls are not carried
+across restart; tests can supply fresh controls to `restart` if needed.
+
+Resume with the original run ID. Creation uses the independently bound original
+operation receipt; deletion uses affirmative, independently bound absence.
+Delivery reconstructs read capabilities from retained legs and independently
+checks wake, concurrency, delivery and merged-source evidence. It never reenters
+the producer or dispatches a replacement. The lost dispatch regression drops the
+second reply, after both originally intended dispatches have committed. Missing
+original dispatch evidence, missing Run ID, ambiguous absence, denied observations
+and foreign bindings remain non-passing Pending. Retained resources cannot be
+cleaned up while interrupted creation or dispatch reconciliation is unresolved.
+Later adequate evidence settles the same suite and operation intents; cleanup
+then removes only owned resources. These regressions run in `npm run verify`
+and remain controlled evidence, not real-provider recovery certification.
