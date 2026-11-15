@@ -46,7 +46,7 @@ test('production cannot select controlled dependencies or capabilities from data
     assert.equal(incomplete.outcome, 'blocked');
     const result = await releaseEntry(env, f.request, f.capabilities);
     assert.equal(result.outcome, 'blocked');
-    assert.match(result.reason, /COVERAGE: mandatory release requirements are unmapped/);
+    assert.match(result.reason, /NATIVE_COVERAGE: protected capabilities unavailable/);
     assert.equal(f.state.writes.length, 0);
   });
 

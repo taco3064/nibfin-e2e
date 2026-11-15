@@ -37,7 +37,8 @@ async function execute(env, request, protectedCapabilities, controlled, dependen
     const capabilities = { expected,
       verifyInvocation: caps.verifyInvocation,
       ...releaseObservations(request, caps.observeActivePublications),
-      verifyConditions, native: caps.native, evidence: caps.evidence };
+      verifyConditions, native: caps.native, evidence: caps.evidence,
+      coverage: caps.coverage };
     const coordinator = controlled
       ? createContractCoordinator(capabilities, dependencies)
       : createPublicationCoordinator(capabilities);

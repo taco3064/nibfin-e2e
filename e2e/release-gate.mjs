@@ -1,3 +1,4 @@
+import { runReleaseCoverage, requireReleaseCoverage } from './release-coverage.mjs';
 import { prepareSources } from './sources.mjs';
 import { run } from './runner.mjs';
 import { scenarios, register } from './registry.mjs';
@@ -52,16 +53,22 @@ function buildGate(capabilities, dependencies, mode) {
       const { rows, selected, ids } = requiredSuite(
         dependencies.catalog, dependencies.registry,
       );
+      const native = mode === 'production' || dependencies.nativeCoverage === true;
+      if (native) requireReleaseCoverage(capabilities.coverage);
       prepared = await dependencies.prepare();
       if (!prepared || prepared.disposed !== false ||
           typeof prepared.dispose !== 'function') {
         throw new Error('SOURCES: invalid ownership');
       }
       const sources = sourceIdentities(prepared.sources);
+      const sourceSnapshot = JSON.stringify(prepared.sources);
       validateRemoteMains(await observeMains(), sources);
-      const document = await dependencies.run(selected, [], {
-        sources: prepared.sources, workerEnv: {},
-      });
+      const document = native
+        ? await runReleaseCoverage(capabilities.coverage, prepared, invocation,
+          selected, mode)
+        : await dependencies.run(selected, [], {
+          sources: prepared.sources, workerEnv: {},
+        });
       unsettled = document?.results?.some(row =>
         row?.reason?.code === 'TERMINATION_ERROR') === true;
       if (unsettled) throw new Error('EXECUTION: worker termination unknown');
@@ -70,12 +77,14 @@ function buildGate(capabilities, dependencies, mode) {
       if (!coverage.complete || document.results.length !== ids.length) {
         throw new Error('EXECUTION: mandatory scenarios did not all pass');
       }
-      if (prepared.disposed || JSON.stringify(sourceIdentities(prepared.sources)) !==
+      if (prepared.disposed || JSON.stringify(prepared.sources) !== sourceSnapshot ||
+          JSON.stringify(sourceIdentities(prepared.sources)) !==
           JSON.stringify(sources)) throw new Error('SOURCES: identities changed');
       validateRemoteMains(await observeMains(), sources);
       validateConflicts(await observeConflicts(version), version);
       const staged = await prepared.preflightRelease(version);
-      if (prepared.disposed || JSON.stringify(sourceIdentities(prepared.sources)) !==
+      if (prepared.disposed || JSON.stringify(prepared.sources) !== sourceSnapshot ||
+          JSON.stringify(sourceIdentities(prepared.sources)) !==
           JSON.stringify(sources)) throw new Error('SOURCES: identities changed');
       validateRemoteMains(await observeMains(), sources);
       validateConflicts(await observeConflicts(version), version);

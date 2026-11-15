@@ -168,3 +168,13 @@ export async function runDeliveryPairWithLifecycle(request, caller, bounds = {},
       mode: 'live', liveVerified: false };
   }
 }
+
+// The release gate already owns these sources. Never acquire or dispose a
+// second set here; unresolved effects are returned to that owner for recovery.
+export function runDeliveryPairPrepared(request, caller, prepared, bounds = {}) {
+  if (!prepared || prepared.disposed !== false || !prepared.sources) {
+    return Promise.resolve({ state: 'blocked', code: 'PREPARED_SOURCES_REQUIRED',
+      mode: caller?.mode, liveVerified: false });
+  }
+  return execute(request, caller, bounds, prepared);
+}
