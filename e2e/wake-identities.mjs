@@ -1,4 +1,5 @@
 import { same, validEnrollment, sha } from './peer-observations.mjs';
+import { matchesContinuity } from './wake-continuity.mjs';
 
 export const sharedIdentityKeys = ['repositoryId', 'runRepositoryId', 'issueId',
   'actorId', 'checkRunId', 'workflowId', 'workflowRef', 'sourceCommit', 'ref',
@@ -24,12 +25,13 @@ export function sharedIdentities(expected, evidence, mode) {
       !peer.runners.some(r => r.id === x.runnerId)) return null;
   const w = peer.callers.execution;
   const caller = peer.callers.issue;
-  if (!same(w, { workflowId: x.workflowId, path: x.sharedWorkflow,
+  if (!matchesContinuity(x, e.continuity, peer) ||
+      !same(w, { workflowId: x.workflowId, path: x.sharedWorkflow,
     sourceCommit: x.sourceCommit, ref: x.workflowRef, blob: x.workflowBlob },
-  ['workflowId', 'path', 'sourceCommit', 'ref', 'blob']) ||
+  ['workflowId', 'path', 'ref', 'blob']) ||
       !same(caller, { workflowId: x.originWorkflowId,
         sourceCommit: x.originSourceCommit, ref: x.originWorkflowRef },
-      ['workflowId', 'sourceCommit', 'ref']) ||
+      ['workflowId', 'ref']) ||
       x.workflowRef !== `${x.runRepository}/${x.sharedWorkflow}@${x.ref}` ||
       !x.ref?.startsWith('refs/heads/') ||
       x.reusableWorkflow !== `${peer.sources.core.repository}/` +

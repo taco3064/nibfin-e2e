@@ -199,3 +199,82 @@ func TestE2EUpgradeUnknown(t *testing.T) {
 		e2eSafeWrites(t, api.calls)
 	})
 }
+
+// Provider merge/read-back is simulated; host adoption remains a separate action.
+func TestE2EUpgradeAdoption(t *testing.T) {
+	e2eOwners(t, func(t *testing.T, owner string) {
+		f := e2eUpgrade(t, owner)
+		api := &e2eAPI{API: f}
+		// Resolve both compatible source sets through the CLI-owned source reader.
+		// These release and artifact observations are synthetic transport fixtures.
+		oldCLI := strings.Repeat("6", 40)
+		cli := "repos/" + officialCLI
+		f.data[cli+"/releases/tags/v1.0.0"] = map[string]any{
+			"id": 2, "tag_name": "v1.0.0",
+			"html_url": "https://github.com/" + officialCLI + "/releases/tag/v1.0.0"}
+		f.data[cli+"/git/ref/tags/v1.0.0"] = map[string]any{
+			"ref": "refs/tags/v1.0.0", "object": map[string]string{
+				"type": "commit", "sha": oldCLI}}
+		f.data[cli+"/commits/"+oldCLI] = map[string]string{"sha": oldCLI}
+		pins, err := json.Marshal(f.old)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.data[cli+"/contents/internal/cli/producers.json?ref="+oldCLI] = encoded(pins)
+		old, err := resolveUpgrade(api, "v1.0.0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		e2eEqual(t, old.CLI.Commit, oldCLI)
+		e2eEqual(t, old.Producers.Core.Commit, f.old.Core.Commit)
+		e2eEqual(t, old.Producers.Action.Commit, f.old.Action.Commit)
+		preview, err := planUpgrade(api, "example/project", "latest")
+		if err != nil {
+			t.Fatal(err)
+		}
+		e2eEqual(t, preview.Current.Core.Commit, f.old.Core.Commit)
+		e2eEqual(t, preview.Target.Producers.Core.Commit, f.target.Core.Commit)
+		e2eEqual(t, preview.Target.Producers.Action.Commit, f.target.Action.Commit)
+		e2eEqual(t, preview.Target.CLI.Commit, strings.Repeat("5", 40))
+		documents, err := e2eRun(t, api, "upgrade", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		e2eEqual(t, e2eUpgradeResult(t, documents).Status, "pending")
+		pending, err := planUpgrade(api, "example/project", "latest")
+		if err != nil {
+			t.Fatal(err)
+		}
+		e2eEqual(t, pending.Current.Core.Commit, f.old.Core.Commit)
+		pull := f.data[e2eRepo+"/pulls/9"].(upgradePull)
+		commit := f.data[e2eRepo+"/git/commits/"+pull.Head.SHA].(upgradeCommit)
+		ref := reference{Ref: "refs/heads/main"}
+		ref.Object.SHA = commit.SHA
+		f.data[e2eRepo+"/git/ref/heads/main"] = ref
+		// Preserve unchanged files; apply only the CLI-owned proposal contents.
+		for path, content := range f.installed {
+			f.data[e2eRepo+"/contents/"+path+"?ref="+commit.SHA] =
+				encoded([]byte(content))
+		}
+		for _, change := range preview.Changes {
+			if change.Kind != "deleted" {
+				f.data[e2eRepo+"/contents/"+change.Path+"?ref="+commit.SHA] =
+					encoded([]byte(change.Content))
+			}
+		}
+		adopted, err := planUpgrade(api, "example/project", "latest")
+		if err != nil {
+			t.Fatal(err)
+		}
+		e2eEqual(t, adopted.Current.Core.Commit, f.target.Core.Commit)
+		e2eEqual(t, adopted.Current.Action.Commit, f.target.Action.Commit)
+		e2eEqual(t, len(adopted.Changes), 0)
+		writes := e2eSafeWrites(t, api.calls)
+		documents, err = e2eRun(t, api, "upgrade", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		e2eEqual(t, e2eUpgradeResult(t, documents).Status, "no_change")
+		e2eEqual(t, e2eSafeWrites(t, api.calls), writes)
+	})
+}

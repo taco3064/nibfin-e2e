@@ -1,3 +1,4 @@
+import { applicableDelivery } from './delivery-applicability.mjs';
 import { matches } from './github-resources.mjs';
 import { assertObservation, confirmed } from './github-assertions.mjs';
 import { same } from './delivery-contract.mjs';
@@ -31,7 +32,11 @@ export async function verifyDeliveryNative(binding, evidence, observe) {
   const { repository, issue } = binding;
   const { number, head, mergeCommit, checkIds } = evidence.pull;
   const pull = await read({ kind: 'pull', repository, number });
-  const checks = await read({ kind: 'checks', repository, sha: head });
+  const testedSha = evidence.applicability?.testedSha ?? head;
+  if (testedSha !== head && (!/^[a-f0-9]{40}$/.test(testedSha) ||
+      !applicableDelivery(binding, evidence,
+        evidence.stages.find(record => record.stage === 'merge')))) return unavailable;
+  const checks = await read({ kind: 'checks', repository, sha: testedSha });
   const closed = await read({ kind: 'issue', repository, number: issue });
   const ci = assertObservation(checks, { conclusion: 'success', ids: checkIds });
   const applicable = checks?.data?.filter(item => checkIds.includes(item.id));
