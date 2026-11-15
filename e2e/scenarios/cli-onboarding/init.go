@@ -12,15 +12,40 @@ import (
 
 const e2eRepo = "repos/example/project"
 
+func e2eSharedInstallFixture(t *testing.T, owner string) *installingAPI {
+	t.Helper()
+	f := installFixture(t, owner)
+	repo := f.data[e2eRepo].(Repository)
+	repo.Permissions["admin"] = true
+	f.data[e2eRepo] = repo
+
+	pin := Pins().Core
+	source := "repos/" + pin.Repository + "/contents/"
+	f.data[source+"src/shared-runner-contract.json?ref="+pin.Commit] = encoded([]byte(
+		"{\"schemaVersion\":1,\"destinationVariable\":\"NIBFIN_SHARED_RUNNER_DESTINATION\"," +
+			"\"workflowPath\":\".github/workflows/shared-runner.yml\"}"))
+	f.data[source+sharedRunnerWorkflow+"?ref="+pin.Commit] = encoded([]byte(
+		"name: Controlled shared workflow\n"))
+	plan, err := planInitWithExecution(f, repo.FullName, repo.FullName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.plan = plan
+	return f
+}
+
 func TestE2EInitPreview(t *testing.T) {
 	e2eOwners(t, func(t *testing.T, owner string) {
-		f := installFixture(t, owner)
+		f := e2eSharedInstallFixture(t, owner)
 		api := &e2eAPI{API: f}
 		root := t.TempDir()
 		t.Setenv("XDG_CACHE_HOME", root)
 		plan := e2ePreview(t, api)
 		e2eEqual(t, plan.Repository.Owner.Type, owner)
-		e2eEqual(t, plan.Repository.Permissions, map[string]bool{"push": true})
+		e2eEqual(t, plan.Repository.Permissions, map[string]bool{"push": true, "admin": true})
+		e2eEqual(t, plan.Execution, &SharedExecution{
+			Repository: plan.Repository.FullName, RepositoryID: plan.Repository.ID,
+		})
 		e2eEqual(t, plan.Labels, []string{"scope", "shaped", "delivered"})
 		paths := []string{}
 		for _, file := range plan.Files {
@@ -32,7 +57,8 @@ func TestE2EInitPreview(t *testing.T) {
 		}
 		e2eEqual(t, paths, []string{
 			".github/workflows/nibfin-issue.yml", ".github/workflows/nibfin-stage.yml",
-			".github/workflows/nibfin-wake.yml", ".nibfin/producer-pins.json",
+			".github/workflows/nibfin-wake.yml", sharedRunnerWorkflow,
+			".nibfin/producer-pins.json",
 		})
 		entries, err := os.ReadDir(root)
 		if err != nil || len(entries) != 0 {
@@ -48,7 +74,7 @@ func TestE2EInitPreview(t *testing.T) {
 func TestE2EInitApply(t *testing.T) {
 	e2eOwners(t, func(t *testing.T, owner string) {
 		for _, lost := range []bool{false, true} {
-			f := installFixture(t, owner)
+			f := e2eSharedInstallFixture(t, owner)
 			f.lostRef, f.lostPR, f.lostLabel = lost, lost, lost
 			api := &e2eAPI{API: f}
 			plan := e2ePreview(t, api)
@@ -108,9 +134,23 @@ func TestE2EInitApply(t *testing.T) {
 			}
 			e2eEqual(t, f.refPosts, 1)
 			writes := e2eSafeWrites(t, api.calls)
-			_, err = applyInit(api, plan)
-			if err == nil || !strings.Contains(err.Error(), "INSTALL_BRANCH_EXISTS") {
-				t.Fatal("existing installation branch must require inspection", err)
+			changed := make([]map[string]string, 0, len(entries))
+			for _, entry := range entries {
+				changed = append(changed, map[string]string{
+					"filename": entry["path"], "status": "added",
+				})
+			}
+			f.data[e2eRepo+"/compare/"+plan.Head+"..."+observed.Head.SHA] =
+				map[string]any{"ahead_by": 1, "status": "ahead", "files": changed}
+			query := "?state=all&per_page=2&head=" +
+				url.QueryEscape("example:"+observed.Head.Ref)
+			f.data[e2eRepo+"/pulls"+query] = []installPR{observed}
+			repeatPlan := e2ePreview(t, api)
+			e2eEqual(t, len(repeatPlan.Labels), 0)
+			repeat, err := applyInit(api, repeatPlan)
+			if err != nil || repeat.PR != observed.URL ||
+				repeat.Code != "INSTALLATION_PR_REQUIRES_REVIEW_AND_MERGE" {
+				t.Fatal("verified installation PR must be reused", repeat, err)
 			}
 			e2eEqual(t, e2eSafeWrites(t, api.calls), writes)
 			// A simulated external merge is fixture setup, never a CLI write to main.
@@ -121,7 +161,8 @@ func TestE2EInitApply(t *testing.T) {
 			e2eEqual(t, len(unchanged.Files), 0)
 			e2eEqual(t, len(unchanged.Labels), 0)
 			result, err = applyInit(api, unchanged)
-			if err != nil || result.Status != "completed" {
+			if err != nil || result.Status != "pending" ||
+				result.Code != "SHARED_HOST_ADOPTION_REQUIRED" {
 				t.Fatal(result, err)
 			}
 			e2eEqual(t, e2eSafeWrites(t, api.calls), writes)
@@ -134,13 +175,13 @@ func TestE2EInitDenials(t *testing.T) {
 		for _, kind := range []string{"permission", "revoked", "workflow-denied",
 			"file-conflict", "branch-conflict", "invalid-response", "wrong-readback"} {
 			t.Run(kind, func(t *testing.T) {
-				f := installFixture(t, owner)
+				f := e2eSharedInstallFixture(t, owner)
 				api := &e2eAPI{API: f}
 				plan := e2ePreview(t, api)
 				switch kind {
 				case "permission", "revoked":
 					repo := f.data[e2eRepo].(Repository)
-					repo.Permissions["push"] = false
+					repo.Permissions["admin"] = false
 					f.data[e2eRepo] = repo
 				case "workflow-denied":
 					api.deny = e2eRepo + "/git/trees"
@@ -180,7 +221,7 @@ func TestE2EInitUnknown(t *testing.T) {
 	e2eOwners(t, func(t *testing.T, owner string) {
 		for _, effect := range []string{"ref", "pull", "label"} {
 			t.Run(effect, func(t *testing.T) {
-				f := installFixture(t, owner)
+				f := e2eSharedInstallFixture(t, owner)
 				api := &e2eAPI{API: f}
 				plan := e2ePreview(t, api)
 				switch effect {
@@ -212,14 +253,15 @@ func TestE2EInitUnknown(t *testing.T) {
 
 func TestE2EInitSourceBoundary(t *testing.T) {
 	e2eOwners(t, func(t *testing.T, owner string) {
-		f := installFixture(t, owner)
+		f := e2eSharedInstallFixture(t, owner)
 		api := &e2eAPI{API: f}
 		t.Setenv("XDG_CACHE_HOME", t.TempDir())
 		// No genuine pinned artifact is supplied. The real command must reject it,
 		// rather than accept a synthetic archive as a producer verification success.
 		var output bytes.Buffer
 		err := (App{API: api, Process: e2eCachePath{t}}).Run(
-			[]string{"init", "--repo", "example/project", "--apply"}, &output)
+			[]string{"init", "--repo", "example/project",
+				"--execution-repo", "example/project", "--apply"}, &output)
 		if err == nil || err.Error() != "NOT_FOUND" {
 			t.Fatal("missing genuine source artifact must reject", err)
 		}
