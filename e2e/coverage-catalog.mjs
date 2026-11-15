@@ -1,11 +1,15 @@
 // Intended behaviors, not a declaration of implemented or passing live scenarios.
 export const products = Object.freeze(['Core', 'Action', 'CLI']);
+export const releaseProducerIds = Object.freeze({
+  delivery: 'delivery.paired.live', action: 'action.invocation', cli: 'cli.invocation',
+});
 export const catalog = Object.freeze([
-  { id: 'core.delivery', product: 'Core', category: 'delivery', scenarioIds: [] },
+  { id: 'core.delivery', product: 'Core', category: 'delivery',
+    scenarioIds: [releaseProducerIds.delivery] },
   { id: 'action.invocation', product: 'Action', category: 'integration',
-    scenarioIds: [] },
+    scenarioIds: [releaseProducerIds.action] },
   { id: 'cli.invocation', product: 'CLI', category: 'integration',
-    scenarioIds: ['cli.invocation'] },
+    scenarioIds: [releaseProducerIds.cli] },
 ].map(item => Object.freeze({ ...item, scenarioIds: Object.freeze(item.scenarioIds) })));
 
 export function identity(value) {

@@ -293,7 +293,7 @@ test('production refuses controlled inputs as live requirements', async () => {
   const f = fixture();
   const actual = await createReleaseGate(f.capabilities)(['1.2.3']);
   assert.equal(actual.outcome, 'blocked');
-  assert.match(actual.reason, /COVERAGE/);
+  assert.match(actual.reason, /NATIVE_COVERAGE/);
 });
 test('runtime handoff validator rejects malformed and path-bearing output', async () => {
   const actual = await invoke(fixture());

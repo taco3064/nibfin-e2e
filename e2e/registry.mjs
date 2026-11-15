@@ -33,6 +33,8 @@ const isolation = (id, group, title, module) => ({
 });
 export const scenarios = Object.freeze([
   ...wake,
+  isolation('action.invocation', 'action-invocation',
+    'Protected native Action and Core output correlation', 'action-invocation'),
   isolation('cli.invocation', 'cli-invocation',
     'Protected current-attempt prepared CLI invocation', 'cli-invocation'),
   isolation('pressure.fixture', 'pressure-contract',
