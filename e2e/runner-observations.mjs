@@ -1,3 +1,32 @@
+import { compareInstallation, installationObservation } from
+  './scenarios/cli-onboarding/installation-observations.mjs';
+
+// Comparison never confers authorization or protected-execution readiness.
+export function compareInstallationResult(result) {
+  const answer = (outcome, code) => ({ outcome, code,
+    protectedExecution: 'unverified' });
+  if (!result || !['synthetic', 'operator'].includes(result.origin)) {
+    return answer('unverified', 'INSTALLATION_OBSERVATION_REQUIRED');
+  }
+  if (['contradiction', 'denied'].includes(result.disposition)) {
+    return answer('failing', 'INSTALLATION_REFUSED');
+  }
+  if (result.disposition !== 'success') {
+    return answer('unverified', 'INSTALLATION_INCOMPLETE');
+  }
+  try {
+    const observed = installationObservation(result.observation);
+    if (result.inventory?.pending || result.inventory?.runners?.length !== 2 ||
+        compareInstallation(result.binding, result.sources, observed,
+          result.inventory.runners) !== 'installed') {
+      return answer('failing', 'INSTALLATION_RESULT_CONFLICT');
+    }
+  } catch { return answer('failing', 'INSTALLATION_RESULT_CONFLICT'); }
+  return result.origin === 'synthetic' ?
+    answer('unverified', 'SYNTHETIC_INSTALLATION_MATCHED') :
+    answer('passed', 'INSTALLATION_OBSERVED');
+}
+
 const last = observation => observation?.results?.at(-1);
 const state = observation => last(observation)?.record?.state;
 const commands = item => item.observations;
