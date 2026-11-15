@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { runLifecycle } from '../lifecycle.mjs';
 import { runDependency } from '../dependency-protected.mjs';
 import { reconcileDependencyExecution } from '../dependency-recovery.mjs';
 import { dependencyFixture } from './dependency-support.mjs';
@@ -11,7 +12,8 @@ const ledger = async owned => JSON.parse(await readFile(owned.inventory.path, 'u
 test('owned pair proves blocked admission, delivery and actual downstream invocation',
   async t => {
     const f = await dependencyFixture(t);
-    const result = await runDependency(request, f.caller);
+    const result = await runLifecycle({ ...request, case: 'dependency-fanout' },
+      f.caller);
     assert.equal(result.state, 'passed', JSON.stringify(result));
     assert.equal(result.mode, 'fixture');
     assert.equal(result.liveVerified, false);
