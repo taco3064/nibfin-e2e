@@ -30,3 +30,12 @@ export async function runPrepared(entries, groups = [], options = {}) {
     return report(document?.results ?? [], [...(document?.errors ?? []), String(error)]);
   }
 }
+
+// In-process protected framework entry. No CLI input selects a capability or
+// executable; ordinary scenario/group consumers keep the existing report shape.
+export async function runSuite(coordinator, request) {
+  if (typeof coordinator?.run !== 'function') {
+    throw new Error('SUITE_CAPABILITY_UNAVAILABLE');
+  }
+  return coordinator.run(request);
+}

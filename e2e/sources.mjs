@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -62,7 +63,7 @@ export async function prepareSources(options = {}) {
   let releaseStarted = false;
   let disposing;
   return Object.freeze({
-    root, sources: Object.freeze(sources),
+    root, ownershipId: randomUUID(), sources: Object.freeze(sources),
     get disposed() { return disposed; },
     async preflightRelease(version) {
       if (disposed || disposing || releaseStarted) {

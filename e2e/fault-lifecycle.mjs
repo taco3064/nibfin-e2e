@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { runDeliveryPairWithLifecycle } from './delivery-pair.mjs';
+import { runDeliveryPairWithLifecycle, runDeliveryPairPrepared }
+  from './delivery-pair.mjs';
 import { fixtureBudget } from './fixture-budget.mjs';
 import { same, positive } from './delivery-contract.mjs';
 import { verifyConcurrencyNative } from './concurrency-protected.mjs';
@@ -14,7 +15,7 @@ const executionKeys = ['runRepository', 'runId', 'attempt', 'jobId'];
 
 // This is protected composition, never an ordinary worker's input surface.
 // The A/B producer retains its source preparation, admission and delivery proofs.
-export async function runFaultLifecycle(request, caller, bounds = {}) {
+async function executeFaultLifecycle(request, caller, bounds, prepared) {
   const output = (state, code) => ({ state, code,
     mode: caller?.mode === 'fixture' ? 'fixture' : 'live', liveVerified: false,
     fault: request?.case });
@@ -195,7 +196,9 @@ export async function runFaultLifecycle(request, caller, bounds = {}) {
       observed.data.some(c => pull.checkIds.includes(c.id) &&
         c.status === 'completed' && c.conclusion === 'failure');
   }
-  const result = await runDeliveryPairWithLifecycle(request, wrapped, bounds, lifecycle);
+  const result = prepared
+    ? await runDeliveryPairPrepared(request, wrapped, prepared, bounds, lifecycle)
+    : await runDeliveryPairWithLifecycle(request, wrapped, bounds, lifecycle);
   if (!binding) return result;
   if (faultResult?.state !== 'passed') return { ...result,
     ...output(faultResult?.state ?? 'unverified', faultResult?.code ?? phase),
@@ -204,4 +207,17 @@ export async function runFaultLifecycle(request, caller, bounds = {}) {
     code: caller.mode === 'fixture' ? 'FIXTURE_FAULT_RECOVERY_CONFIRMED' :
       'LIVE_FAULT_RECOVERY_OBSERVED', resumedJob: last.resumedJob,
     reason: last.reason } : {}) };
+}
+
+export function runFaultLifecycle(request, caller, bounds = {}) {
+  return executeFaultLifecycle(request, caller, bounds);
+}
+
+// Suite-owned sources survive interruptions; this route never acquires a new set.
+export function runFaultLifecyclePrepared(request, caller, prepared, bounds = {}) {
+  if (!prepared || prepared.disposed !== false || !prepared.sources) {
+    return Promise.resolve({ state: 'blocked', code: 'PREPARED_SOURCES_REQUIRED',
+      mode: caller?.mode, liveVerified: false });
+  }
+  return executeFaultLifecycle(request, caller, bounds, prepared);
 }

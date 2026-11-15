@@ -6,6 +6,7 @@ import { pairedFixture } from './delivery-pair-support.mjs';
 import { wakeFixture } from '../scenarios/wake-fixtures.mjs';
 import { sourceRepositories } from '../source-checkout.mjs';
 import { catalog } from '../coverage-catalog.mjs';
+import { suitePhases, suiteSources } from '../suite-result.mjs';
 import { scenarios } from '../registry.mjs';
 import { createContractGate } from '../release-gate.mjs';
 
@@ -35,6 +36,7 @@ export async function releaseCoverageFixture(t) {
     ref: 'refs/heads/main', actor: 'operator', runId: '123', attempt: '1' };
   const state = { prepared: 0, disposed: 0, staged: 0, writes: 0 };
   const prepared = { sources: cli.sources, root: cli.root, disposed: false,
+    ownershipId: 'test-suite-owner',
     async preflightRelease() { state.staged++; },
     async dispose() {
       await rm(cli.root, { recursive: true, force: true });
@@ -53,7 +55,16 @@ export async function releaseCoverageFixture(t) {
         effects: 'reconciled' }])) : null });
   const f = { cli, pair, action, prepared, state, identity, release: null,
     editEnvelope: () => {}, editAdapters: () => {} };
+  const suite = { schemaVersion: 1, kind: 'suite', runId: 'test-suite',
+    sourceOwner: prepared.ownershipId, sources: suiteSources(prepared.sources),
+    provenance: 'native', binding: `${identity.repository}/123/1`,
+    phases: Object.fromEntries(suitePhases.map(name => [name, { state: 'passed' }])),
+    cleanup: 'complete', pending: [], outcome: 'passed' };
   const capabilities = { expected, verifyInvocation: async () => identity,
+    suite: { open: async () => {
+      state.prepared++;
+      return { prepared, result: suite };
+    } },
     native: { write: async () => { state.writes++; assert.fail('publication'); } },
     observeConflicts: async version => sourceRepositories.map(({ repository }) =>
       ({ repository, version, complete: true, tags: [], releases: [],
@@ -92,6 +103,6 @@ export async function releaseCoverageFixture(t) {
     registry: structuredClone(scenarios), nativeCoverage: true,
     prepare: async () => { state.prepared++; return prepared; },
     run: () => assert.fail('ordinary workers must not replace native producers') };
-  return Object.assign(f, { capabilities, dependencies,
+  return Object.assign(f, { capabilities, dependencies, suite,
     invoke: () => createContractGate(capabilities, dependencies)(['1.2.3']) });
 }
