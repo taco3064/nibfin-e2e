@@ -207,7 +207,7 @@ export function protectedSharedInstallation({
           }
           if (refused) disposition = 'denied';
           if (['INCOMPATIBLE_CORE_SOURCE', 'INCOMPATIBLE_ACTION_SOURCE'].includes(
-            error?.message,
+            error?.code ?? error?.message,
           )) disposition = 'contradiction';
           // Never return exception text, stdout, stderr or credential material.
         }

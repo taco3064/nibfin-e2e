@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { installationFixture } from './installation-fixture.mjs';
+import { pin, put } from './source-fixture.mjs';
 import { decodeRunnerCommand, protectedSharedInstallation } from '../runner-live.mjs';
 import { compareInstallationResult } from '../runner-observations.mjs';
 
@@ -137,14 +138,23 @@ for (const condition of ['online', 'service', 'sources', 'endpoint', 'local', 'r
   });
 }
 
-test('incompatible consumer pins stop before any host command', async t => {
-  const f = await installationFixture(t);
-  await writeFile(join(f.sources.action.checkout, 'core-source.json'), '{}');
-  const result = await f.driver().install();
-  assert.equal(result.disposition, 'contradiction');
-  assert.equal(result.phase, 'source-compatibility');
-  assert.equal(f.commands.length, 0);
-});
+for (const declaration of ['Action Core', 'CLI Core', 'CLI Action']) {
+  test(`${declaration} incompatibility stops before any host command`, async t => {
+    const f = await installationFixture(t);
+    if (declaration === 'Action Core') {
+      await writeFile(join(f.sources.action.checkout, 'core-source.json'), '{}');
+    } else {
+      await put(f.sources.cli.checkout, 'internal/cli/producers.json', {
+        core: declaration === 'CLI Core' ? {} : pin, action: {},
+      });
+    }
+    const result = await f.driver().install();
+    assert.equal(result.disposition, 'contradiction');
+    assert.equal(result.phase, 'source-compatibility');
+    assert.equal(f.commands.length, 0);
+    noSecrets(result);
+  });
+}
 
 for (const denied of ['inspect-installation', 'start-shared-services']) {
   test(`${denied} denial names refused operation and identity without diagnostics`,

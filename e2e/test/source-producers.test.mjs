@@ -156,3 +156,28 @@ test('producer output paths cannot escape checkouts through paths or links', asy
     assert.equal(await producerFile(tempRoot, 'file'), file);
   });
 });
+
+test('Core build-result mismatch identifies the package comparison', async () => {
+  await fixture(async ({ tempRoot, fake, command }) => {
+    await assert.rejects(prepareSources({ tempRoot, acquire: fake.acquire,
+      command: async (file, args, options) => {
+        const result = await command(file, args, options);
+        if (args[0] === 'scripts/package-ci.mjs') {
+          return { stdout: JSON.stringify({ status: 'verified-build', ...pin,
+            manifestHash: 'c'.repeat(64) }) };
+        }
+        return result;
+      },
+    }), error => {
+      assert.match(error.message, /INCOMPATIBLE_CORE_SOURCE/);
+      assert.match(error.message, /Core scripts\/package-ci.mjs build result/);
+      assert.match(error.message, /distribution\/source-pin.json/);
+      assert(error.message.includes(`manifestHash: declared=${'c'.repeat(64)} ` +
+        `expected=${pin.manifestHash}`));
+      assert(!error.message.includes('Action'));
+      assert(!error.message.includes('CLI'));
+      return true;
+    });
+    assert.deepEqual(await readdir(tempRoot), []);
+  });
+});
