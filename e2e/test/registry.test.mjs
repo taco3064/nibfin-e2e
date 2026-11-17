@@ -14,6 +14,7 @@ const groups = {
   'action-invocation': ['action.invocation'],
   'cli-invocation': ['cli.invocation'],
   'cli-onboarding': ['cli-onboarding.contract'],
+  'managed-wake': ['managed-wake.contract'],
   delivery: ['delivery.live', 'delivery.paired.live'],
   dependency: ['dependency.live'],
   'concurrency-contract': ['concurrency.fixture'],

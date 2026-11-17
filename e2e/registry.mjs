@@ -33,6 +33,12 @@ const isolation = (id, group, title, module) => ({
 });
 export const scenarios = Object.freeze([
   ...wake,
+  {
+    id: 'managed-wake.contract', group: 'managed-wake',
+    title: 'Controlled producer activation, artifact relay and Shape selection',
+    timeoutMs: 660000,
+    module: new URL('./scenarios/managed-wake/contract.mjs', import.meta.url).href,
+  },
   isolation('action.invocation', 'action-invocation',
     'Protected native Action and Core output correlation', 'action-invocation'),
   isolation('cli.invocation', 'cli-invocation',
