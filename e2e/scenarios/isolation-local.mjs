@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { claudeControls, verifyClaude } from './claude-controls.mjs';
 import { coreModule, environment } from './isolation-common.mjs';
 export { prerequisite } from './isolation-common.mjs';
 
@@ -80,15 +81,18 @@ export async function run(context) {
   try {
     const bindings = await bindingControls(context);
     const policies = await policyControls(context);
-    return { bindings, policies, observation: environment(context, 'synthetic/local') };
+    const claude = await claudeControls(context);
+    return { bindings, policies, claude,
+      observation: environment(context, 'synthetic/local') };
   } catch {
     // Never surface provider payloads or imported exceptions in diagnostics.
     throw new Error('ISOLATION_CONTRACT_ASSERTION_FAILED');
   }
 }
 export function verify(actual) {
-  return actual.bindings === 7 && actual.policies === true;
+  return actual.bindings === 7 && actual.policies === true &&
+    verifyClaude(actual.claude);
 }
 export function describe(actual) {
-  return JSON.stringify(actual.observation);
+  return JSON.stringify({ ...actual.observation, claude: actual.claude });
 }

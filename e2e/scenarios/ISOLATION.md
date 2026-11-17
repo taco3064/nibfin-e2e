@@ -6,6 +6,36 @@ functions. Its observations are synthetic contracts, not OS enforcement. No sock
 is opened, protected path read, cross-role write attempted or network probe sent.
 The synthetic socket host is an in-memory observation, not an incidental host path.
 
+Claude coverage invokes the prepared Core adapter, plans, fixed workspace-channel
+binding, private runner and worker. Five role plans and adapter executions cover
+Deliver, Shape, Shape validation, Accept and final review. Only Deliver receives
+writable workspace mounts. Authorized reads/checks and Deliver writes reach a
+controlled executor; unauthorized writes, unsupported operations and foreign
+execution identities are rejected before dispatch. Untrusted issue text cannot
+replace trusted executable or MCP configuration.
+
+Controlled command inputs and effective container inspections include valid
+controls plus mutations for writable review mounts, extra host/authentication
+mounts, Docker socket exposure, credential environment, network attachment, DNS,
+and model executable/MCP substitutions. Commands are captured in memory; the
+fixture never invokes Docker, Claude, Python, a provider or protected host probes.
+These observations test maintained policy decisions over synthetic inputs, not
+actual OS enforcement, authentication, installation or platform support.
+
+Unknown model and unknown worker termination are driven separately. The private
+runner denies retirement/replay and retains admission/channel resources; the
+adapter retains its actual RoleSessions lease and denies replay without executing
+again. Controls then restore known termination and settle both sides before
+removing owned resources. Successful role executions retire, remove their leases,
+and permit a distinct subsequent execution. This exercises Core lifecycle state;
+it does not claim a live host Writer-replacement audit.
+
+Every Claude category must complete for local verification to succeed. Public
+results contain category counts and source identities, never captured commands,
+fake credentials, private paths or imported exception text. Temporary sessions,
+mount directories and copied egress sources are fixture-owned and removed after
+controlled settlement, including assertion and setup failure paths.
+
 `isolation.host` exposes host-path, credential, role-write and network selections.
 Workers intentionally have no protected sandbox executor. On Linux these checks
 are blocked pending authorized protected-runner probes. Other OS behavior is
@@ -17,9 +47,11 @@ adapter. No host isolation coverage is claimed by this implementation.
 
 Result messages identify the actual OS, Node runtime, observed source identities
 and execution mode. Imported local failures use a fixed diagnostic instead of
-provider exceptions. The existing executor owns temporary directories, termination
-and cleanup; cleanup failure overrides success. No scenario creates a detached
-process, credential sentinel or resource outside that owned surface.
+provider exceptions. The framework executor owns temporary directories and
+worker termination;
+Claude helpers also settle and remove their own temporary resources. Cleanup
+failure overrides success. No scenario creates a detached process or live
+credential sentinel.
 
 Run `npm --ignore-scripts run verify` for local regression checks. Real Core
 contract execution requires the existing prepared source context and can be
