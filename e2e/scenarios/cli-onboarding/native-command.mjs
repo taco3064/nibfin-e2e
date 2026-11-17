@@ -2,13 +2,15 @@ import { join } from 'node:path';
 import { sourceCommand } from '../../source-process.mjs';
 import { sourceEnvironment } from '../../source-checkout.mjs';
 
+export const managedResumeCase = 'TestManagedResumeUsesDurableIntentAndControlledHost';
+
 // Fixed operation: the worker cannot choose an executable, arguments, environment
 // or provider capability. Parent ownership survives worker termination.
 export function invokeNative(tempDir, signal) {
   const root = join(tempDir, 'cli-contract');
   return sourceCommand('go', [
     'test', '-json', '-count=1', '-parallel=1', '-timeout=90s',
-    './internal/cli', '-run', '^TestE2E',
+    './internal/cli', '-run', `^(TestE2E|${managedResumeCase}$)`,
   ], {
     cwd: join(root, 'source'), timeoutMs: 120000, signal,
     env: {
