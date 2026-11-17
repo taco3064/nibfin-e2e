@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, writeFile }
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { executeNative, nativeCases, requiredManagedCases }
+import { executeNative, nativeCases, requiredManagedCases, requiredDesktopCases }
   from '../scenarios/cli-onboarding/native.mjs';
 import { managedCases } from '../scenarios/cli-onboarding/native-command.mjs';
 import { fixtureInventory } from '../fixture-inventory.mjs';
@@ -14,7 +14,7 @@ import { continuityCases } from '../scenarios/cli-onboarding/continuity.mjs';
 import { deliveryCases } from '../scenarios/cli-onboarding/delivery-continuity.mjs';
 
 const passed = () => [...nativeCases.flatMap(name => ['', '/User', '/Organization']
-  .map(suffix => name + suffix)), ...requiredManagedCases];
+  .map(suffix => name + suffix)), ...requiredManagedCases, ...requiredDesktopCases];
 const events = names => names.map(Test => ({ Action: 'pass', Test }));
 const output = rows => ({ stdout: rows.map(row => JSON.stringify(row)).join('\n') });
 

@@ -13,9 +13,17 @@ export const nativeCases = Object.freeze([
   'TestE2EUpgradeDenials', 'TestE2EUpgradeUnknown', 'TestE2EUpgradeAdoption',
 ]);
 const drivers = ['support', 'init', 'upgrade', 'managed-fixture_linux',
-  'managed-host_linux', 'managed-resume_linux', 'managed-readback_linux'];
+  'managed-host_linux', 'managed-resume_linux', 'managed-readback_linux',
+  'desktop-fixture_linux', 'desktop_linux', 'desktop-assets_linux',
+  'desktop-guards_linux'];
 export const requiredManagedCases = Object.freeze(process.platform === 'linux'
   ? [managedResumeCase, ...managedCases] : []);
+
+export const requiredDesktopCases = Object.freeze(process.platform === 'linux' ? [
+  'TestE2EDesktopInventory', 'TestE2EDesktopConsentAndHandoff',
+  'TestE2EDesktopDrift', 'TestE2EDesktopEnvironment', 'TestE2EDesktopAssets',
+  'TestE2EDesktopPlatformRejections', 'TestE2EDesktopLinuxGuards',
+] : []);
 
 // Copy test sources, never modify the prepared producer or its declarations.
 // The producer's own synthetic transport helpers are reused, not its assertions.
@@ -65,7 +73,7 @@ export async function executeNative(context, command) {
         }
       }
     }
-    for (const name of requiredManagedCases) {
+    for (const name of [...requiredManagedCases, ...requiredDesktopCases]) {
       if (!passed.includes(name)) throw new Error(`NATIVE_ASSERTIONS_MISSING: ${name}`);
     }
     if (events.some(event => ['fail', 'skip'].includes(event.Action))) {

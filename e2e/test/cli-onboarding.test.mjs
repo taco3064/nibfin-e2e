@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { compareHandoff, validateRequest } from
   '../scenarios/cli-onboarding/handoff.mjs';
-import { executeNative, nativeCases, requiredManagedCases }
+import { executeNative, nativeCases, requiredManagedCases, requiredDesktopCases }
   from '../scenarios/cli-onboarding/native.mjs';
 import { verify as verifyNativeContract } from '../scenarios/cli-onboarding/contract.mjs';
 import { continuityCases } from '../scenarios/cli-onboarding/continuity.mjs';
@@ -188,11 +188,35 @@ test('native driver requires every assertion and cleans isolated copies on failu
       const context = { tempDir, sources: { cli: { checkout } } };
       const complete = async () => ({
         stdout: [...nativeCases.flatMap(name => ['', '/User', '/Organization']
-          .map(suffix => name + suffix)), ...requiredManagedCases]
+          .map(suffix => name + suffix)),
+        ...requiredManagedCases, ...requiredDesktopCases]
           .map(Test => JSON.stringify({ Action: 'pass', Test }))
           .join('\n'), stderr: '',
       });
-      assert.equal((await executeNative(context, complete)).evidence, 'synthetic');
+      const checkedCopy = async () => {
+        const copied = await readdir(join(tempDir, 'cli-contract/source/internal/cli'));
+        for (const name of ['desktop-fixture', 'desktop', 'desktop-assets',
+          'desktop-guards']) {
+          assert.ok(copied.includes(`e2e_${name}_linux_test.go`));
+        }
+        return complete();
+      };
+      assert.equal((await executeNative(context, checkedCopy)).evidence, 'synthetic');
+      for (const missing of requiredDesktopCases) {
+        await assert.rejects(executeNative(context, async () => {
+          const result = await complete();
+          result.stdout = result.stdout.split('\n')
+            .filter(line => JSON.parse(line).Test !== missing).join('\n');
+          return result;
+        }), /NATIVE_ASSERTIONS_MISSING/);
+      }
+      for (const Action of ['skip', 'fail']) {
+        await assert.rejects(executeNative(context, async () => {
+          const result = await complete();
+          result.stdout += '\n' + JSON.stringify({ Action, Test: 'TestE2EDesktopExtra' });
+          return result;
+        }), /NATIVE_ASSERTIONS_INCOMPLETE/);
+      }
       assert.deepEqual(await readdir(tempDir), ['fixture-source']);
       await assert.rejects(executeNative(context, async () => ({
         stdout: JSON.stringify({ Action: 'pass', Test: nativeCases[0] }), stderr: '',
@@ -294,12 +318,14 @@ for (const state of ['observed', 'unavailable']) {
 
 test('native contract requires every producer continuity and delivery assertion', () => {
   const actual = { evidence: 'synthetic',
-    passed: [...nativeCases, ...requiredManagedCases],
+    passed: [...nativeCases, ...requiredManagedCases, ...requiredDesktopCases],
     continuity: { evidence: 'synthetic', passed: [...continuityCases] },
     delivery: { evidence: 'synthetic', passed: [...deliveryCases] } };
   assert.equal(verifyNativeContract(actual), true);
-  if (requiredManagedCases.length)
-    assert.throws(() => verifyNativeContract({ ...actual, passed: [...nativeCases] }));
+  for (const name of [...requiredManagedCases, ...requiredDesktopCases]) {
+    assert.throws(() => verifyNativeContract({ ...actual,
+      passed: actual.passed.filter(value => value !== name) }));
+  }
   for (const key of ['continuity', 'delivery']) {
     for (const change of [value => value.passed.pop(),
       value => { value.evidence = 'live'; }]) {
