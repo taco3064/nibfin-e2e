@@ -33,6 +33,9 @@ const isolation = (id, group, title, module) => ({
 });
 export const scenarios = Object.freeze([
   ...wake,
+  isolation('delivery.claude.fixture', 'claude-delivery',
+    'Controlled Claude component delivery through simulated protected closure',
+    'claude-delivery'),
   {
     id: 'managed-wake.contract', group: 'managed-wake',
     title: 'Controlled producer activation, artifact relay and Shape selection',

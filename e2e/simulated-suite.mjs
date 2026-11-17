@@ -14,9 +14,10 @@ import { reconcileSimulated } from './simulated-recovery.mjs';
 
 // Explicit offline entrypoint. Run requests retain the existing suite contract;
 // they cannot select providers, executable modules, credentials or host effects.
-export async function createSimulatedSuite({ controls = {}, retained } = {}) {
+export async function createSimulatedSuite({ controls = {}, retained, delivery } = {}) {
   const root = retained?.root ?? await mkdtemp(join(tmpdir(), 'nibfin-simulated-suite-'));
   try {
+    delivery ??= retained?.delivery;
     const definition = retained?.definition ?? repositoryDefinition(simulatedAccount,
       'simulated/source');
     const provider = simulatedProvider(definition, retained?.state, controls);
@@ -29,8 +30,9 @@ export async function createSimulatedSuite({ controls = {}, retained } = {}) {
     let disposed = false;
     let retired = false;
     const scope = phase => provider.scope(runId, phase);
-    const contexts = simulatedContexts(provider, prepared, scope);
+    const contexts = simulatedContexts(provider, prepared, scope, delivery?.agent);
     const specification = (phase, fault = false) => ({
+      bounds: delivery?.producerBounds,
       request: { repository: definition.repositories[0],
         assignee: definition.account, ...(fault ? { case: 'failed-ci' } : {}) },
       async open(context) {
@@ -41,7 +43,7 @@ export async function createSimulatedSuite({ controls = {}, retained } = {}) {
           legs: [], history: null };
         provider.phases.set(context.intent, record);
         const pair = simulatedCaller(provider, definition.repositories[0],
-          record.legs);
+          record.legs, delivery);
         const opened = fault ? simulatedFault(provider, pair) : pair;
         const caller = { ...opened.caller };
         const resources = [...definition.repositories];
@@ -61,12 +63,13 @@ export async function createSimulatedSuite({ controls = {}, retained } = {}) {
       },
       async reconcile(context) {
         scope(phase);
-        return reconcileSimulated(provider, context, fault);
+        return reconcileSimulated(provider, context, fault, delivery);
       },
     });
     const producers = suiteProducers({ delivery: specification('delivery'),
       failure: specification('failure', true) });
     const suite = createSuite({ inventory, prepared, ...contexts, ...producers,
+      bounds: delivery?.suiteBounds,
       provenance: 'controlled', binding: 'simulated/local',
       verifyOwnership: async owner => owner === prepared && !disposed });
     return {
@@ -76,7 +79,7 @@ export async function createSimulatedSuite({ controls = {}, retained } = {}) {
         if (running || disposed) throw new Error('SIM_SUITE_UNAVAILABLE');
         const state = provider.snapshot();
         const next = await createSimulatedSuite({ controls: nextControls,
-          retained: { root, definition, prepared, state } });
+          retained: { root, definition, prepared, state, delivery } });
         disposed = true;
         retired = true;
         return next;
@@ -97,6 +100,7 @@ export async function createSimulatedSuite({ controls = {}, retained } = {}) {
             provider.localResources.size) {
           throw new Error('SIM_DISPOSAL_UNSAFE');
         }
+        await delivery?.close();
         await rm(root, { recursive: true, force: true });
         prepared.disposed = true;
         disposed = true;

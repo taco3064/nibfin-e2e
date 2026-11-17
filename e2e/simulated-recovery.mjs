@@ -6,8 +6,9 @@ import { verifyConcurrencyNative } from './concurrency-protected.mjs';
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 // Rebuild read capabilities from retained remote records, never a discarded
-// caller or completed-operation closure. No mutation is available on this path.
-export async function reconcileSimulated(provider, context, fault) {
+// caller or completed-operation closure. Committed effects are only observed;
+// controlled unfinished-stage continuation is supplied as a separate capability.
+export async function reconcileSimulated(provider, context, fault, delivery) {
   const repository = provider.definition.repositories[0];
   const record = provider.phases.get(context.intent);
   const unresolved = (code = 'SIM_TRIGGER_RECONCILIATION_REQUIRED',
@@ -32,7 +33,14 @@ export async function reconcileSimulated(provider, context, fault) {
         `${repository}/issues/${leg.issue}`);
     }
   }
-  const { caller } = simulatedCaller(provider, repository, legs);
+  const { caller, complete } = simulatedCaller(provider, repository, legs, delivery);
+  // Only the controlled Claude coordinator can continue an unfinished stage.
+  // Confirmed effects below retain the existing read-only reconciliation path.
+  if (delivery) {
+    try {
+      for (const leg of legs) await complete(leg, true);
+    } catch { return unresolved('CLAUDE_CONTINUATION_PENDING'); }
+  }
   const pair = { requestId: legs[0].binding.pairRequestId, case: 'independent',
     repository, issues: legs.map(leg => leg.issue) };
   try {

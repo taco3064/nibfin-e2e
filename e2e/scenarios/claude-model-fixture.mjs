@@ -58,6 +58,7 @@ export async function modelFixture(context, binding = {}) {
       if (cmd[0] === 'start' && cmd[1] === '-ai') {
         assert.equal(JSON.parse(options.input).key, key);
         await controls.executing?.();
+        if (controls.process) return controls.process();
         return reply(controls.output ?? 'model output');
       }
       if (cmd[0] === 'ps' && cmd.at(-1).includes('nibfin-claude-model-')) {
@@ -88,7 +89,8 @@ export async function modelFixture(context, binding = {}) {
     };
     const runner = createClaudePrivateRunner({ ...f.config, modelEgress,
       worker: { container: f.config, mounts: f.admission, egress: f.egress } },
-    { run, host, backend: f.backend, readKey: async () => key });
+    { run, host, backend: f.backend, readKey: async () => key,
+      signal: binding.signal });
     const execute = () => runner.execute({ plan, executionId: f.admission.executionId,
       session: f.admission.session });
     return { ...f, modelControls: controls,

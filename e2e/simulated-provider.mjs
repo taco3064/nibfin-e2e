@@ -52,15 +52,18 @@ export function simulatedProvider(definition, retained, controls = {}) {
   };
   const perform = (operation, repository, action, actor) => {
     authorize(operation, repository, actor);
+    const finished = result => {
+      record(operation, repository, 'observed');
+      if (['create', 'trigger', 'remove'].includes(operation) &&
+          controls.dropReply?.(operation, repository) === true) {
+        if (operation !== 'remove') pending.add(pendingKey(operation, repository));
+        record(operation, repository, 'reply-lost');
+        throw new Error('SIM_REPLY_LOST');
+      }
+      return result;
+    };
     const result = action();
-    record(operation, repository, 'observed');
-    if (['create', 'trigger', 'remove'].includes(operation) &&
-        controls.dropReply?.(operation, repository) === true) {
-      if (operation !== 'remove') pending.add(pendingKey(operation, repository));
-      record(operation, repository, 'reply-lost');
-      throw new Error('SIM_REPLY_LOST');
-    }
-    return result;
+    return result instanceof Promise ? result.then(finished) : finished(result);
   };
   const repository = name => {
     authorize('observe', name);

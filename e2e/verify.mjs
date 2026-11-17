@@ -1,5 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
+import { withVerificationCore } from './verification-core.mjs';
 
 async function sources(directory) {
   const files = [];
@@ -20,7 +21,9 @@ for (const path of await sources('e2e')) {
   const check = spawnSync(process.execPath, ['--check', path], { stdio: 'inherit' });
   if (check.status !== 0) process.exit(1);
 }
-const tests = spawnSync(process.execPath, ['--test', 'e2e/test/*.test.mjs'], {
-  stdio: 'inherit',
+await withVerificationCore(async env => {
+  const tests = spawnSync(process.execPath, ['--test', 'e2e/test/*.test.mjs'], {
+    stdio: 'inherit', env,
+  });
+  process.exitCode = tests.status ?? 1;
 });
-process.exitCode = tests.status ?? 1;
