@@ -262,3 +262,44 @@ APIs. Unknown native subprocess termination retains its checkout and inventory
 lock; normal completion or settled failure removes them after process termination.
 These are controlled orchestration regressions, not native credential selection,
 production credential transfer, actual installation or protected delivery evidence.
+
+## Controlled desktop discovery and platform assets (#121)
+
+On Linux, the same fixed Go operation also requires `TestE2EDesktopInventory`,
+`TestE2EDesktopConsentAndHandoff`, `TestE2EDesktopDrift`,
+`TestE2EDesktopEnvironment`, `TestE2EDesktopAssets`,
+`TestE2EDesktopPlatformRejections` and `TestE2EDesktopLinuxGuards`.
+`native.mjs` owns this required-case inventory. Missing pass events, skips and
+failures reject the contract; driver copying and those rejection paths have local
+framework assertions. The parent command, time budgets and cleanup ownership are
+unchanged.
+
+The four `desktop*_linux.go` drivers compile beside the prepared CLI's package
+fixtures. They call the maintained `runDesktop` entry with simulated Windows and
+Apple Silicon hosts, feeding UTF-16 WSL inventory and Multipass JSON through the
+actual parsers. Fixture-owned guest identity, running state, architecture and an
+ordered command/effect ledger independently check selection, adopted preference,
+consent, guest starts and terminal arguments. Unexpected commands fail the test;
+callbacks never invoke WSL, Multipass, setup, registration or Core. Preview and
+rejected targets cannot reach the terminal or repository API. Desktop re-observation
+rejects identity, architecture and required isolation drift. Opening consent alone
+records delegation, not successful guest installation or credential transfer.
+
+Handoff selects assets for the independently recorded guest architecture using the
+maintained authenticated producer reader and official Runner selector. Archive and
+executable digests come from separately constructed fixture bytes; recorded API
+requests must be read-only. Disposable executable caches pass through the actual
+ELF/digest verifier, including wrong-architecture and changed-byte rejection.
+Synthetic Node archive bytes remain opaque and are never downloaded or unpacked.
+Kernel/runtime/ELF disagreement, unsupported targets, inconsistent producer/asset
+digests and missing host prerequisites cannot become successful selection. Missing
+dedicated-engine preparation remains distinct from missing required host isolation.
+
+The Linux drivers additionally exercise the actual early handoff identity guard
+and the maintained observation rule at managed resume
+and pre-setup boundaries. Synthetic observations establish controlled regression
+coverage only. In particular, arm64 fixture selection on Linux amd64 is not arm64
+execution; terminal callbacks do not establish native Windows/macOS invocation,
+live installation, protected isolation or release readiness. Independent acceptance,
+PR-head CI and any separately authorized native platform checks retain their own
+verification responsibilities.
