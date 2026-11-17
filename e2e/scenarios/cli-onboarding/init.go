@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -274,6 +275,9 @@ func TestE2EInitSourceBoundary(t *testing.T) {
 type e2eCachePath struct{ t *testing.T }
 
 func (p e2eCachePath) Run(file string, args []string, input []byte) ([]byte, error) {
+	if e2eDiagnosticProbe(file, args, input) {
+		return nil, errors.New("FIXTURE_HOST_PROBE_UNAVAILABLE")
+	}
 	if file != "node" || len(args) != 4 || args[0] != "--input-type=module" ||
 		args[1] != "-e" || input != nil {
 		p.t.Fatal("unexpected process invocation", file, args)

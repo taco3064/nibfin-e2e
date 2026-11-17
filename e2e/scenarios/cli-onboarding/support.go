@@ -51,7 +51,10 @@ func (f *e2eAPI) Call(method, path string, input, output any) error {
 
 type e2eNoProcess struct{ t *testing.T }
 
-func (p e2eNoProcess) Run(string, []string, []byte) ([]byte, error) {
+func (p e2eNoProcess) Run(file string, args []string, input []byte) ([]byte, error) {
+	if e2eDiagnosticProbe(file, args, input) {
+		return nil, errors.New("FIXTURE_HOST_PROBE_UNAVAILABLE")
+	}
 	p.t.Fatal("no local installer, Runner, service or downloaded code may execute")
 	return nil, nil
 }
@@ -144,4 +147,29 @@ func e2eOwners(t *testing.T, check func(*testing.T, string)) {
 	for _, owner := range []string{"User", "Organization"} {
 		t.Run(owner, func(t *testing.T) { check(t, owner) })
 	}
+}
+
+// Public init preview may request read-only diagnostics. Refuse them with an
+// unavailable observation; never invoke systemctl, Docker or an installed host.
+func e2eDiagnosticProbe(file string, args []string, input []byte) bool {
+	if file != "/usr/bin/env" || input != nil {
+		return false
+	}
+	for _, service := range []string{"docker.service", "nibfin-engine.service"} {
+		want := []string{"-i", "PATH=/usr/bin:/bin", "LANG=C",
+			"/usr/bin/systemctl", "show", service,
+			"--property=LoadState,ActiveState", "--no-pager"}
+		if reflect.DeepEqual(args, want) {
+			return true
+		}
+	}
+	for _, socket := range []string{"/run/docker.sock", "/run/nibfin-engine/docker.sock"} {
+		want := []string{"-i", "PATH=/usr/bin:/bin", "LANG=C", "/usr/bin/docker",
+			"--config", "/etc/nibfin/engine/client", "--host", "unix://" + socket,
+			"info", "--format", "{{json .}}"}
+		if reflect.DeepEqual(args, want) {
+			return true
+		}
+	}
+	return false
 }
