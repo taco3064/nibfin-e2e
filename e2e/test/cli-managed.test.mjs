@@ -11,6 +11,8 @@ import { managedCases } from '../scenarios/cli-onboarding/native-command.mjs';
 import { fixtureInventory } from '../fixture-inventory.mjs';
 import { verify } from '../scenarios/cli-onboarding/contract.mjs';
 import { continuityCases } from '../scenarios/cli-onboarding/continuity.mjs';
+import { replacementCases, replacementUnsupported, verifyReplacement }
+  from '../scenarios/cli-onboarding/replacement.mjs';
 import { deliveryCases } from '../scenarios/cli-onboarding/delivery-continuity.mjs';
 
 const passed = () => [...nativeCases.flatMap(name => ['', '/User', '/Organization']
@@ -52,6 +54,8 @@ test('managed integration copies Linux drivers and binds exclusive owned A/B sta
         const statePath = join(directory, `${binding.owner}.json`);
         const state = JSON.parse(await readFile(statePath, 'utf8'));
         assert.equal(state.simulation.execution, 'pending');
+        assert.deepEqual(state.simulation.replacement, { old: [25, 26], fresh: [],
+          repositories: [10, 11], recovery: 'pending' });
         assert.equal(state.simulation.hostId, binding.hostId);
         assert.deepEqual(state.definition.repositories, binding.repositories);
         const competing = await fixtureInventory(directory, state.definition,
@@ -59,6 +63,11 @@ test('managed integration copies Linux drivers and binds exclusive owned A/B sta
         await assert.rejects(competing.exclusive(() => assert.fail('stolen lock')),
           { code: 'EEXIST' });
         observed.push(binding);
+        await writeFile(join(f.root, 'home/replacement-observations.json'),
+          JSON.stringify({ old: [25, 26], fresh: [31, 32],
+            repositories: [10, 11], recovery: 'reconstructed',
+            provider: 'claude', removals: [25, 26],
+            retirementId: '12345678-1234-1234-1234-123456789abc' }));
         return output(events(passed()));
       });
       assert.equal(result.evidence, 'synthetic');
@@ -86,7 +95,10 @@ test('each managed case is mandatory; fail and skip cannot hide behind passes',
   assert.deepEqual(await readdir(f.tempDir), ['gh-nibfin']);
   const actual = { evidence: 'synthetic', passed: passed(),
     continuity: { evidence: 'synthetic', passed: [...continuityCases] },
-    delivery: { evidence: 'synthetic', passed: [...deliveryCases] } };
+    delivery: { evidence: 'synthetic', passed: [...deliveryCases] },
+    replacement: process.platform === 'linux' ?
+      { evidence: 'synthetic', passed: [...replacementCases] } :
+      { ...replacementUnsupported } };
   assert.equal(verify(actual), true);
   if (process.platform === 'linux') {
     for (const name of managedCases) {
@@ -94,6 +106,21 @@ test('each managed case is mandatory; fail and skip cannot hide behind passes',
         passed: actual.passed.filter(value => value !== name) }));
     }
   } else assert.deepEqual(requiredManagedCases, []);
+});
+
+test('replacement requires every Linux case; other platforms stay unverified', () => {
+  const complete = { evidence: 'synthetic', passed: [...replacementCases] };
+  verifyReplacement(complete, 'linux');
+  for (const name of replacementCases) {
+    assert.throws(() => verifyReplacement({ ...complete,
+      passed: complete.passed.filter(value => value !== name) }, 'linux'));
+  }
+  for (const platform of ['darwin', 'win32']) {
+    verifyReplacement({ ...replacementUnsupported }, platform);
+    assert.throws(() => verifyReplacement(complete, platform));
+    assert.throws(() => verifyReplacement(undefined, platform));
+  }
+  assert.throws(() => verifyReplacement(replacementUnsupported, 'linux'));
 });
 
 test('unknown native termination preserves checkout and exclusive recovery inventory',
@@ -167,3 +194,21 @@ test('parent retains native worker storage when group termination is unknown',
       path.endsWith('.json.lock')));
     // Termination uncertainty was injected after natural exit; no process remains.
   });
+
+if (process.platform === 'linux') {
+  test('named passes cannot replace independent generation observations', async t => {
+    const f = await fixture(t);
+    for (const record of [null, { old: [25, 26] }, {
+      old: [25, 26], fresh: [25, 32], repositories: [10, 11],
+      recovery: 'reconstructed', provider: 'claude', removals: [25, 26],
+      retirementId: '12345678-1234-1234-1234-123456789abc',
+    }]) {
+      await assert.rejects(executeNative(f.context, async () => {
+        if (record) await writeFile(join(f.root, 'home/replacement-observations.json'),
+          JSON.stringify(record));
+        return output(events(passed()));
+      }));
+      assert.deepEqual(await readdir(f.tempDir), ['gh-nibfin']);
+    }
+  });
+}

@@ -57,7 +57,7 @@ function executeWorker(scenario, tempDir, diagnostic, sources, env) {
         }
         // The command is parent-owned and has no worker-controlled parameters.
         const invoke = managed ? invokeManagedWake : invokeNative;
-        native = invoke(tempDir, abort.signal).then(commandResult => {
+        native = invoke(tempDir, abort.signal, sources?.core).then(commandResult => {
           if (!settled) worker.postMessage({
             type: response, result: commandResult,
           });

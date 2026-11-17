@@ -9,6 +9,8 @@ import { executeNative, nativeCases, requiredManagedCases, requiredDesktopCases 
   from '../scenarios/cli-onboarding/native.mjs';
 import { verify as verifyNativeContract } from '../scenarios/cli-onboarding/contract.mjs';
 import { continuityCases } from '../scenarios/cli-onboarding/continuity.mjs';
+import { replacementCases, replacementUnsupported }
+  from '../scenarios/cli-onboarding/replacement.mjs';
 import { deliveryCases } from '../scenarios/cli-onboarding/delivery-continuity.mjs';
 import { scenarios, select } from '../registry.mjs';
 import { run } from '../runner.mjs';
@@ -186,13 +188,21 @@ test('native driver requires every assertion and cleans isolated copies on failu
       await mkdir(join(checkout, 'internal/cli'), { recursive: true });
       await writeFile(join(checkout, 'go.mod'), 'synthetic source\n');
       const context = { tempDir, sources: { cli: { checkout } } };
-      const complete = async () => ({
-        stdout: [...nativeCases.flatMap(name => ['', '/User', '/Organization']
-          .map(suffix => name + suffix)),
-        ...requiredManagedCases, ...requiredDesktopCases]
-          .map(Test => JSON.stringify({ Action: 'pass', Test }))
-          .join('\n'), stderr: '',
-      });
+      const complete = async () => {
+        await writeFile(join(tempDir, 'cli-contract/home',
+          'replacement-observations.json'), JSON.stringify({
+            old: [25, 26], fresh: [31, 32], repositories: [10, 11],
+            recovery: 'reconstructed', provider: 'claude', removals: [25, 26],
+            retirementId: '12345678-1234-1234-1234-123456789abc',
+          }));
+        return {
+          stdout: [...nativeCases.flatMap(name => ['', '/User', '/Organization']
+            .map(suffix => name + suffix)),
+          ...requiredManagedCases, ...requiredDesktopCases]
+            .map(Test => JSON.stringify({ Action: 'pass', Test }))
+            .join('\n'), stderr: '',
+        };
+      };
       const checkedCopy = async () => {
         const copied = await readdir(join(tempDir, 'cli-contract/source/internal/cli'));
         for (const name of ['desktop-fixture', 'desktop', 'desktop-assets',
@@ -320,13 +330,18 @@ test('native contract requires every producer continuity and delivery assertion'
   const actual = { evidence: 'synthetic',
     passed: [...nativeCases, ...requiredManagedCases, ...requiredDesktopCases],
     continuity: { evidence: 'synthetic', passed: [...continuityCases] },
-    delivery: { evidence: 'synthetic', passed: [...deliveryCases] } };
+    delivery: { evidence: 'synthetic', passed: [...deliveryCases] },
+    replacement: process.platform === 'linux' ?
+      { evidence: 'synthetic', passed: [...replacementCases] } :
+      { ...replacementUnsupported } };
   assert.equal(verifyNativeContract(actual), true);
   for (const name of [...requiredManagedCases, ...requiredDesktopCases]) {
     assert.throws(() => verifyNativeContract({ ...actual,
       passed: actual.passed.filter(value => value !== name) }));
   }
-  for (const key of ['continuity', 'delivery']) {
+  const keys = ['continuity', 'delivery'];
+  if (process.platform === 'linux') keys.push('replacement');
+  for (const key of keys) {
     for (const change of [value => value.passed.pop(),
       value => { value.evidence = 'live'; }]) {
       const incomplete = structuredClone(actual);
