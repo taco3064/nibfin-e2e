@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { result } from './schema.mjs';
+import { sourceTerminationUnknown } from './source-process.mjs';
 import {
   invokeNative, nativeFailure,
 } from './scenarios/cli-onboarding/native-command.mjs';
@@ -17,6 +18,7 @@ function executeWorker(scenario, tempDir, diagnostic, sources, env) {
     let timer;
     const abort = new AbortController();
     let native;
+    let nativeTerminationError;
     const nativeModule = new URL(
       './scenarios/cli-onboarding/contract.mjs', import.meta.url,
     ).href;
@@ -28,6 +30,7 @@ function executeWorker(scenario, tempDir, diagnostic, sources, env) {
         abort.abort();
         await native;
         await worker.terminate();
+        if (nativeTerminationError) throw nativeTerminationError;
         resolve(result(scenario, ...fields));
       } catch (error) {
         resolve(result(scenario, 'failing', 'TERMINATION_ERROR', String(error)));
@@ -51,9 +54,11 @@ function executeWorker(scenario, tempDir, diagnostic, sources, env) {
             type: 'cli-onboarding-result', result: commandResult,
           });
         }, error => {
+          if (sourceTerminationUnknown(error)) nativeTerminationError = error;
           if (!settled) worker.postMessage({
             type: 'cli-onboarding-result',
             error: nativeFailure(error),
+            terminationUnknown: sourceTerminationUnknown(error),
           });
         });
         return;

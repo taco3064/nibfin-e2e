@@ -231,3 +231,34 @@ producer diagnostics remain inside the protected reader.
 The later disposable acceptance executor still supplies real compatible source
 preparation, host adoption, protected revocation and live A/B observations. Local
 synthetic assertions do not certify those external operations or release readiness.
+
+## Managed resume regression (#119)
+
+Linux also requires the repository-owned `TestE2EManaged*` cases. They invoke
+`resumeManagedInit` with controlled credentials and host operations, and compare
+its output against independent simulated PR/content, Controller-member, adoption
+and registration records. Public `App.Run` preview remains a separate no-effect
+case. Read-only platform probes receive unavailable synthetic responses; no probe
+executes a host command or certifies host capabilities.
+
+The cases preserve the real private intent file through an open PR, contradictory
+identity/head/base, changed caller bytes, unavailable provider readback and partial
+service startup. Only exact merged readback continues installation. A starts with
+two distinct Runner IDs; A replay, B attachment and B replay preserve the pair and
+adoption identities. Credentials require both the fixture's stored synthetic login
+and its independently bound member: environment tokens alone cannot supply that
+material. Discovery rejects an unresolved host effect until fixture reconciliation
+accounts for the original pool. Counts independently detect repeated registration,
+staging, adoption and service starts. Successful output is redacted, agrees with
+provider/host inventory and reports inactive wake even while Runner services are
+online. Temporary staged credential bytes remain until confirmed startup, then
+are removed; the login and intent remain only for the disposable test lifetime.
+
+Each invocation uses `repositoryDefinition` and `fixtureInventory` for a separate
+simulation owner, A/B names, host ID and exclusive recovery record. Configuration,
+login material and intent live only in disposable roots. The controlled callbacks
+never call production credential transfer, an administrator entry or registration
+APIs. Unknown native subprocess termination retains its checkout and inventory
+lock; normal completion or settled failure removes them after process termination.
+These are controlled orchestration regressions, not native credential selection,
+production credential transfer, actual installation or protected delivery evidence.

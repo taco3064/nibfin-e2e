@@ -2,6 +2,12 @@ import { join } from 'node:path';
 import { sourceCommand } from '../../source-process.mjs';
 import { sourceEnvironment } from '../../source-checkout.mjs';
 
+export const managedCases = Object.freeze([
+  'TestE2EManagedPreview', 'TestE2EManagedProposalReadback',
+  'TestE2EManagedCredentialBoundary', 'TestE2EManagedResumeAndPeer',
+  'TestE2EManagedUnresolvedEffects',
+]);
+
 export const managedResumeCase = 'TestManagedResumeUsesDurableIntentAndControlledHost';
 
 // Fixed operation: the worker cannot choose an executable, arguments, environment
