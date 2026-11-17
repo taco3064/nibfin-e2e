@@ -1,3 +1,5 @@
+import { initialReplacement, replacementObservation }
+  from './replacement-inventory.mjs';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { writeFile } from 'node:fs/promises';
@@ -14,12 +16,16 @@ export async function withManagedFixture(root, action) {
   const inventory = await fixtureInventory(join(root, 'inventory'), definition,
     7, join(root, 'source'));
   return inventory.exclusive(async (state, save, retain) => {
-    state.simulation = { ...binding, execution: 'pending' };
+    state.simulation = { ...binding, execution: 'pending',
+      replacement: initialReplacement() };
     await save();
     await writeFile(join(root, 'home', 'managed-fixture.json'),
       JSON.stringify(binding), { mode: 0o600 });
     try {
       const result = await action();
+      if (process.platform === 'linux') {
+        state.simulation.replacement = await replacementObservation(root);
+      }
       state.simulation.execution = 'terminated';
       await save();
       return result;

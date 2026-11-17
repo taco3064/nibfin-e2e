@@ -4,6 +4,8 @@ import { executeNative, nativeCases, requiredManagedCases, requiredDesktopCases 
 import { exerciseContinuity, continuityCases } from './continuity.mjs';
 import { exerciseDeliveryContinuity, deliveryCases } from './delivery-continuity.mjs';
 
+import { verifyReplacement } from './replacement.mjs';
+
 export function prerequisite({ sources }) {
   return sources?.core?.checkout && sources?.action?.checkout &&
     sources?.cli?.checkout && sources?.cli?.output?.entry ? true :
@@ -22,6 +24,7 @@ export function verify(actual) {
   assert.deepEqual(actual.continuity.passed, continuityCases);
   assert.equal(actual.delivery.evidence, 'synthetic');
   assert.deepEqual(actual.delivery.passed, deliveryCases);
+  verifyReplacement(actual.replacement);
   // This confirms the credential-free contract only, never live installation.
   return true;
 }

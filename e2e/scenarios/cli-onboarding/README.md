@@ -303,3 +303,47 @@ execution; terminal callbacks do not establish native Windows/macOS invocation,
 live installation, protected isolation or release readiness. Independent acceptance,
 PR-head CI and any separately authorized native platform checks retain their own
 verification responsibilities.
+
+## Controlled replacement (#124)
+
+The Linux replacement drivers require named pass events for preview/selection,
+reconstructed recovery, unknown provider effects and readback/replay. They reuse
+upstream controlled rebuild ports without changing producer sources. Recovery
+interrupts after the first old registration disappears, serializes independent
+host/registration observations, reads the saved CLI intent and constructs new
+operation closures. The second invocation retains retirement identity and removes
+only the remaining original registration. The exclusive simulation inventory
+records bounded old/new IDs, A/B repository IDs and reconstruction status; missing
+or contradictory independent observations reject success even with pass events.
+An independently persisted effect ledger checks removal-before-registration order.
+A disposable controlled-host backend persists service state, each repository's
+adopted slots and Agent, and delivered wake counts separately from CLI replies.
+The completion checker reopens that state, including after invocation recovery.
+`TestE2EReplacementHostReadback` requires successful CLI replies alongside missing
+or contradictory service, adoption and wake effects, and verifies that independent
+completion checking rejects all six cases. This tests the regression's observation
+boundary; it does not claim that a successful CLI reply proves host completion.
+Recovery also rejects revoked removal permission, changed retirement IDs
+and mismatched remaining Runner identities before resuming with current authority.
+
+Controlled provider, registration, service, adoption and A/B wake observations
+exercise unavailable and contradictory registration listings, lost removal,
+adoption and activation replies, peer/wake interruptions and provider uncertainty.
+Assertions preserve unrelated registration/service records and disposable original
+login/delivery sentinels. These are synthetic Claude composition and Codex conflict
+fixtures, not production Claude support or live provider switching. Positive preview
+uses `previewRebuild`; the public entry's argument rejection is tested separately.
+A positive public `runRebuild` preview still requires the CLI's fixed trusted
+installed Core paths and is not established by these controlled tests.
+
+A bounded source child imports the prepared Core's maintained retirement,
+admission, replacement validation and admission commit functions. Disposable
+marker/state paths exercise admission arriving while the drain gate is held,
+previously admitted work, unknown Writer/relay settlement, partial/unknown native
+absence, unknown cleanup/provider effects, lost responses and interrupted final
+release. Ports supply observations and effects, never retirement decisions. Missing
+interfaces or cases fail the onboarding contract. No installed administrator,
+service manager, provider credentials or authenticated GitHub operation is invoked.
+Independent Acceptance and PR-head CI remain separate evidence stages.
+Replacement coverage requires Linux; other platforms explicitly report it as
+unverified while preserving their existing onboarding contract requirements.

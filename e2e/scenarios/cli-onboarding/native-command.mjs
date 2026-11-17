@@ -1,3 +1,4 @@
+import { exerciseReplacement } from './replacement.mjs';
 import { join } from 'node:path';
 import { sourceCommand } from '../../source-process.mjs';
 import { sourceEnvironment } from '../../source-checkout.mjs';
@@ -12,9 +13,9 @@ export const managedResumeCase = 'TestManagedResumeUsesDurableIntentAndControlle
 
 // Fixed operation: the worker cannot choose an executable, arguments, environment
 // or provider capability. Parent ownership survives worker termination.
-export function invokeNative(tempDir, signal) {
+export async function invokeNative(tempDir, signal, core) {
   const root = join(tempDir, 'cli-contract');
-  return sourceCommand('go', [
+  const result = await sourceCommand('go', [
     'test', '-json', '-count=1', '-parallel=1', '-timeout=90s',
     './internal/cli', '-run', `^(TestE2E|${managedResumeCase}$)`,
   ], {
@@ -25,6 +26,8 @@ export function invokeNative(tempDir, signal) {
       XDG_CACHE_HOME: join(root, 'cache'), GH_CONFIG_DIR: join(root, 'gh'),
     },
   });
+  const replacement = await exerciseReplacement({ tempDir, sources: { core } }, signal);
+  return { ...result, replacement };
 }
 
 export function nativeFailure(error) {
