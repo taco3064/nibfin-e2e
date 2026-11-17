@@ -121,3 +121,40 @@ test('unknown selected acquisition stops execution and retains recovery files',
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
+
+const inputScenario = (id, sources, expected) => {
+  const module = new URL('./fixtures/source-inputs.mjs', import.meta.url);
+  module.searchParams.set('expected', JSON.stringify(expected));
+  const entry = { ...fixture([]), id, module: module.href };
+  if (sources !== undefined) entry.sources = sources;
+  else delete entry.sources;
+  return entry;
+};
+
+test('worker inputs remain stable alone and with other prepared selections', async () => {
+  const entries = [
+    inputScenario('core-checkout', ['core-source'], { core: false }),
+    inputScenario('action-checkout', ['action-source'], { action: false }),
+    inputScenario('core-prepared', ['core'], { core: true }),
+    inputScenario('action-prepared', ['action'], { core: true, action: true }),
+    inputScenario('cli-prepared', ['cli'], { core: true, action: false, cli: true }),
+    inputScenario('empty', [], {}),
+    inputScenario('default', undefined, { core: true, action: true, cli: true }),
+  ];
+  for (const selected of [...entries.map(entry => [entry]), entries]) {
+    const fake = fakeSources();
+    const document = await runPrepared(selected, [], { sourceOptions: fake });
+    assert.deepEqual(document.errors, []);
+    for (const result of document.results) {
+      assert.equal(result.outcome, 'passed', `${result.id}: ${result.reason.message}`);
+    }
+    assert.equal(document.results.length, selected.length);
+    const acquired = fake.requests.map(item => item.id);
+    assert.equal(new Set(acquired).size, acquired.length);
+    assert.equal(new Set(fake.prepared).size, fake.prepared.length);
+    if (selected.length === entries.length) {
+      assert.deepEqual(acquired, ['core', 'action', 'cli']);
+      assert.deepEqual(fake.prepared, ['core', 'action', 'cli']);
+    }
+  }
+});

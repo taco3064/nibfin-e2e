@@ -21,3 +21,14 @@ export function sourceClosure(requested) {
   if (inputs.has('action')) inputs.add('action-source');
   return [...inputs];
 }
+
+// A shared producer may be prepared for another scenario in the same run.
+export function selectedSourceInputs(sources, requested) {
+  const inputs = sourceClosure(requested);
+  return Object.fromEntries(Object.entries(sources).flatMap(([id, source]) => {
+    if (inputs.includes(id)) return [[id, source]];
+    if (!inputs.includes(`${id}-source`)) return [];
+    const { output, ...identity } = source;
+    return [[id, identity]];
+  }));
+}
