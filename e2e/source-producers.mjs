@@ -2,6 +2,7 @@ import { lstat, readFile, realpath, rename } from 'node:fs/promises';
 import { isAbsolute, join, relative } from 'node:path';
 import { sourceCommand } from './source-process.mjs';
 import { buildRunnerContract } from './runner-build.mjs';
+import { compareSource } from './source-compatibility.mjs';
 
 const readJson = async path => JSON.parse(await readFile(path, 'utf8'));
 export async function producerFile(root, path) {
@@ -17,12 +18,6 @@ export async function producerFile(root, path) {
   return target;
 }
 
-function matchingPin(pin, expected) {
-  if (!pin || ['repository', 'commit', 'archiveHash', 'manifestHash'].some(
-    key => pin[key] !== expected[key],
-  )) throw new Error('INCOMPATIBLE_CORE_SOURCE');
-}
-
 // These declarations belong to the consumers. Never rewrite or substitute them.
 export async function verifyCompatibility(sources, coreOutput) {
   await verifyConsumerCompatibility('action', sources, coreOutput);
@@ -34,17 +29,24 @@ export async function verifyConsumerCompatibility(id, sources, coreOutput) {
     const pin = await readJson(await producerFile(
       sources.action.checkout, 'core-source.json',
     ));
-    matchingPin(pin, coreOutput.pin);
+    compareSource(pin, coreOutput.pin, {
+      consumer: sources.action, producer: sources.core,
+      declaration: 'Action core-source.json',
+    });
     return;
   }
   const pins = await readJson(await producerFile(
     sources.cli.checkout, 'internal/cli/producers.json',
   ));
-  matchingPin(pins.core, coreOutput.pin);
-  if (pins.action?.repository !== sources.action.repository ||
-      pins.action?.commit !== sources.action.commit) {
-    throw new Error('INCOMPATIBLE_ACTION_SOURCE');
-  }
+  compareSource(pins?.core, coreOutput.pin, {
+    consumer: sources.cli, producer: sources.core,
+    declaration: 'CLI internal/cli/producers.json section core',
+  });
+  compareSource(pins?.action, sources.action, {
+    consumer: sources.cli, producer: sources.action,
+    declaration: 'CLI internal/cli/producers.json section action',
+    kind: 'action',
+  });
 }
 
 export async function prepareProducer(source, context) {
@@ -69,7 +71,11 @@ export async function prepareProducer(source, context) {
         !/^[a-f0-9]{64}$/.test(pin.manifestHash ?? '')) {
       throw new Error('UNSUPPORTED_CORE_PACKAGE');
     }
-    matchingPin(result, pin);
+    compareSource(result, pin, {
+      consumer: source, producer: source,
+      declaration: 'Core scripts/package-ci.mjs build result vs ' +
+        'distribution/source-pin.json',
+    });
     // The release producer requires a clean worktree, including untracked files.
     // Keep ordinary test outputs under the same owner, outside the Core checkout.
     const output = join(context.root, 'core-test-output');
