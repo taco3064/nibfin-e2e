@@ -1,4 +1,4 @@
-import { sourceClosure } from './source-requirements.mjs';
+import { selectedSourceInputs } from './source-requirements.mjs';
 import { withPreparedSources } from './sources.mjs';
 import { select } from './registry.mjs';
 import { execute } from './execution.mjs';
@@ -15,11 +15,8 @@ export async function run(entries, groups = [], options = {}) {
       results.push(result(scenario, 'failing', 'SOURCE_PREPARATION_ERROR',
         failures.map(id => `${id}: ${options.availability[id]?.error}`).join('; ')));
     } else {
-      const inputs = sourceClosure(scenario.sources);
-      const sources = options.availability ? Object.fromEntries(
-        Object.entries(options.sources).filter(([id]) =>
-          inputs.includes(id) || inputs.includes(`${id}-source`)),
-      ) : options.sources;
+      const sources = options.availability
+        ? selectedSourceInputs(options.sources, scenario.sources) : options.sources;
       const outcome = await execute(scenario, { ...options, sources });
       results.push(outcome);
       if (outcome.reason.code === 'TERMINATION_ERROR') break;
