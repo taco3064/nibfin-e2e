@@ -31,7 +31,7 @@ const isolation = (id, group, title, module) => ({
   id, group, title, timeoutMs: 30000,
   module: new URL(`./scenarios/${module}.mjs`, import.meta.url).href,
 });
-export const scenarios = Object.freeze([
+const declarations = [
   ...wake,
   isolation('delivery.claude.fixture', 'claude-delivery',
     'Controlled Claude component delivery through simulated protected closure',
@@ -100,4 +100,21 @@ export const scenarios = Object.freeze([
     timeoutMs: 90000,
     module: new URL('./runner-scenario.mjs', import.meta.url).href,
   },
-]);
+];
+
+// Actual worker inputs: protected stubs and local correlation fixtures need none.
+const inputs = {
+  'delivery.claude.fixture': ['core-source'],
+  'managed-wake.contract': ['core-source', 'cli'],
+  'pressure.fixture': ['core-source'],
+  'pause.recovery.fixture': ['core-source'],
+  'project-configuration.local': ['core-source'],
+  'cli-onboarding.contract': ['core', 'action', 'cli'],
+  'isolation.local': ['core-source'],
+  'cli.runner-contract': ['cli'],
+};
+export const scenarios = Object.freeze(register(declarations.map(entry => ({
+  ...entry,
+  sources: entry.group === 'isolation.host' ? ['core-source'] :
+    inputs[entry.id] ?? [],
+}))));

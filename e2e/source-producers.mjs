@@ -25,16 +25,24 @@ function matchingPin(pin, expected) {
 
 // These declarations belong to the consumers. Never rewrite or substitute them.
 export async function verifyCompatibility(sources, coreOutput) {
-  const actionPin = await readJson(await producerFile(
-    sources.action.checkout, 'core-source.json',
-  ));
-  const cliPins = await readJson(await producerFile(
+  await verifyConsumerCompatibility('action', sources, coreOutput);
+  await verifyConsumerCompatibility('cli', sources, coreOutput);
+}
+
+export async function verifyConsumerCompatibility(id, sources, coreOutput) {
+  if (id === 'action') {
+    const pin = await readJson(await producerFile(
+      sources.action.checkout, 'core-source.json',
+    ));
+    matchingPin(pin, coreOutput.pin);
+    return;
+  }
+  const pins = await readJson(await producerFile(
     sources.cli.checkout, 'internal/cli/producers.json',
   ));
-  matchingPin(actionPin, coreOutput.pin);
-  matchingPin(cliPins.core, coreOutput.pin);
-  if (cliPins.action?.repository !== sources.action.repository ||
-      cliPins.action?.commit !== sources.action.commit) {
+  matchingPin(pins.core, coreOutput.pin);
+  if (pins.action?.repository !== sources.action.repository ||
+      pins.action?.commit !== sources.action.commit) {
     throw new Error('INCOMPATIBLE_ACTION_SOURCE');
   }
 }

@@ -179,3 +179,10 @@ lost, token effects remain unverified; no token is persisted for recovery.
 Fake-provider/clock tests are local library evidence. Supported real User bootstrap,
 App permissions and independent revocation readback still require the dedicated
 live test environment. They are not certified by local verification.
+
+Scenario source requirements live in the validated registry. `wake-contract` and
+`concurrency-contract` use no producer inputs through the standard CLI. Core
+component fixtures request only Core checkout identity. Mixed selections retain
+independent fixture results when a required producer fails; affected entries report
+`SOURCE_PREPARATION_ERROR`. These controlled results grant no protected capability
+and do not establish live provider or host verification.

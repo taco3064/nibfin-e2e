@@ -1,12 +1,30 @@
+import { sourceClosure } from './source-requirements.mjs';
 import { withPreparedSources } from './sources.mjs';
 import { select } from './registry.mjs';
 import { execute } from './execution.mjs';
-import { report } from './schema.mjs';
+import { report, result } from './schema.mjs';
 
 export async function run(entries, groups = [], options = {}) {
   const selected = select(entries, groups);
   const results = [];
-  for (const scenario of selected) results.push(await execute(scenario, options));
+  for (const scenario of selected) {
+    const failures = scenario.policyReason ? [] : scenario.sources.filter(
+      id => options.availability && !options.availability[id]?.available,
+    );
+    if (failures.length) {
+      results.push(result(scenario, 'failing', 'SOURCE_PREPARATION_ERROR',
+        failures.map(id => `${id}: ${options.availability[id]?.error}`).join('; ')));
+    } else {
+      const inputs = sourceClosure(scenario.sources);
+      const sources = options.availability ? Object.fromEntries(
+        Object.entries(options.sources).filter(([id]) =>
+          inputs.includes(id) || inputs.includes(`${id}-source`)),
+      ) : options.sources;
+      const outcome = await execute(scenario, { ...options, sources });
+      results.push(outcome);
+      if (outcome.reason.code === 'TERMINATION_ERROR') break;
+    }
+  }
   const errors = selected.length ? [] : ['NO_SCENARIOS: nothing was verified'];
   return report(results, errors);
 }
@@ -22,10 +40,18 @@ export async function runPrepared(entries, groups = [], options = {}) {
   try {
     return await withPreparedSources(async prepared => {
       document = await run(entries, groups, {
-        ...options, sources: prepared.sources,
+        ...options, sources: prepared.sources, availability: prepared.availability,
       });
+      if (document.results.some(item => item.reason.code === 'TERMINATION_ERROR')) {
+        throw Object.assign(new Error('SOURCE_TERMINATION_UNKNOWN'), {
+          terminationUnknown: true,
+        });
+      }
       return document;
-    }, { ...options.sourceOptions, diagnostic: options.diagnostic });
+    }, { ...options.sourceOptions, diagnostic: options.diagnostic,
+      requirements: [...new Set(selected.filter(item => !item.policyReason)
+        .flatMap(item => item.sources))],
+    });
   } catch (error) {
     return report(document?.results ?? [], [...(document?.errors ?? []), String(error)]);
   }
