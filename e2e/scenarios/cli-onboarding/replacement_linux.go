@@ -33,7 +33,7 @@ func TestE2EReplacementRecovery(t *testing.T) {
 	repo := d.api.data["repos/example/project"].(Repository)
 	user := d.api.data["user"].(User)
 	apply := func(ops rebuildOperations) error {
-		return app.applyRebuild(repo, user, "claude", []byte("fixture-secret"),
+		return app.e2eApplyRebuild(repo, user, "claude", []byte("fixture-secret"),
 			json.NewEncoder(&out), ops)
 	}
 	if err := apply(ops); err == nil {
@@ -82,7 +82,7 @@ func TestE2EReplacementRecovery(t *testing.T) {
 	d, ops, app = nil, rebuildOperations{}, App{}
 	observer = observation.Observer
 	out.Reset()
-	err = (App{API: e2eObservedReplacementAPI{next, observer}}).applyRebuild(
+	err = (App{API: e2eObservedReplacementAPI{next, observer}}).e2eApplyRebuild(
 		repo, user, "claude", []byte("fixture-secret"), json.NewEncoder(&out),
 		observer.operations(t, next, next.operations()))
 	if err != nil {
@@ -137,7 +137,7 @@ func TestE2EReplacementUnknownProvider(t *testing.T) {
 		return ops
 	}
 	for range 2 {
-		err := (App{API: d}).applyRebuild(
+		err := (App{API: d}).e2eApplyRebuild(
 			d.api.data["repos/example/project"].(Repository),
 			d.api.data["user"].(User), "claude", []byte("fixture-secret"),
 			json.NewEncoder(&out), operations())

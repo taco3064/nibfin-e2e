@@ -17,7 +17,7 @@ func TestE2EReplacementRemovalAuthority(t *testing.T) {
 			repo := d.api.data["repos/example/project"].(Repository)
 			user := d.api.data["user"].(User)
 			apply := func(ops rebuildOperations) error {
-				return (App{API: d}).applyRebuild(repo, user, "claude",
+				return (App{API: d}).e2eApplyRebuild(repo, user, "claude",
 					[]byte("fixture-secret"), json.NewEncoder(&out), ops)
 			}
 			ops := d.operations()

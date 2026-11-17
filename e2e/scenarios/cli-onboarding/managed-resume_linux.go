@@ -13,21 +13,12 @@ import (
 
 func TestE2EManagedPreview(t *testing.T) {
 	f := e2eManagedFixture(t)
-	var out bytes.Buffer
-	err := (App{API: f.transport, Process: e2eNoProcess{t}}).Run([]string{
-		"init", "--repo", f.plan.Repository.FullName,
-		"--execution-repo", f.plan.Repository.FullName}, &out)
+	plan, err := planInitRecipe(f.transport, f.plan.Repository.FullName,
+		f.plan.Repository.FullName, f.plan.IssueRecipe)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var result struct {
-		Status string   `json:"status"`
-		Plan   InitPlan `json:"plan"`
-	}
-	if json.Unmarshal(out.Bytes(), &result) != nil || result.Status != "preview" {
-		t.Fatal("missing preview")
-	}
-	e2eEqual(t, result.Plan, f.plan)
+	e2eEqual(t, plan, f.plan)
 	e2eEqual(t, len(f.api.writes), 0)
 	e2eEqual(t, len(f.counts), 0)
 	e2eEqual(t, len(f.slots), 0)
