@@ -104,7 +104,16 @@ success or failure. Cleanup failures reject and identify the retained directory;
 explicit disposal can be retried. Callers must await all uses before disposal.
 
 `runPrepared` owns preparation and cleanup for one scenario run, returning
-preparation/cleanup failures in the existing JSON `errors` array. The production
+settled input failures as `SOURCE_PREPARATION_ERROR` results for affected scenarios.
+Independent scenarios continue in registry order. Cleanup and unsafe termination
+failures remain run-level errors. Selected requirements are immutable registry
+metadata: `core-source` and `action-source` mean checkout identity; `core`,
+`action`, and `cli` require prepared outputs. CLI includes Core preparation and
+Action identity compatibility, without building Action. Core checkout scenarios
+never read consumer pins. Local fixtures and protected-only stubs acquire nothing.
+Custom entries without declarations conservatively require the full prepared set.
+Explicit selected owners cannot perform release preparation. Default source owners
+still prepare and validate all three producers. The production
 CLI uses this entry for runnable registered scenarios. Empty selection and
 policy exclusions retain their existing behavior and do not fetch sources.
 The injected CLI registry remains a local framework-test seam.

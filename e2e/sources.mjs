@@ -1,15 +1,16 @@
+import { acquireIdentity, prepareSelected } from './selected-sources.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
-  acquireSource, sourceEnvironment, sourceRepositories,
+  sourceEnvironment, sourceRepositories,
 } from './source-checkout.mjs';
 import { prepareProducer, verifyCompatibility } from './source-producers.mjs';
 import { sourceTerminationUnknown } from './source-process.mjs';
 import { prepareRelease } from './release-preflight.mjs';
 
-// A set is returned only after every operation and compatibility check succeeds.
+// Default owners require the complete compatible set; selected owners expose status.
 // Its owner keeps it across scenarios and release preparation, then disposes it.
 export async function prepareSources(options = {}) {
   const root = await mkdtemp(join(resolve(options.tempRoot ?? tmpdir()),
@@ -20,31 +21,31 @@ export async function prepareSources(options = {}) {
     env: { ...sourceEnvironment(root), HOME: join(root, 'home') },
   };
   const sources = {};
+  let availability;
   try {
     await mkdir(context.env.HOME);
-    for (const repository of sourceRepositories) {
-      const checkout = join(root, repository.id);
-      const commit = await (options.acquire ?? acquireSource)(
-        repository, checkout, context,
-      );
-      if (!/^[a-f0-9]{40}$/.test(commit)) {
-        throw new Error(`INVALID_CHECKOUT_IDENTITY: ${repository.repository}`);
+    if (options.requirements !== undefined) {
+      availability = await prepareSelected(options, context, sources);
+    } else {
+      for (const repository of sourceRepositories) {
+        sources[repository.id] = await acquireIdentity(repository, options, context);
       }
-      sources[repository.id] = Object.freeze({ ...repository, commit, checkout });
-    }
-    const prepare = options.prepare ?? prepareProducer;
-    const coreOutput = await prepare(sources.core, context);
-    await verifyCompatibility(sources, coreOutput);
-    const outputs = {
-      core: coreOutput,
-      action: await prepare(sources.action, context),
-      cli: await prepare(sources.cli, context),
-    };
-    for (const [id, source] of Object.entries(sources)) {
-      if (!outputs[id] || typeof outputs[id] !== 'object') {
-        throw new Error(`MISSING_PREPARED_OUTPUT: ${id}`);
+      const prepare = options.prepare ?? prepareProducer;
+      const coreOutput = await prepare(sources.core, context);
+      await verifyCompatibility(sources, coreOutput);
+      const outputs = {
+        core: coreOutput,
+        action: await prepare(sources.action, context),
+        cli: await prepare(sources.cli, context),
+      };
+      for (const [id, source] of Object.entries(sources)) {
+        if (!outputs[id] || typeof outputs[id] !== 'object') {
+          throw new Error(`MISSING_PREPARED_OUTPUT: ${id}`);
+        }
+        sources[id] = Object.freeze({
+          ...source, output: Object.freeze(outputs[id]),
+        });
       }
-      sources[id] = Object.freeze({ ...source, output: Object.freeze(outputs[id]) });
     }
   } catch (error) {
     if (sourceTerminationUnknown(error)) {
@@ -63,9 +64,10 @@ export async function prepareSources(options = {}) {
   let releaseStarted = false;
   let disposing;
   return Object.freeze({
-    root, ownershipId: randomUUID(), sources: Object.freeze(sources),
+    root, ownershipId: randomUUID(), sources: Object.freeze(sources), availability,
     get disposed() { return disposed; },
     async preflightRelease(version) {
+      if (availability) throw new Error('RELEASE: partial source ownership');
       if (disposed || disposing || releaseStarted) {
         throw new Error('RELEASE: stale or disposed source ownership');
       }

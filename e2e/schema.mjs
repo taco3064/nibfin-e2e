@@ -1,3 +1,4 @@
+import { requirements } from './source-requirements.mjs';
 // Authoritative metadata and JSON result schemas; no external validator needed.
 export const outcomes = Object.freeze([
   'passed', 'failing', 'skipped-by-policy', 'blocked', 'unverified',
@@ -9,6 +10,7 @@ export const metadataSchema = Object.freeze({
   timeoutMs: 'timeout',
   module: 'module',
   policyReason: 'optionalText',
+  sources: 'requirements',
 });
 const identifier = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
 export function validateMetadata(value) {
@@ -22,6 +24,7 @@ export function validateMetadata(value) {
   }
   for (const [key, kind] of Object.entries(metadataSchema)) {
     const item = value[key];
+    if (kind === 'requirements') { requirements(item); continue; }
     if (kind === 'optionalText' && item === undefined) continue;
     let valid = typeof item === 'string' && item.trim().length > 0;
     if (kind === 'identifier') valid = valid && identifier.test(item);
@@ -34,7 +37,7 @@ export function validateMetadata(value) {
     }
     if (!valid) throw new Error(`Invalid scenario metadata: ${key}`);
   }
-  return Object.freeze({ ...value });
+  return Object.freeze({ ...value, sources: requirements(value.sources) });
 }
 export function result(scenario, outcome, code, message) {
   if (!outcomes.includes(outcome)) throw new Error('Invalid outcome');

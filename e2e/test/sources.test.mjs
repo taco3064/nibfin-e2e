@@ -209,8 +209,8 @@ test('runPrepared success and preparation failure preserve JSON outcome rules',
       acquire: async () => { throw new Error('source unavailable'); },
     } });
     assert.equal(exitCode(failure), 1);
-    assert.deepEqual(failure.results, []);
-    assert.match(failure.errors[0], /source unavailable/);
+    assert.equal(failure.results[0].reason.code, 'SOURCE_PREPARATION_ERROR');
+    assert.match(failure.results[0].reason.message, /source unavailable/);
     assert.deepEqual(await readdir(tempRoot), []);
     const empty = await runPrepared([], [], options);
     assert.equal(exitCode(empty), 1);
