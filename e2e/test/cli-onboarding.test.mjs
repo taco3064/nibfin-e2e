@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { compareHandoff, validateRequest } from
   '../scenarios/cli-onboarding/handoff.mjs';
-import { executeNative, nativeCases } from '../scenarios/cli-onboarding/native.mjs';
+import { executeNative, nativeCases, requiredManagedCases }
+  from '../scenarios/cli-onboarding/native.mjs';
 import { verify as verifyNativeContract } from '../scenarios/cli-onboarding/contract.mjs';
 import { continuityCases } from '../scenarios/cli-onboarding/continuity.mjs';
 import { deliveryCases } from '../scenarios/cli-onboarding/delivery-continuity.mjs';
@@ -186,8 +187,9 @@ test('native driver requires every assertion and cleans isolated copies on failu
       await writeFile(join(checkout, 'go.mod'), 'synthetic source\n');
       const context = { tempDir, sources: { cli: { checkout } } };
       const complete = async () => ({
-        stdout: nativeCases.flatMap(name => ['', '/User', '/Organization']
-          .map(suffix => JSON.stringify({ Action: 'pass', Test: name + suffix })))
+        stdout: [...nativeCases.flatMap(name => ['', '/User', '/Organization']
+          .map(suffix => name + suffix)), ...requiredManagedCases]
+          .map(Test => JSON.stringify({ Action: 'pass', Test }))
           .join('\n'), stderr: '',
       });
       assert.equal((await executeNative(context, complete)).evidence, 'synthetic');
@@ -291,10 +293,13 @@ for (const state of ['observed', 'unavailable']) {
 
 
 test('native contract requires every producer continuity and delivery assertion', () => {
-  const actual = { evidence: 'synthetic', passed: [...nativeCases],
+  const actual = { evidence: 'synthetic',
+    passed: [...nativeCases, ...requiredManagedCases],
     continuity: { evidence: 'synthetic', passed: [...continuityCases] },
     delivery: { evidence: 'synthetic', passed: [...deliveryCases] } };
   assert.equal(verifyNativeContract(actual), true);
+  if (requiredManagedCases.length)
+    assert.throws(() => verifyNativeContract({ ...actual, passed: [...nativeCases] }));
   for (const key of ['continuity', 'delivery']) {
     for (const change of [value => value.passed.pop(),
       value => { value.evidence = 'live'; }]) {

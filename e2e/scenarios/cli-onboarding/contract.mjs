@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { executeNative, nativeCases } from './native.mjs';
+import { executeNative, nativeCases, requiredManagedCases } from './native.mjs';
 import { exerciseContinuity, continuityCases } from './continuity.mjs';
 import { exerciseDeliveryContinuity, deliveryCases } from './delivery-continuity.mjs';
 
@@ -15,7 +15,8 @@ export async function run(context) {
 }
 export function verify(actual) {
   assert.equal(actual.evidence, 'synthetic');
-  for (const name of nativeCases) assert.ok(actual.passed.includes(name));
+  for (const name of [...nativeCases, ...requiredManagedCases])
+    assert.ok(actual.passed.includes(name));
   assert.equal(actual.continuity.evidence, 'synthetic');
   assert.deepEqual(actual.continuity.passed, continuityCases);
   assert.equal(actual.delivery.evidence, 'synthetic');

@@ -1,7 +1,7 @@
 import { cp, mkdir, rm } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { parentPort } from 'node:worker_threads';
-import { invokeNative, nativeFailure } from './native-command.mjs';
+import { invokeNative, managedResumeCase, nativeFailure } from './native-command.mjs';
 
 export const nativeCases = Object.freeze([
   'TestE2EInitPreview', 'TestE2EInitApply', 'TestE2EInitDenials',
@@ -10,6 +10,8 @@ export const nativeCases = Object.freeze([
   'TestE2EUpgradeDenials', 'TestE2EUpgradeUnknown', 'TestE2EUpgradeAdoption',
 ]);
 const drivers = ['support', 'init', 'upgrade'];
+export const requiredManagedCases = Object.freeze(process.platform === 'linux'
+  ? [managedResumeCase] : []);
 
 // Copy test sources, never modify the prepared producer or its declarations.
 // The producer's own synthetic transport helpers are reused, not its assertions.
@@ -51,6 +53,9 @@ export async function executeNative(context, command) {
           throw new Error(`NATIVE_ASSERTIONS_MISSING: ${name + suffix}`);
         }
       }
+    }
+    for (const name of requiredManagedCases) {
+      if (!passed.includes(name)) throw new Error(`NATIVE_ASSERTIONS_MISSING: ${name}`);
     }
     if (events.some(event => ['fail', 'skip'].includes(event.Action))) {
       throw new Error('NATIVE_ASSERTIONS_INCOMPLETE');

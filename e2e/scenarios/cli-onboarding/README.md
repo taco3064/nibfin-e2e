@@ -8,11 +8,17 @@ requires public network reads and the native producer toolchains.
 
 The registered contract copies the prepared CLI into disposable storage and
 adds these Go test drivers beside its maintained synthetic API transports.
-It runs `go test -json -count=1 -parallel=1 -timeout=90s ./internal/cli -run
-'^TestE2E'`. Helpers such as `installFixture` and `upgradeFixture` belong to
+It runs `go test -json -count=1 -parallel=1 -timeout=90s ./internal/cli` with
+the fixed scenario selector. Helpers such as `installFixture` and `upgradeFixture` belong to
 that acquired CLI, including their archive consistency checks. If their seams
 change, compilation/assertion failures remain failures, never skips. No
 upstream command implementation or compatibility declaration is rewritten.
+
+On Linux the same subprocess must pass the producer's managed-resume case.
+That case runs the actual orchestration against in-process GitHub fixtures,
+temporary install intent, synthetic credentials and controlled host operations.
+It covers interrupted PR waits, partial service startup and a peer repository
+reusing the original Runner IDs. A missing or skipped case fails the contract.
 
 The drivers execute `App.Run` for installation preview, source rejection and
 upgrade preview/apply. Installation proposal tests decode the actual preview
