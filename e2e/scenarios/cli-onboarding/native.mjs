@@ -17,7 +17,7 @@ const drivers = ['support', 'init', 'upgrade', 'managed-fixture_linux',
   'desktop-fixture_linux', 'desktop_linux', 'desktop-assets_linux',
   'desktop-guards_linux', 'replacement_linux', 'replacement-effects_linux',
   'replacement-observer_linux', 'replacement-authority_linux',
-  'replacement-host_linux'];
+  'replacement-host_linux', 'replacement-orchestration_linux'];
 export const requiredManagedCases = Object.freeze(process.platform === 'linux'
   ? [managedResumeCase, ...managedCases,
     'TestE2EReplacementRecovery', 'TestE2EReplacementUnknownProvider',

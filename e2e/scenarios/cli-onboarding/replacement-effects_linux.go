@@ -175,7 +175,7 @@ func TestE2EReplacementReadbackAndReplay(t *testing.T) {
 			}
 			apply := func() error {
 				out.Reset()
-				return (App{API: api}).applyRebuild(
+				return (App{API: api}).e2eApplyRebuild(
 					d.api.data["repos/example/project"].(Repository),
 					d.api.data["user"].(User), "claude", []byte("fixture-secret"),
 					json.NewEncoder(&out), operations())

@@ -154,7 +154,7 @@ func TestE2EReplacementHostReadback(t *testing.T) {
 			o := newE2EReplacementObserver(t)
 			o.Fault = fault
 			var out bytes.Buffer
-			err := (App{API: e2eObservedReplacementAPI{d, o}}).applyRebuild(
+			err := (App{API: e2eObservedReplacementAPI{d, o}}).e2eApplyRebuild(
 				d.api.data["repos/example/project"].(Repository),
 				d.api.data["user"].(User), "claude", []byte("fixture-secret"),
 				json.NewEncoder(&out), o.operations(t, d, d.operations()))

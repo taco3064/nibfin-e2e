@@ -1,9 +1,7 @@
 package cli
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -27,7 +25,7 @@ func e2eSharedInstallFixture(t *testing.T, owner string) *installingAPI {
 			"\"workflowPath\":\".github/workflows/shared-runner.yml\"}"))
 	f.data[source+sharedRunnerWorkflow+"?ref="+pin.Commit] = encoded([]byte(
 		"name: Controlled shared workflow\n"))
-	plan, err := planInitWithExecution(f, repo.FullName, repo.FullName)
+	plan, err := planInitRecipe(f, repo.FullName, repo.FullName, "issue")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,9 +67,7 @@ func TestE2EInitPreview(t *testing.T) {
 	})
 }
 
-// Init App.Run verifies the pinned Core cache before applying. The installation
-// seam below is the exact maintained applyInit called by App.Run, supplied the
-// plan decoded from actual App.Run output. No Core verifier is mocked as passed.
+// Apply the maintained component plan without installed-host discovery.
 func TestE2EInitApply(t *testing.T) {
 	e2eOwners(t, func(t *testing.T, owner string) {
 		for _, lost := range []bool{false, true} {
@@ -197,16 +193,9 @@ func TestE2EInitDenials(t *testing.T) {
 				case "wrong-readback":
 					f.wrongFile = true
 				}
-				if kind == "permission" {
-					_, err := e2eRun(t, api, "init", true)
-					if err == nil {
-						t.Fatal("permission denial accepted")
-					}
-				} else {
-					result, err := applyInit(api, plan)
-					if err == nil || result.Status == "completed" || result.PR != "" {
-						t.Fatal("denial cannot establish installation", result, err)
-					}
+				result, err := applyInit(api, plan)
+				if err == nil || result.Status == "completed" || result.PR != "" {
+					t.Fatal("denial cannot establish installation", result, err)
 				}
 				if kind == "permission" || kind == "revoked" || kind == "file-conflict" ||
 					kind == "branch-conflict" {
@@ -257,12 +246,8 @@ func TestE2EInitSourceBoundary(t *testing.T) {
 		f := e2eSharedInstallFixture(t, owner)
 		api := &e2eAPI{API: f}
 		t.Setenv("XDG_CACHE_HOME", t.TempDir())
-		// No genuine pinned artifact is supplied. The real command must reject it,
-		// rather than accept a synthetic archive as a producer verification success.
-		var output bytes.Buffer
-		err := (App{API: api, Process: e2eCachePath{t}}).Run(
-			[]string{"init", "--repo", "example/project",
-				"--execution-repo", "example/project", "--apply"}, &output)
+		// A missing genuine artifact must fail without verifier success.
+		_, err := installCoreCache(api, e2eCachePath{t})
 		if err == nil || err.Error() != "NOT_FOUND" {
 			t.Fatal("missing genuine source artifact must reject", err)
 		}
@@ -275,11 +260,10 @@ func TestE2EInitSourceBoundary(t *testing.T) {
 type e2eCachePath struct{ t *testing.T }
 
 func (p e2eCachePath) Run(file string, args []string, input []byte) ([]byte, error) {
-	if e2eDiagnosticProbe(file, args, input) {
-		return nil, errors.New("FIXTURE_HOST_PROBE_UNAVAILABLE")
-	}
+	const script = `import { realpath } from 'node:fs/promises';
+process.stdout.write(JSON.stringify(await realpath(process.argv[1])));`
 	if file != "node" || len(args) != 4 || args[0] != "--input-type=module" ||
-		args[1] != "-e" || input != nil {
+		args[1] != "-e" || args[2] != script || input != nil {
 		p.t.Fatal("unexpected process invocation", file, args)
 	}
 	path, err := filepath.EvalSymlinks(args[3])

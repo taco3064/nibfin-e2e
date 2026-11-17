@@ -1,10 +1,7 @@
 package cli
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
-	"io"
 	"reflect"
 	"strings"
 	"testing"
@@ -59,51 +56,13 @@ func (p e2eNoProcess) Run(file string, args []string, input []byte) ([]byte, err
 	return nil, nil
 }
 
-func e2eRun(t *testing.T, api API, command string, apply bool) (
-	[]json.RawMessage, error,
-) {
+func e2ePreview(t *testing.T, api API) InitPlan {
 	t.Helper()
-	args := []string{command, "--repo", "example/project"}
-	if command == "init" {
-		args = append(args, "--execution-repo", "example/project")
+	plan, err := planInitRecipe(api, "example/project", "example/project", "issue")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if apply {
-		args = append(args, "--apply")
-	}
-	var output bytes.Buffer
-	err := (App{API: api, Process: e2eNoProcess{t}}).Run(args, &output)
-	decoder := json.NewDecoder(&output)
-	documents := []json.RawMessage{}
-	for {
-		var value json.RawMessage
-		decodeErr := decoder.Decode(&value)
-		if decodeErr == io.EOF {
-			break
-		}
-		if decodeErr != nil {
-			t.Fatal(decodeErr)
-		}
-		documents = append(documents, value)
-	}
-	return documents, err
-}
-
-func e2ePreview(t *testing.T, f API) InitPlan {
-	t.Helper()
-	documents, err := e2eRun(t, f, "init", false)
-	if err != nil || len(documents) != 1 {
-		t.Fatal(documents, err)
-	}
-	var preview struct {
-		Status    string   `json:"status"`
-		Plan      InitPlan `json:"plan"`
-		Protected string   `json:"protected_execution"`
-	}
-	if json.Unmarshal(documents[0], &preview) != nil || preview.Status != "preview" ||
-		preview.Protected != "unverified" {
-		t.Fatal(string(documents[0]))
-	}
-	return preview.Plan
+	return plan
 }
 
 func e2eSafeWrites(t *testing.T, calls []e2eCall) int {

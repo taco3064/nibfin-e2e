@@ -20,14 +20,18 @@ temporary install intent, synthetic credentials and controlled host operations.
 It covers interrupted PR waits, partial service startup and a peer repository
 reusing the original Runner IDs. A missing or skipped case fails the contract.
 
-The drivers execute `App.Run` for installation preview, source rejection and
-upgrade preview/apply. Installation proposal tests decode the actual preview
-and call the same maintained `applyInit` implementation used by `App.Run`.
-This isolates proposal behavior from the separately verified Core cache step:
-no fake verifier claims a successful cache installation. The full init command
-is also checked to reject a missing genuine pinned artifact before mutations.
-Synthetic recipes and archives are fixtures, not evidence that the prepared
-producer outputs, protected host, or any live installation were verified.
+The drivers call maintained `planInitRecipe` / `applyInit` and
+`planUpgrade` / `applyUpgrade` with explicit fixture inputs. Legacy recipe
+expectations and managed planning/resume coverage remain separate. Source
+rejection calls `installCoreCache` with a private cache and a controlled
+canonical-path observation; no verifier success is mocked.
+
+Replacement cases compose maintained `previewRebuild` and `resumeRebuild`
+with private durable intent under the fixture configuration root. They exercise
+component orchestration, not the production host mutation lock or public wrapper.
+Full public-command behavior on an installed host belongs to protected checks.
+Synthetic recipes and archives do not verify genuine producer outputs,
+protected execution, live installation or release readiness.
 
 Both Personal and Organization owners exercise preview, PR target/head and
 workflow/label read-back, repeats, unchanged installations, permission changes,

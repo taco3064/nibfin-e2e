@@ -21,16 +21,22 @@ func e2eUpgrade(t *testing.T, owner string) *upgradeAPI {
 	return f
 }
 
-func e2eUpgradeResult(t *testing.T, documents []json.RawMessage) InitResult {
+func e2eUpgradePlan(t *testing.T, api API) upgradePlan {
 	t.Helper()
-	if len(documents) != 2 {
-		t.Fatal("preview plus result required", documents)
+	plan, err := planUpgrade(api, "example/project", "latest")
+	if err != nil {
+		t.Fatal(err)
 	}
-	var result InitResult
-	if json.Unmarshal(documents[1], &result) != nil {
-		t.Fatal(string(documents[1]))
+	return plan
+}
+
+func e2eApplyUpgrade(t *testing.T, api API) (InitResult, error) {
+	t.Helper()
+	plan, err := planUpgrade(api, "example/project", "latest")
+	if err != nil {
+		return InitResult{}, err
 	}
-	return result
+	return applyUpgrade(api, plan, "latest")
 }
 
 func TestE2EUpgradePreview(t *testing.T) {
@@ -39,22 +45,11 @@ func TestE2EUpgradePreview(t *testing.T) {
 		root := t.TempDir()
 		t.Setenv("XDG_CACHE_HOME", root)
 		api := &e2eAPI{API: f}
-		documents, err := e2eRun(t, api, "upgrade", false)
-		if err != nil || len(documents) != 1 {
-			t.Fatal(documents, err)
-		}
-		var preview struct {
-			Status string      `json:"status"`
-			Plan   upgradePlan `json:"plan"`
-		}
-		if json.Unmarshal(documents[0], &preview) != nil {
-			t.Fatal("invalid preview")
-		}
-		e2eEqual(t, preview.Status, "preview")
-		e2eEqual(t, preview.Plan.MemberID, int64(42))
-		if preview.Plan.Compatibility == "" || len(preview.Plan.Changes) == 0 ||
-			!strings.Contains(preview.Plan.HostAdoption, "separate trusted operation") {
-			t.Fatal(preview.Plan)
+		plan := e2eUpgradePlan(t, api)
+		e2eEqual(t, plan.MemberID, int64(42))
+		if plan.Compatibility == "" || len(plan.Changes) == 0 ||
+			!strings.Contains(plan.HostAdoption, "separate trusted operation") {
+			t.Fatal(plan)
 		}
 		entries, err := os.ReadDir(root)
 		if err != nil || len(entries) != 0 {
@@ -73,11 +68,11 @@ func TestE2EUpgradeApply(t *testing.T) {
 				f.lost = e2eRepo + lost
 			}
 			api := &e2eAPI{API: f}
-			documents, err := e2eRun(t, api, "upgrade", true)
+			plan := e2eUpgradePlan(t, api)
+			result, err := applyUpgrade(api, plan, "latest")
 			if err != nil {
 				t.Fatal(err)
 			}
-			result := e2eUpgradeResult(t, documents)
 			e2eEqual(t, result.Status, "pending")
 			observed := f.data[e2eRepo+"/pulls/9"].(upgradePull)
 			e2eEqual(t, result.PR, observed.URL)
@@ -93,15 +88,8 @@ func TestE2EUpgradeApply(t *testing.T) {
 			if _, exists := tree[".github/workflows/nibfin-stage.yml"]; exists {
 				t.Fatal("obsolete stage retained")
 			}
-			// The output's proposed contents must match provider objects, not a second
-			// implementation of the CLI's upgrade rules.
-			var preview struct {
-				Plan upgradePlan `json:"plan"`
-			}
-			if json.Unmarshal(documents[0], &preview) != nil {
-				t.Fatal("invalid plan")
-			}
-			for _, change := range preview.Plan.Changes {
+			// Compare maintained proposal contents with provider objects.
+			for _, change := range plan.Changes {
 				entry, exists := tree[change.Path]
 				if change.Kind == "deleted" {
 					if exists {
@@ -116,11 +104,11 @@ func TestE2EUpgradeApply(t *testing.T) {
 			}
 			writes := e2eSafeWrites(t, api.calls)
 			e2eEqual(t, writes, 4)
-			documents, err = e2eRun(t, api, "upgrade", true)
+			result, err = e2eApplyUpgrade(t, api)
 			if err != nil {
 				t.Fatal("repeat", err)
 			}
-			e2eEqual(t, e2eUpgradeResult(t, documents).PR, result.PR)
+			e2eEqual(t, result.PR, observed.URL)
 			e2eEqual(t, e2eSafeWrites(t, api.calls), writes)
 		}
 		f := upgradeFixture(t, true, true)
@@ -129,11 +117,11 @@ func TestE2EUpgradeApply(t *testing.T) {
 		f.data["repos/"+officialCLI+"/contents/internal/cli/producers.json?ref="+
 			strings.Repeat("5", 40)] = encoded(pins)
 		api := &e2eAPI{API: f}
-		documents, err := e2eRun(t, api, "upgrade", true)
+		result, err := e2eApplyUpgrade(t, api)
 		if err != nil {
 			t.Fatal(err)
 		}
-		e2eEqual(t, e2eUpgradeResult(t, documents).Status, "no_change")
+		e2eEqual(t, result.Status, "no_change")
 		e2eEqual(t, e2eSafeWrites(t, api.calls), 0)
 	})
 }
@@ -166,7 +154,7 @@ func TestE2EUpgradeDenials(t *testing.T) {
 					f.data[e2eRepo+"/git/ref/heads/"+url.PathEscape("nibfin/upgrade")] = ref
 				}
 				api := &e2eAPI{API: f}
-				_, err := e2eRun(t, api, "upgrade", true)
+				_, err := e2eApplyUpgrade(t, api)
 				if err == nil {
 					t.Fatal("unsafe upgrade accepted", kind)
 				}
@@ -182,13 +170,13 @@ func TestE2EUpgradeUnknown(t *testing.T) {
 		f.lost = e2eRepo + "/pulls"
 		f.denyAfterWrite = pullListPath(upgradeBranchName)
 		api := &e2eAPI{API: f}
-		documents, err := e2eRun(t, api, "upgrade", true)
+		result, err := e2eApplyUpgrade(t, api)
 		if err == nil {
 			t.Fatal("unknown write cannot pass")
 		}
-		result := e2eUpgradeResult(t, documents)
 		e2eEqual(t, result.Status, "pending")
-		e2eEqual(t, result.Code, "UPGRADE_PR_UNKNOWN_READ_BACK_BEFORE_RETRY")
+		e2eEqual(t, result.Code, "UPGRADE_RECONCILIATION_REQUIRED")
+		e2eEqual(t, err.Error(), "UPGRADE_PR_UNKNOWN_READ_BACK_BEFORE_RETRY")
 		count := 0
 		for _, call := range api.calls {
 			if call.Method == "POST" && call.Path == f.lost {
@@ -236,11 +224,11 @@ func TestE2EUpgradeAdoption(t *testing.T) {
 		e2eEqual(t, preview.Target.Producers.Core.Commit, f.target.Core.Commit)
 		e2eEqual(t, preview.Target.Producers.Action.Commit, f.target.Action.Commit)
 		e2eEqual(t, preview.Target.CLI.Commit, strings.Repeat("5", 40))
-		documents, err := e2eRun(t, api, "upgrade", true)
+		result, err := e2eApplyUpgrade(t, api)
 		if err != nil {
 			t.Fatal(err)
 		}
-		e2eEqual(t, e2eUpgradeResult(t, documents).Status, "pending")
+		e2eEqual(t, result.Status, "pending")
 		pending, err := planUpgrade(api, "example/project", "latest")
 		if err != nil {
 			t.Fatal(err)
@@ -270,11 +258,11 @@ func TestE2EUpgradeAdoption(t *testing.T) {
 		e2eEqual(t, adopted.Current.Action.Commit, f.target.Action.Commit)
 		e2eEqual(t, len(adopted.Changes), 0)
 		writes := e2eSafeWrites(t, api.calls)
-		documents, err = e2eRun(t, api, "upgrade", true)
+		result, err = e2eApplyUpgrade(t, api)
 		if err != nil {
 			t.Fatal(err)
 		}
-		e2eEqual(t, e2eUpgradeResult(t, documents).Status, "no_change")
+		e2eEqual(t, result.Status, "no_change")
 		e2eEqual(t, e2eSafeWrites(t, api.calls), writes)
 	})
 }
