@@ -5,7 +5,7 @@ import { simulatedSourceAssertion } from './simulated-local.mjs';
 
 const clone = value => structuredClone(value);
 
-export function simulatedCaller(provider, repository, legs = []) {
+export function simulatedCaller(provider, repository, legs = [], delivery) {
   const offset = provider.executions.size;
   const peer = provider.definition.repositories.find(name => name !== repository);
   const issueLeg = binding => {
@@ -38,6 +38,17 @@ export function simulatedCaller(provider, repository, legs = []) {
     provider.store(target, { ...issue, state: 'closed',
       labels: [{ name: 'delivered' }] });
   };
+  const complete = async (leg, continuing = false) => {
+    if (leg.evidence) return;
+    const key = `claude-stage:${repository}/${leg.issue}`;
+    provider.pending.add(key);
+    leg.evidence = await delivery.advance(leg, provider, continuing);
+    leg.merged = { commit: leg.evidence.pull.mergeCommit,
+      content: leg.binding.content };
+    provider.executions.set(`${repository}/${leg.issue}`, leg);
+    persistDelivery(leg);
+    provider.pending.delete(key);
+  };
   const caller = { mode: 'fixture',
     async createFixture(definition) {
       return provider.perform('fixture', definition.repository, () => {
@@ -63,6 +74,7 @@ export function simulatedCaller(provider, repository, legs = []) {
               if (!leg.created || assignee.id !== provider.definition.account.id) {
                 throw new Error('SIM_OPERATION_DENIED');
               }
+              leg.requirements = body;
               leg.prepared = true;
               leg.assignee = clone(assignee);
               return { state: 'passing' };
@@ -77,7 +89,7 @@ export function simulatedCaller(provider, repository, legs = []) {
       });
     },
     async trigger(binding) {
-      return provider.perform('trigger', binding.repository, () => {
+      return provider.perform('trigger', binding.repository, async () => {
         const leg = issueLeg(binding);
         const row = provider.requirePublic(repository);
         if (!row.installed || !leg.prepared || leg.removed || leg.wake) {
@@ -102,6 +114,12 @@ export function simulatedCaller(provider, repository, legs = []) {
         leg.wake.expected.runRepositoryId = provider.repository(peer).native.id;
         // Fixtures use the two shared slots from the installed provider host.
         persistWake(leg);
+        if (delivery) {
+          if (legs.length === 2 && legs.every(row => row.wake)) {
+            for (const row of legs) await complete(row);
+          }
+          return clone(leg.wake.expected);
+        }
         const e = deliveryFixture({ ...binding, wake: leg.wake.expected });
         e.candidate.id += `-${index + offset}`;
         e.candidate.shape += `-${index + offset}`;
@@ -124,7 +142,10 @@ export function simulatedCaller(provider, repository, legs = []) {
       });
     },
     async readWakeEvidence(binding) { return clone(issueLeg(binding).wake.evidence); },
-    async readDeliveryEvidence(binding) { return clone(issueLeg(binding).evidence); },
+    async readDeliveryEvidence(binding) {
+      const leg = issueLeg(binding);
+      return clone(leg.evidence);
+    },
     async assertSource(binding, signal) {
       return simulatedSourceAssertion(provider, issueLeg(binding), binding, signal);
     },
@@ -156,5 +177,5 @@ export function simulatedCaller(provider, repository, legs = []) {
     },
     async observe(target) { return provider.observe(target); },
   };
-  return { caller, legs, persistWake, persistDelivery, issueLeg };
+  return { caller, legs, persistWake, persistDelivery, issueLeg, complete };
 }

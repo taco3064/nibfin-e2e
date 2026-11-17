@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { scenarios, select } from '../registry.mjs';
 
 const groups = {
+  'claude-delivery': ['delivery.claude.fixture'],
   'project-configuration': ['project-configuration.local'],
   'wake-contract': ['wake.shared-issue.fixture', 'wake.action.fixture'],
   'isolation.local': ['isolation.local'],

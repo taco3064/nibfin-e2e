@@ -215,3 +215,51 @@ must be observed before any more writes to that repository. An absent or
 contradictory observation remains unresolved. Local provider-seam tests certify
 implementation behavior only; real provider creation and installation require
 the later authorized operations route.
+
+### Controlled Claude delivery
+
+`npm run e2e -- --group claude-delivery` uses the scenario owner's separately
+prepared Core source. The `delivery.claude.fixture` entry composes a Claude-selected
+shared A/B pool with the existing simulated suite's provision, install, delivery
+and cleanup phases. The existing Codex suite and its failed-CI lifecycle remain
+separate regressions. Producer compatibility checks and declarations are unchanged.
+
+The maintained `ClaudeRoleAgent`, private model runner, role plans, structured
+parser and stage decisions govern Shape, independent validation, Deliver, Accept
+and final review. A bounded local Node executable supplies controlled model output
+at the process boundary. Docker inspections, credentials, work effects, checks,
+publication, merge and closure are synthetic. This is component regression evidence;
+it does not establish production Claude composition, installation or live readiness.
+Only Deliver's maintained work plan grants Candidate writes. No live credentials
+are accepted or forwarded to the executable double.
+
+Composition bounds cover all model processes in the paired delivery request and
+leave the enclosing suite time for producer settlement and cleanup. Individual
+model processes retain their five-second limit. Unknown work still retains the
+inventory lock and recovery resources; increasing the bound never breaks a lock.
+
+The regression checks exact merged JavaScript stdout, invalid output, a settled
+process timeout, safely settled interruption, unknown model settlement and a lost
+reply after committed effects. Continuation requires current fixture authorization
+and separate settlement evidence, preserves confirmed stages and the Agent binding,
+and starts the unfinished role with a fresh execution/session. Unknown settlement
+retains owned resources; committed-effect reconciliation only reads existing results.
+No replacement PR, repeated merge or Codex fallback is authorized by these controls.
+
+Focused tests can consume an already prepared Core checkout without acquiring or
+modifying it:
+
+```sh
+NIBFIN_TEST_CORE=/path/to/prepared/core \
+NIBFIN_TEST_CORE_COMMIT=<observed-source-commit> \
+node --test e2e/test/claude-delivery.test.mjs
+```
+
+`npm run verify`, including PR verification, acquires maintained Core main through
+the existing source acquisition owner when those inputs are absent. Acquisition
+failure fails verification; the three component integration tests cannot silently
+skip in that command. Its temporary Core checkout is removed after the tests.
+Direct `node --test` without prepared inputs still reports component tests skipped.
+Run requests cannot supply these composition capabilities. Executable
+doubles, isolated fixture trees and settled sessions are removed by their owners;
+prepared producer sources remain owned by the existing source lifecycle.

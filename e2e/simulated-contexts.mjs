@@ -1,6 +1,6 @@
 const clone = value => structuredClone(value);
 
-export function simulatedContexts(provider, prepared, scope) {
+export function simulatedContexts(provider, prepared, scope, agent) {
   const d = provider.definition;
   const repository = d.repositories[0];
   const binding = { owner: d.owner, hostId: 'simulated-host', repository,
@@ -55,7 +55,8 @@ export function simulatedContexts(provider, prepared, scope) {
           const name = `runner-${id}`;
           provider.registrations.set(id, { id, name, memberId: d.account.id,
             repositoryId: binding.repositoryId, endpoint, localId: id,
-            localName: name, shared: true, status: 'online' });
+            localName: name, shared: true, status: 'online',
+            ...(agent ? { agent: clone(agent) } : {}) });
           provider.targets.set(String(id), { kind: 'registration', id: String(id),
             hostId: binding.hostId, owner: d.owner, active: false, absent: false });
         }
