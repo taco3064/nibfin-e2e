@@ -29,13 +29,35 @@ export function phaseObservation(value) {
       value.resources.length > 128 || !value.resources.every(suiteId)) {
     throw new Error('SUITE_OBSERVATION_INVALID');
   }
+  const fixtures = value.fixtures ?? [];
+  if (!Array.isArray(fixtures) || fixtures.length > 128 || fixtures.some(row =>
+    !suiteId(row.id) || !suiteId(row.scenario) || !suiteStates.includes(row.state) ||
+    !suiteId(row.code))) throw new Error('SUITE_FIXTURE_OBSERVATION_INVALID');
   return { state: value.state, code: value.code,
-    resources: [...new Set(value.resources)] };
+    resources: [...new Set(value.resources)],
+    ...(value.fixtures ? { fixtures: fixtures.map(({ id, scenario, state, code }) =>
+      ({ id, scenario, state, code })) } : {}) };
 }
 
 export function suiteReport(record) {
-  const phases = Object.fromEntries(suitePhases.map(name =>
-    [name, structuredClone(record.phases[name])]));
+  const phases = Object.fromEntries(suitePhases.map(name => {
+    const row = record.phases[name];
+    if (!row || !suiteStates.includes(row.state) || !suiteId(row.code) ||
+        !Array.isArray(row.resources) || row.resources.length > 128 ||
+        !row.resources.every(suiteId) ||
+        ['intent', 'execution'].some(key => row[key] && !suiteId(row[key]))) {
+      throw new Error('SUITE_REPORT_INVALID');
+    }
+    const fixtures = phaseObservation({ ...row, state: 'unresolved' }).fixtures;
+    return [name, { state: row.state, code: row.code, resources: [...row.resources],
+      ...(row.intent ? { intent: row.intent } : {}),
+      ...(row.execution ? { execution: row.execution } : {}),
+      ...(fixtures ? { fixtures } : {}) }];
+  }));
+  if (!Array.isArray(record.resources) || record.resources.length > 640 ||
+      !record.resources.every(suiteId)) throw new Error('SUITE_REPORT_INVALID');
+  const sources = record.sources.length ? suiteSources(Object.fromEntries(
+    record.sources.map(source => [source.id, source]))) : [];
   const pending = [...new Set(suitePhases.flatMap(name => {
     const row = phases[name];
     return row.state === 'unresolved' ? [row.intent, ...row.resources] : [];
@@ -43,7 +65,7 @@ export function suiteReport(record) {
   const cleaned = phases.cleanup.state === 'passed';
   if (!cleaned) pending.push(...record.resources);
   return { schemaVersion: 1, kind: 'suite', runId: record.runId,
-    sources: structuredClone(record.sources), provenance: record.provenance,
+    sources, provenance: record.provenance,
     sourceOwner: record.sourceOwner,
     binding: record.binding, phases, pending: [...new Set(pending)],
     cleanup: cleaned ? 'complete' : 'pending',

@@ -60,3 +60,41 @@ cleaned up while interrupted creation or dispatch reconciliation is unresolved.
 Later adequate evidence settles the same suite and operation intents; cleanup
 then removes only owned resources. These regressions run in `npm run verify`
 and remain controlled evidence, not real-provider recovery certification.
+
+## Cross-process session lifetime
+
+`createSimulatedSuite({ stateDir, runId, resume })` reopens the CLI's durable local
+composition. Call `close()` after each use to release its session lease. The
+original no-option composition and in-process `restart()` API remain supported.
+Durable sessions do not accept caller controls, provider factories or delivery
+capabilities. Persisted data never selects modules, commands or host providers.
+Restoration reconstructs the maintained local capabilities and validates fixed
+source declarations; local execution admits only the maintained harmless programs.
+
+The operator-selected state directory contains `simulated-session.json`, an
+exclusive `simulated-session.lock` while open, and one randomly named owned child.
+That child contains ownership identity, source declarations and the fixture
+inventory. A versioned data graph in the inventory preserves Maps, Sets and shared
+phase-leg/execution identity, including original receipts and recovery records.
+Each atomic, synced inventory checkpoint includes the provider graph from that
+same boundary. The outer lease covers restoration, provider actions, inventory
+saves and teardown. It remains after process death, so a crash between an effect
+and its next checkpoint cannot replay that effect from an older snapshot.
+Incomplete saves and retained leases are unresolved, never silently reset.
+
+This is conservative offline recovery, not production crash-recovery certification.
+A cleanly closed invocation resumes across processes. Abruptly killed execution
+requires independent termination/effect evidence before any retained lock can be
+retired; the CLI deliberately provides no force-unlock or age-based recovery.
+Unknown local execution retains its source trees and all necessary recovery data.
+Do not remove these files just because a PID is absent or a lock is old.
+
+After the maintained teardown confirms safe settlement, the durable composition
+uses its existing disposal rules to remove the owned source/inventory child.
+It retains only session identity and the bounded final summary in
+`simulated-session.json`; provider payloads and obsolete execution records are
+removed. Later `--resume` calls report those final observations without recreating
+resources. Unperformed phases remain unobserved. To begin a new lifecycle, choose
+a new state directory. An operator may retire the final summary after confirming
+cleanup is complete and no session lease remains. Unrelated files and the
+operator-selected directory itself are never recursively removed by the suite.

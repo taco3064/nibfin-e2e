@@ -61,3 +61,43 @@ composition remains explicitly non-publication evidence.
 Controlled tests demonstrate orchestration and recovery, not live GitHub, host,
 WSL, native E2E, or release readiness. No workflows or operational permissions
 are changed by this framework extension.
+
+## Durable simulated CLI
+
+The suite command family uses the same coordinator and maintained drivers as the
+in-process API. It accepts exactly one `--suite`, `--run-id ID` and
+`--state-dir PATH`, with optional `--phase PHASE` and `--resume`. Omitted phase
+and `--phase complete` both run the entire lifecycle. Mixing suite options with
+`--group`, repeated options, missing values and unknown phases fails before work.
+Existing no-argument and group requests retain their scenario result format.
+
+Separate processes can advance one session:
+
+```sh
+node e2e/cli.mjs --suite --run-id demo --state-dir ./state --phase provision
+node e2e/cli.mjs --suite --run-id demo --state-dir ./state --phase install --resume
+node e2e/cli.mjs --suite --run-id demo --state-dir ./state --phase delivery --resume
+node e2e/cli.mjs --suite --run-id demo --state-dir ./state --phase failure --resume
+node e2e/cli.mjs --suite --run-id demo --state-dir ./state --phase cleanup --resume
+```
+
+A selected phase reconciles recorded prerequisites; it never creates missing
+prerequisites. Resume requires the original run, sources, ownership and inventory.
+A new invocation without `--resume` cannot replace an existing session. Missing,
+corrupt or conflicting inputs yield a non-passing JSON result without resetting it.
+Concurrent acquisition and interrupted leases remain explicitly unresolved.
+
+Suite stdout is one JSON document, with `kind: "suite"`, `schemaVersion: 1`,
+`provenance: "controlled"`, run/source identities, requested mode and phase,
+phase states/codes, pending resources/intents and cleanup disposition.
+Delivery and failure phases include individual `fixtures` with stable program
+IDs, scenario IDs, states and codes. Fixture outcomes require their own maintained
+observations. One failed independent fixture does not suppress another fixture's
+terminal observation. Pair association and settlement remain phase requirements;
+two individual passes alone do not establish a paired pass. No raw provider graph,
+requirements, diagnostics, commands or credential objects appear in the report.
+
+Exit status is 0 when the requested phase passes, even if later phases remain
+unobserved. Complete mode requires every phase and safe cleanup to pass.
+Invalid, missing-input, failed and unresolved requests exit 1. npm callers should
+use `npm run --silent e2e -- ...` when consuming stdout as JSON.

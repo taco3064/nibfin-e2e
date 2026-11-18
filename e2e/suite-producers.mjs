@@ -18,7 +18,8 @@ function adapter(specification, producer, provenance) {
       return { state: result.state === 'passed' &&
         result.liveVerified === (provenance === 'native') &&
         result.cleanup !== 'unresolved' ? 'passed' : 'unresolved',
-      code: result.code, resources: opened.resources ?? [] };
+      code: result.code, fixtures: result.fixtures ?? [],
+      resources: opened.resources ?? [] };
     },
     // Never reenter a fresh producer when a previous dispatch may have happened.
     reconcile: specification.reconcile,

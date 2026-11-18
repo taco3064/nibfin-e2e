@@ -10,8 +10,10 @@ async function canonical(path) {
 }
 
 // This directory is protected-runner recovery state, never a worker directory.
-// The caller owns its lifetime. No credential or provider response is stored here.
-export async function fixtureInventory(directory, definition, actor, workerRoot) {
+// The caller owns its lifetime. Native ledgers store no credentials or raw replies.
+// Protected checkpoints may attach controlled simulated recovery data.
+export async function fixtureInventory(directory, definition, actor, workerRoot,
+  checkpoint) {
   const root = await canonical(resolve(directory));
   if (!Number.isSafeInteger(actor) || actor <= 0 || !workerRoot) {
     throw new Error('Actor and disposable worker root required');
@@ -44,6 +46,7 @@ export async function fixtureInventory(directory, definition, actor, workerRoot)
             JSON.stringify(state.definition) !== JSON.stringify(definition) ||
             !Array.isArray(state.resources)) throw new Error('Inventory mismatch');
         const save = async () => {
+          await checkpoint?.(state);
           const pending = `${path}.pending`;
           const file = await open(pending, 'w', 0o600);
           try {

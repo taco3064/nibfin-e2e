@@ -91,7 +91,10 @@ test('missing capabilities and preparation block before triggering', async () =>
     fixture.lifecycle.prepareDelivery = async () => ({ state: 'unverified' });
     return fixture;
   };
-  assert.notEqual((await runDeliveryPair(request, second.caller)).state, 'passed');
+  const result = await runDeliveryPair(request, second.caller);
+  assert.notEqual(result.state, 'passed');
+  assert.deepEqual(result.fixtures.map(row => row.state),
+    ['unresolved', 'unobserved']);
   assert.equal(second.events.some(e => e.startsWith('trigger:')), false);
 });
 
@@ -106,3 +109,16 @@ test('unknown trigger is retained without replay or destructive cleanup', async 
   assert.equal(f.events.some(e => e.startsWith('cleanup:')), false);
   assert.equal(JSON.stringify(result).includes('private'), false);
 });
+
+test('one failed fixture retains the other independently observed fixture outcome',
+  async () => {
+    const f = pairedFixture((kind, evidence) => {
+      if (kind === 'source' && evidence.stdout === javascriptRequests[0].stdout) {
+        evidence.stdout = 'wrong\n';
+      }
+    });
+    const result = await runDeliveryPair(request, f.caller);
+    assert.notEqual(result.state, 'passed');
+    assert.deepEqual(result.fixtures.map(row => row.state), ['failed', 'passed']);
+    assert(f.events.includes('read:1'));
+  });

@@ -5,10 +5,11 @@ import { join, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { sourceRepositories } from './source-checkout.mjs';
 import { sourceCommand, sourceTerminationUnknown } from './source-process.mjs';
+import { javascriptRequests } from './delivery-fixtures.mjs';
 import { assertMergedJavaScript } from './delivery-javascript.mjs';
 
 // Fixed compatibility declarations are local fixtures, never acquired producers.
-export async function simulatedSources(root) {
+export function simulatedSourceDefinition(root, ownershipId) {
   const sources = Object.fromEntries(sourceRepositories.map((source, index) =>
     [source.id, { ...source, commit: String(index + 1).repeat(40),
       checkout: join(root, source.id), output: {} }]));
@@ -16,13 +17,20 @@ export async function simulatedSources(root) {
     archiveHash: 'a'.repeat(64), manifestHash: 'b'.repeat(64) };
   sources.core.output.pin = pin;
   sources.cli.output.entry = join(root, 'cli', 'gh-nibfin');
+  return { root, sources, ownershipId, disposed: false };
+}
+
+export async function simulatedSources(root) {
+  const prepared = simulatedSourceDefinition(root, `simulated-${randomUUID()}`);
+  const { sources } = prepared;
+  const pin = sources.core.output.pin;
   await mkdir(join(sources.cli.checkout, 'internal/cli'), { recursive: true });
   await mkdir(sources.action.checkout, { recursive: true });
   await writeFile(join(sources.action.checkout, 'core-source.json'),
     JSON.stringify(pin));
   await writeFile(join(sources.cli.checkout, 'internal/cli/producers.json'),
     JSON.stringify({ core: pin, action: sources.action }));
-  return { root, sources, ownershipId: `simulated-${randomUUID()}`, disposed: false };
+  return prepared;
 }
 
 async function treeFiles(root, prefix = '') {
@@ -38,6 +46,13 @@ async function treeFiles(root, prefix = '') {
 // Simulated Git metadata comes from the provider's merge, with no Git index or
 // repository metadata constructed. The maintained assertion executes real Node.
 export async function simulatedSourceAssertion(provider, leg, binding, signal) {
+  const program = javascriptRequests.find(item =>
+    leg.binding.path === `${leg.definition.generatedRoot}${item.path}`);
+  if (!program || leg.merged?.content !== program.content ||
+      leg.binding.content !== program.content ||
+      !/^fixtures\/generated\/[a-f0-9-]{36}\/$/.test(leg.definition.generatedRoot)) {
+    return { ...binding, state: 'contradicted' };
+  }
   const pull = provider.observe({ kind: 'pull', repository: binding.repository,
     number: leg.evidence.pull.number }).data;
   if (!pull.merged || pull.merge_commit_sha !== binding.mergeCommit ||
