@@ -3,7 +3,8 @@ import { realpath, readFile } from 'node:fs/promises';
 import { failureInvestigation } from './defect-composition.mjs';
 import { issueBatches, combineAssessments } from './issue-context.mjs';
 import { defectKey } from './defect-policy.mjs';
-import { operatorConfiguration, privatePath } from './operator-config.mjs';
+import { operatorBoundaries, operatorAvailability, privatePath }
+  from './operator-config.mjs';
 import { operatorEvidence } from './operator-evidence.mjs';
 import { operatorReadiness } from './operator-readiness.mjs';
 import { operatorModel } from './operator-model.mjs';
@@ -96,7 +97,14 @@ export function operatorInvestigation(environment = process.env, { command } = {
   let denied = false;
   let prepared = false;
   let agent;
-  const load = () => configuration ??= operatorConfiguration(path, agent);
+  let recovery = false;
+  let activation;
+  const load = () => configuration ??= operatorBoundaries(path, agent);
+  const activate = () => activation ??= (async () => {
+    const config = await load();
+    await operatorAvailability(config);
+    await operatorReadiness(config, command);
+  })();
   return {
     async prepare(request) {
       let config;
@@ -115,7 +123,8 @@ export function operatorInvestigation(environment = process.env, { command } = {
             .includes(error.message)) throw error;
           throw new Error('OPERATOR_AGENT_UNCONFIGURED');
         }
-        await operatorReadiness(config, command);
+        recovery = request.phase === 'cleanup' && request.resume === true;
+        if (!recovery) await activate();
       } catch (error) { denied = true; throw error; }
       try {
         const destination = resolve(request.stateDir);
@@ -139,8 +148,21 @@ export function operatorInvestigation(environment = process.env, { command } = {
         throw new Error('SUITE_INVALID_REQUEST');
       }
     },
+    async reporting() {
+      if (!recovery || denied || !prepared) return undefined;
+      try {
+        await activate();
+        return { state: 'available', reason: 'OPERATOR_READY' };
+      } catch (error) {
+        const reasons = ['OPERATOR_AGENT_UNAVAILABLE',
+          'OPERATOR_AGENT_AUTHENTICATION', 'OPERATOR_AGENT_INCOMPATIBLE'];
+        return { state: 'unavailable', reason: reasons.includes(error.message)
+          ? error.message : 'OPERATOR_CAPABILITY_UNAVAILABLE' };
+      }
+    },
     async resolve() {
       if (denied || !prepared) throw new Error('OPERATOR_SETUP_UNAVAILABLE');
+      await activate();
       return composeOperator(await load(), { command });
     },
   };

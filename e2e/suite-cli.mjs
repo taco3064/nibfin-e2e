@@ -75,6 +75,15 @@ export async function suiteCommand(args, investigation) {
     try { await session?.close(); }
     catch (error) { result = failure(request, error); }
   }
+  if (investigation?.reporting) {
+    try {
+      const reporting = await investigation.reporting();
+      if (reporting) result.reporting = reporting;
+    } catch {
+      result.reporting = { state: 'unavailable',
+        reason: 'OPERATOR_CAPABILITY_UNAVAILABLE' };
+    }
+  }
   result.investigation = await investigateFailure(result, investigation);
   return result;
 }
