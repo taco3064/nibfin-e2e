@@ -27,20 +27,33 @@ export async function privatePath(path, directory = false) {
   return stat;
 }
 
-export async function operatorConfiguration(path) {
+export async function operatorConfiguration(path, agent = 'codex') {
+  if (!['codex', 'claude'].includes(agent)) {
+    throw new Error('OPERATOR_AGENT_UNSUPPORTED');
+  }
   const stat = await privatePath(path);
   if (stat.size > 16000) throw new Error('OPERATOR_CONFIGURATION');
   const value = JSON.parse(await readFile(path, 'utf8'));
   const fields = ['version', 'authorization', 'configuration', 'publicationMode',
     'codexExecutable', 'codexHome', 'credentialFile', 'stateDir', 'scratchRoot',
-    'suiteRoot', 'evidence'];
+    'suiteRoot', 'evidence', 'claudeExecutable', 'claudeCredentialFile'];
   if (Object.keys(value).some(key => !fields.includes(key)) ||
       value.version !== 1 || value.authorization !== 'publish-public-defects' ||
       value.publicationMode !== 'issue-events') {
     throw new Error('OPERATOR_CONFIGURATION');
   }
+  const providerFields = agent === 'claude' ?
+    ['claudeExecutable', 'claudeCredentialFile'] : ['codexExecutable', 'codexHome'];
+  if (providerFields.some(key => typeof value[key] !== 'string' || !value[key])) {
+    throw new Error('OPERATOR_AGENT_UNCONFIGURED');
+  }
   const configuration = defectConfiguration(value.configuration);
-  const privateRoots = ['codexHome', 'stateDir', 'scratchRoot', 'suiteRoot'];
+  const privateRoots = ['stateDir', 'scratchRoot', 'suiteRoot'];
+  if (agent === 'codex') privateRoots.push('codexHome');
+  else {
+    try { await privatePath(value.claudeCredentialFile); }
+    catch { throw new Error('OPERATOR_AGENT_AUTHENTICATION'); }
+  }
   for (const name of privateRoots) await privatePath(value[name], true);
   // Missing publication authentication must not prevent read-only modeling.
   const credential = value.credentialFile;
@@ -55,6 +68,7 @@ export async function operatorConfiguration(path) {
     }
   }
   const boundaries = [path, value.credentialFile,
+    ...(agent === 'claude' ? [value.claudeCredentialFile] : []),
     ...privateRoots.map(name => value[name])];
   for (let index = 0; index < boundaries.length; index++) {
     if (overlaps(boundaries[index], await realpath(process.cwd())) ||
@@ -62,9 +76,14 @@ export async function operatorConfiguration(path) {
       throw new Error('OPERATOR_ROOT_OVERLAP');
     }
   }
-  const executable = value.codexExecutable;
-  if (typeof executable !== 'string' || !isAbsolute(executable) ||
-      await realpath(executable) !== executable) throw new Error('OPERATOR_EXECUTABLE');
+  const executable = value[`${agent}Executable`];
+  if (typeof executable !== 'string' || !isAbsolute(executable)) {
+    throw new Error('OPERATOR_EXECUTABLE');
+  }
+  let canonical;
+  try { canonical = await realpath(executable); }
+  catch { throw new Error('OPERATOR_AGENT_UNAVAILABLE'); }
+  if (canonical !== executable) throw new Error('OPERATOR_EXECUTABLE');
   const tool = await lstat(executable);
   if (!tool.isFile() || ![0, process.getuid()].includes(tool.uid) ||
       tool.mode & 0o022 || !(tool.mode & 0o111)) {
@@ -80,7 +99,8 @@ export async function operatorConfiguration(path) {
   }
   // No inherited repository/project configuration discovery in scratch parents.
   for (let parent = value.scratchRoot; ; parent = dirname(parent)) {
-    for (const name of ['.git', '.codex/config.toml', 'AGENTS.md']) {
+    for (const name of ['.git', '.codex/config.toml', 'AGENTS.md',
+      '.claude', 'CLAUDE.md']) {
       let exists = false;
       try { await access(resolve(parent, name)); exists = true; }
       catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -105,5 +125,15 @@ export async function operatorConfiguration(path) {
       throw new Error('OPERATOR_EVIDENCE');
     }
   }
-  return Object.freeze({ ...value, configuration, evidence });
+  return Object.freeze({ ...value, agent, configuration, evidence });
+}
+
+export async function rejectManagedProvider(agent) {
+  const paths = agent === 'claude' ? ['/etc/claude-code',
+    '/etc/claude', '/usr/local/etc/claude-code'] : ['/etc/codex'];
+  for (const path of paths) {
+    try { await access(path); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+    throw new Error('OPERATOR_MODEL_SYSTEM_CONFIGURATION');
+  }
 }

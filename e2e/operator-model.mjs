@@ -1,7 +1,9 @@
+import { claudePlan, claudeResult } from './operator-claude.mjs';
+import { parseProviderJson } from './operator-output.mjs';
 import { operatorInput } from './operator-input.mjs';
-import { mkdtemp, mkdir, writeFile, readFile, rm, lstat, access } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { privatePath } from './operator-config.mjs';
+import { privatePath, rejectManagedProvider } from './operator-config.mjs';
 import { sourceCommand, sourceTerminationUnknown } from './source-process.mjs';
 
 const toml = value => value && typeof value === 'object' ?
@@ -51,10 +53,7 @@ export function operatorModel(config, command = sourceCommand) {
     // adapter cannot override. Refuse it rather than weaken host policy or run
     // unexamined integrations with model authentication.
     if (command === sourceCommand) {
-      let managed = false;
-      try { await access('/etc/codex'); managed = true; }
-      catch (error) { if (error.code !== 'ENOENT') throw error; }
-      if (managed) throw new Error('OPERATOR_MODEL_SYSTEM_CONFIGURATION');
+      await rejectManagedProvider(config.agent ?? 'codex');
     }
     const text = JSON.stringify(input);
     const inputText = operatorInput(input);
@@ -62,23 +61,29 @@ export function operatorModel(config, command = sourceCommand) {
     const root = await mkdtemp(join(config.scratchRoot, 'model-'));
     let unknown = false;
     try {
-      const loginPath = join(config.codexHome, 'auth.json');
-      const login = await privatePath(loginPath);
-      if (login.size > 64000) throw new Error('OPERATOR_MODEL_LOGIN');
-      // Use only the existing model login, never host configuration, skills,
-      // MCP servers, plugins or hooks. The model tool profile denies this copy.
-      await mkdir(join(root, 'private-auth'), { mode: 0o700 });
-      await writeFile(join(root, 'private-auth', 'auth.json'),
-        await readFile(loginPath), { mode: 0o600 });
+      if (config.agent !== 'claude') {
+        const loginPath = join(config.codexHome, 'auth.json');
+        const login = await privatePath(loginPath);
+        if (login.size > 64000) throw new Error('OPERATOR_MODEL_LOGIN');
+        // Use only the existing model login, never host configuration, skills,
+        // MCP servers, plugins or hooks. The model tool profile denies this copy.
+        await mkdir(join(root, 'private-auth'), { mode: 0o700 });
+        await writeFile(join(root, 'private-auth', 'auth.json'),
+          await readFile(loginPath), { mode: 0o600 });
+      }
       await mkdir(join(root, 'tools'), { mode: 0o700 });
       await mkdir(join(root, 'evidence'), { mode: 0o700 });
       const schemaPath = join(root, 'schema.json');
       await writeFile(schemaPath, JSON.stringify(schema), { mode: 0o600 });
       await writeFile(join(root, 'evidence', 'input.json'), text, { mode: 0o600 });
-      const plan = operatorModelPlan(config, root, schemaPath);
-      await command(config.codexExecutable, plan.args, { cwd: plan.cwd, env: plan.env,
+      const plan = config.agent === 'claude' ?
+        await claudePlan(config, root, schema) :
+        operatorModelPlan(config, root, schemaPath);
+      const response = await command(config[`${config.agent ?? 'codex'}Executable`],
+        plan.args, { cwd: plan.cwd, env: plan.env,
         timeoutMs: 110000, limit: 2 * 1024 * 1024, signal,
         input: inputText });
+      if (config.agent === 'claude') return claudeResult(response.stdout, schema);
       const outputPath = join(root, 'result.json');
       const output = await lstat(outputPath);
       if (!output.isFile() || output.size > 64000) {
@@ -86,7 +91,7 @@ export function operatorModel(config, command = sourceCommand) {
       }
       const result = await readFile(outputPath, 'utf8');
       if (Buffer.byteLength(result) > 64000) throw new Error('OPERATOR_OUTPUT_LIMIT');
-      return JSON.parse(result);
+      return parseProviderJson(result);
     } catch (error) {
       unknown = sourceTerminationUnknown(error);
       throw error;

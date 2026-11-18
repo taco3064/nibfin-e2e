@@ -3,11 +3,15 @@
 The suite executable can investigate failures and publish confirmed code defects
 using an explicitly authorized operator configuration. Full-run and per-phase
 requests use the same composition after session settlement. Passing requests do
-not run a model, acquire investigation source or obtain publication credentials.
+perform selected-provider readiness checks, but do not investigate, acquire
+investigation source or obtain publication credentials.
 `command(args, entries, investigation)` and `suiteCommand(args, investigation)`
 remain available for controlled composition.
 
-This adapter targets Linux with a current installed Codex executable supporting
+This adapter targets Linux. Choose `--agent codex` or `--agent claude` for every
+opted-in suite request. There is no discovery, implicit default or fallback. This
+choice affects investigation and assessment only, never the managed Runner Pool.
+Codex requires a current installed executable supporting
 finite filesystem permission profiles, ignored user configuration, ignored rules,
 ephemeral execution and structured output. Unsupported versions fail closed.
 Controlled executable/transport fixtures do not prove live host sandbox support,
@@ -61,7 +65,7 @@ reads current default-branch source at an observed revision, verifies repository
 identity and enumerates complete open and closed Issues. Oversized or incomplete
 observations fail closed rather than truncate duplicate evidence.
 
-Paths must be absolute, canonical, owned by the operator and private. The four
+Paths must be absolute, canonical, owned by the operator and private. The selected private
 root directories must already exist and be disjoint from each other, the
 configuration, publication credential and current repository. Their ancestors
 must not permit replacement by other users. Scratch must be outside repository
@@ -95,13 +99,46 @@ Issue event route. Model capability resolution and public evidence reads do not
 require publication authentication; an absent publication credential cannot
 produce a successful publication claim.
 
+For Claude-only setup, replace `codexExecutable` and `codexHome` with
+`claudeExecutable` (the canonical installed Claude Code executable) and
+`claudeCredentialFile` (a private file containing an operator-provisioned
+Anthropic API key). The unselected provider needs neither installation nor login.
+Existing version-1 Codex configurations remain usable with explicit `--agent codex`.
+The selected provider's authentication source must be disjoint from the publication
+credential, configuration, private roots and repository. No arbitrary flags,
+modules, settings or environment overrides are accepted in configuration.
+
+Claude uses noninteractive bare print mode with a JSON schema. Each invocation
+has a fresh private HOME/configuration, a scrubbed environment and API authentication
+only in the trusted provider process. Built-in tools, allowed tools, MCP servers,
+hooks, plugins, native Skills, browser integration, session persistence and
+user/project settings are disabled. Approved public evidence is supplied in stdin;
+Claude has no model tools for filesystem, shell or network access. Provider API
+transport is separate from model tool access. The adapter refuses managed Claude
+configuration under `/etc/claude-code`, `/etc/claude` or
+`/usr/local/etc/claude-code`; it never bypasses mandatory host policy.
+
+Before suite startup, bounded help compatibility checks and a small authenticated
+structured readiness request validate only the selected provider. These do not
+acquire investigation evidence or publication authentication. A passing suite
+runs no subsequent investigation or assessment. A readiness request may incur a
+provider API charge. Safe setup reasons are `OPERATOR_AGENT_REQUIRED`,
+`OPERATOR_AGENT_UNSUPPORTED`, `OPERATOR_AGENT_UNCONFIGURED`,
+`OPERATOR_AGENT_UNAVAILABLE`, `OPERATOR_AGENT_INCOMPATIBLE` and
+`OPERATOR_AGENT_AUTHENTICATION`. Installation/configuration problems need operator
+repair; authentication failures require normal provider authentication renewal.
+Raw provider diagnostics and secrets are never copied into suite reports.
+
 Run using the same configuration for subsequent requests:
 
 ```sh
 export NIBFIN_E2E_OPERATOR=authorized
 export NIBFIN_E2E_OPERATOR_CONFIG=/home/operator/e2e-private/operator.json
-node e2e/cli.mjs --suite --run-id demo \
+node e2e/cli.mjs --suite --agent codex --run-id demo \
   --state-dir /home/operator/e2e-private/suites/demo
+# With the Claude fields provisioned in the trusted configuration:
+node e2e/cli.mjs --suite --agent claude --run-id claude-demo \
+  --state-dir /home/operator/e2e-private/suites/claude-demo
 ```
 
 This suite still produces controlled lifecycle evidence. Investigation uses public
@@ -122,7 +159,8 @@ pending verification. Reused closed work stays closed and is reported as closed.
 Legacy programmatic callers that omit the mode still require direct-wake
 reconciliation; missing `wake` never silently selects event routing.
 
-Failures in setup, acquisition, model output, assessment, credential identity,
+Preflight setup failures prevent suite execution and return failure themselves.
+Later failures in acquisition, model output, assessment, credential identity,
 metadata read-back or cleanup preserve the original test outcome and exit status.
 Public results use bounded reason codes and never include raw private diagnostics.
 An unavailable capability is not an implementation defect; pending or unknown
