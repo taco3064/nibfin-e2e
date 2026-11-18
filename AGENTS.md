@@ -14,8 +14,9 @@ let admitted work settle before the services stop.
 
 Use the existing E2E checks after the verified producer versions are in place.
 
-## Public GitHub communications
+## English for public-facing text
 
-Write all public-facing text published on GitHub in English. This includes
-Issue and pull request titles and bodies, comments, reviews, Discussions, and
-release notes. Apply the same rule to text published by automation.
+Write all externally visible project text in English. This includes Issue and
+pull request titles and bodies, comments, reviews, Discussions, release notes,
+and repository documentation such as README files, guides, and documentation
+published from the repository. Apply the same rule to automated publication.
