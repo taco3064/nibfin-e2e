@@ -5,6 +5,7 @@ import { issueBatches, combineAssessments } from './issue-context.mjs';
 import { defectKey } from './defect-policy.mjs';
 import { operatorConfiguration, privatePath } from './operator-config.mjs';
 import { operatorEvidence } from './operator-evidence.mjs';
+import { operatorReadiness } from './operator-readiness.mjs';
 import { operatorModel } from './operator-model.mjs';
 import { operatorJson } from './operator-http.mjs';
 import { investigationSchema, assessmentSchema } from './operator-schema.mjs';
@@ -88,18 +89,34 @@ export async function composeOperator(config, { request = fetch, command } = {})
     publication: { token: publisherCredential(config, request), fetch: request } });
 }
 
-export function operatorInvestigation(environment = process.env) {
-  if (environment.NIBFIN_E2E_OPERATOR !== 'authorized' ||
-      !environment.NIBFIN_E2E_OPERATOR_CONFIG) return undefined;
+export function operatorInvestigation(environment = process.env, { command } = {}) {
+  if (environment.NIBFIN_E2E_OPERATOR !== 'authorized') return undefined;
   const path = environment.NIBFIN_E2E_OPERATOR_CONFIG;
   let configuration;
   let denied = false;
-  const load = () => configuration ??= operatorConfiguration(path);
+  let prepared = false;
+  let agent;
+  const load = () => configuration ??= operatorConfiguration(path, agent);
   return {
     async prepare(request) {
       let config;
-      try { config = await load(); }
-      catch { denied = true; return; }
+      try {
+        if (prepared && agent !== request.agent) {
+          throw new Error('OPERATOR_AGENT_UNSUPPORTED');
+        }
+        agent = request.agent;
+        if (!agent) throw new Error('OPERATOR_AGENT_REQUIRED');
+        if (!['codex', 'claude'].includes(agent)) {
+          throw new Error('OPERATOR_AGENT_UNSUPPORTED');
+        }
+        try { config = await load(); }
+        catch (error) {
+          if (['OPERATOR_AGENT_UNAVAILABLE', 'OPERATOR_AGENT_AUTHENTICATION']
+            .includes(error.message)) throw error;
+          throw new Error('OPERATOR_AGENT_UNCONFIGURED');
+        }
+        await operatorReadiness(config, command);
+      } catch (error) { denied = true; throw error; }
       try {
         const destination = resolve(request.stateDir);
         let canonical;
@@ -116,14 +133,15 @@ export function operatorInvestigation(environment = process.env) {
             !canonical.startsWith(config.suiteRoot + '/')) {
           throw new Error('SUITE_INVALID_REQUEST');
         }
+        prepared = true;
       } catch {
         denied = true;
         throw new Error('SUITE_INVALID_REQUEST');
       }
     },
     async resolve() {
-      if (denied) throw new Error('OPERATOR_SETUP_UNAVAILABLE');
-      return composeOperator(await load());
+      if (denied || !prepared) throw new Error('OPERATOR_SETUP_UNAVAILABLE');
+      return composeOperator(await load(), { command });
     },
   };
 }

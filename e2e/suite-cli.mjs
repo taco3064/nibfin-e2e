@@ -13,7 +13,7 @@ export function parseSuiteArguments(args) {
     if (option === '--suite') continue;
     if (option === '--resume') { result.resume = true; continue; }
     const key = new Map([['--run-id', 'runId'], ['--state-dir', 'stateDir'],
-      ['--phase', 'phase']]).get(option);
+      ['--phase', 'phase'], ['--agent', 'agent']]).get(option);
     const value = args[++index];
     if (!key || !value || value.startsWith('--') || value.includes('\0')) {
       throw new Error('SUITE_INVALID_REQUEST');
@@ -28,7 +28,11 @@ export function parseSuiteArguments(args) {
 }
 
 const errorCodes = new Set(['SIM_SESSION_REQUEST', 'SIM_SESSION_CORRUPT',
-  'SIM_SESSION_BINDING_CONFLICT', 'SIM_SESSION_EXISTS', 'SIM_SESSION_NOT_FOUND',
+  'OPERATOR_AGENT_REQUIRED', 'OPERATOR_AGENT_UNSUPPORTED',
+  'OPERATOR_AGENT_UNCONFIGURED', 'OPERATOR_AGENT_UNAVAILABLE',
+  'OPERATOR_AGENT_INCOMPATIBLE', 'OPERATOR_AGENT_AUTHENTICATION',
+  'OPERATOR_SETUP_UNAVAILABLE', 'SIM_SESSION_BINDING_CONFLICT',
+  'SIM_SESSION_EXISTS', 'SIM_SESSION_NOT_FOUND',
   'SIM_SESSION_EXECUTION_UNRESOLVED', 'SIM_SESSION_OWNERSHIP_UNRESOLVED',
   'SIM_SESSION_PATH_UNSAFE', 'SUITE_INVALID_REQUEST', 'SUITE_BINDING_CONFLICT',
   'SUITE_RUN_NOT_FOUND', 'SIM_SUITE_UNAVAILABLE', 'SIM_DISPOSAL_UNSAFE']);

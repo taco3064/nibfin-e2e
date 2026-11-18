@@ -11,6 +11,9 @@ import { operatorEvidence } from '../operator-evidence.mjs';
 import { investigationSchema } from '../operator-schema.mjs';
 import { investigateFailure } from '../defect-investigation.mjs';
 import { defectKey } from '../defect-policy.mjs';
+import { suiteCommand, parseSuiteArguments } from '../suite-cli.mjs';
+import { operatorReadiness } from '../operator-readiness.mjs';
+import { claudeFlags, claudeResult } from '../operator-claude.mjs';
 import { sourceCommand } from '../source-process.mjs';
 
 async function setup(t) {
@@ -201,11 +204,12 @@ test('bounded native process fixture receives model stdin without inherited auth
     assert.equal(result.stdout, 'controlled structured model input');
   });
 
-test('invalid operator setup leaves suite execution available without composition',
+test('invalid opted-in setup prevents suite execution',
   async () => {
     const capabilities = operatorInvestigation({ NIBFIN_E2E_OPERATOR: 'authorized',
       NIBFIN_E2E_OPERATOR_CONFIG: '/nonexistent/private/config.json' });
-    await capabilities.prepare({ stateDir: '/nonexistent/session' });
+    await assert.rejects(capabilities.prepare({ agent: 'codex',
+      stateDir: '/nonexistent/session' }), /AGENT_UNCONFIGURED/);
     await assert.rejects(capabilities.resolve(), /SETUP_UNAVAILABLE/);
   });
 
@@ -267,3 +271,130 @@ test('large metadata is omitted; full bodies across batches find unmarked work',
     assert.equal(network.calls.filter(row => row.options.method === 'POST').length, 0);
     assert.deepEqual(await readdir(h.config.scratchRoot), []);
   });
+
+test('explicit agent setup fails before creating a suite, including passing phases',
+  async t => {
+    const h = await setup(t);
+    const env = { NIBFIN_E2E_OPERATOR: 'authorized',
+      NIBFIN_E2E_OPERATOR_CONFIG: h.path };
+    const args = ['--suite', '--run-id', 'selection', '--phase', 'install',
+      '--state-dir', join(h.config.suiteRoot, 'selection')];
+    for (const [selection, reason] of [[[], 'OPERATOR_AGENT_REQUIRED'],
+      [['--agent', 'other'], 'OPERATOR_AGENT_UNSUPPORTED']]) {
+      const report = await suiteCommand([...args, ...selection],
+        operatorInvestigation(env));
+      assert.equal(report.reason, reason);
+      assert.deepEqual(await readdir(h.config.suiteRoot), []);
+    }
+    assert.equal(parseSuiteArguments([...args, '--agent', 'claude']).agent, 'claude');
+    assert.equal(parseSuiteArguments(args).agent, undefined);
+    const missingConfig = await suiteCommand([...args, '--agent', 'codex'],
+      operatorInvestigation({ NIBFIN_E2E_OPERATOR: 'authorized' }));
+    assert.equal(missingConfig.reason, 'OPERATOR_AGENT_UNCONFIGURED');
+    assert.deepEqual(await readdir(h.config.suiteRoot), []);
+  });
+
+test('Codex-only preflight is authenticated, bounded and does not read publication',
+  async t => {
+    const h = await setup(t);
+    const calls = [];
+    const command = async (file, args, options) => {
+      assert.equal(file, h.config.codexExecutable);
+      assert(options.timeoutMs <= 110000);
+      if (args.includes('--help')) return { stdout: [
+        '--strict-config', '--ignore-user-config', '--ignore-rules',
+        '--ephemeral', '--output-schema',
+      ].join(' ') };
+      calls.push(options.cwd);
+      assert.equal(options.env.ANTHROPIC_API_KEY, undefined);
+      assert.equal(options.env.GH_TOKEN, undefined);
+      assert(!options.input.includes('scope'));
+      await writeFile(args[args.indexOf('--output-last-message') + 1],
+        JSON.stringify({ ready: true }));
+    };
+    const capability = operatorInvestigation({ NIBFIN_E2E_OPERATOR: 'authorized',
+      NIBFIN_E2E_OPERATOR_CONFIG: h.path }, { command });
+    await capability.prepare({ agent: 'codex',
+      stateDir: join(h.config.suiteRoot, 'passing') });
+    assert.equal(calls.length, 1);
+    assert.deepEqual(await readdir(h.config.scratchRoot), []);
+    assert.deepEqual(await readdir(h.config.suiteRoot), []);
+  });
+
+test('Claude-only setup validates readiness and uses isolated fresh conversations',
+  async t => {
+    const h = await setup(t);
+    delete h.config.codexExecutable;
+    delete h.config.codexHome;
+    h.config.claudeExecutable = join(h.root, 'claude');
+    h.config.claudeCredentialFile = join(h.root, 'api-key');
+    await writeFile(h.config.claudeExecutable, '#!/bin/sh\nexit 1\n',
+      { mode: 0o700 });
+    await writeFile(h.config.claudeCredentialFile, 'sk-ant-controlled',
+      { mode: 0o600 });
+    await h.save();
+    const config = await operatorConfiguration(h.path, 'claude');
+    const calls = [];
+    const command = async (file, args, options) => {
+      assert.equal(file, h.config.claudeExecutable);
+      if (args.includes('--help')) return { stdout: claudeFlags.join(' ') };
+      calls.push(options.cwd);
+      assert(args.includes('--bare'));
+      assert(args.includes('--no-session-persistence'));
+      assert.equal(args[args.indexOf('--tools') + 1], '');
+      assert.equal(args[args.indexOf('--setting-sources') + 1], '');
+      assert.equal(args[args.indexOf('--mcp-config') + 1], '{"mcpServers":{}}');
+      assert.equal(options.env.ANTHROPIC_API_KEY, 'sk-ant-controlled');
+      assert.equal(options.env.GH_TOKEN, undefined);
+      assert(!options.input.includes('sk-ant-controlled'));
+      const input = JSON.parse(options.input.slice(options.input.indexOf('\n') + 1));
+      const output = input.task.startsWith('Readiness') ? { ready: true } :
+        input.finding ? { publicSafe: true, english: true, codeBacked: true,
+          key: defectKey(input.finding), duplicate: 'none', newMaintainedChange: false,
+          number: null, existingId: null, existingTitle: null, existingBody: null } :
+          { findings: [proposal(input.evidence)] };
+      return { stdout: JSON.stringify({ type: 'result', subtype: 'success',
+        is_error: false, structured_output: output }) };
+    };
+    const capability = operatorInvestigation({ NIBFIN_E2E_OPERATOR: 'authorized',
+      NIBFIN_E2E_OPERATOR_CONFIG: h.path }, { command });
+    await capability.prepare({ agent: 'claude',
+      stateDir: join(h.config.suiteRoot, 'passing') });
+    assert.equal(calls.length, 1);
+    const network = transport();
+    const composed = await composeOperator(config, { command, request: network.request });
+    const findings = await composed.model({ skill: 'scope', revision: 'a'.repeat(40),
+      symptoms: { provenance: 'controlled' } });
+    // Publication credential is absent; read-only investigation still succeeds.
+    assert.equal(findings.findings.length, 1);
+    assert(network.calls.every(row => !row.options.headers.Authorization));
+    await writeFile(h.config.credentialFile, 'ghp_controlled', { mode: 0o600 });
+    const published = await composed.publish(findings.findings[0],
+      findings.evidence, 'controlled');
+    assert.equal(published.state, 'associated');
+    assert.equal(calls.length, 3);
+    assert.equal(new Set(calls).size, calls.length);
+    assert.deepEqual(await readdir(h.config.scratchRoot), []);
+    await assert.rejects(operatorReadiness(config, async () => ({ stdout: '' })),
+      /AGENT_INCOMPATIBLE/);
+    await assert.rejects(operatorReadiness(config, async () => {
+      const error = new Error('private diagnostic');
+      error.code = 'ENOENT';
+      throw error;
+    }), /AGENT_UNAVAILABLE/);
+    await assert.rejects(operatorReadiness(config, async (file, args) => {
+      if (args.includes('--help')) return { stdout: claudeFlags.join(' ') };
+      throw new Error('private credential diagnostic');
+    }), /^Error: OPERATOR_AGENT_AUTHENTICATION$/);
+    assert.deepEqual(await readdir(h.config.scratchRoot), []);
+  });
+
+test('Claude accepts only one successful bounded structured envelope', () => {
+  for (const stdout of ['{"type":"result","type":"other"}', '{}',
+    '{"type":"result","subtype":"error"}',
+    '{}\n{}', JSON.stringify({ type: 'result', subtype: 'success', is_error: true,
+      structured_output: {} }), JSON.stringify({ type: 'result', subtype: 'success',
+      is_error: false, structured_output: { large: 'x'.repeat(64000) } })]) {
+    assert.throws(() => claudeResult(stdout));
+  }
+});

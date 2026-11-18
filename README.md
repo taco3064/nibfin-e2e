@@ -297,10 +297,14 @@ resource identifiers and provider replies are not sent to the model.
 
 The executable suite CLI supports an explicitly authorized operator setup; see
 [operator investigation setup](e2e/OPERATOR.md). Its reusable private configuration
-composes current public evidence, the installed Codex model and a fresh independent
+requires explicit `--agent codex` or `--agent claude` and composes current public
+evidence, the selected installed provider and a fresh independent
 assessment, then publishes through the existing journal and GitHub adapter.
 Without opt-in, controlled requests report `AUTHORIZED_MODEL_UNAVAILABLE` on
-failure. Invalid operator setup reports `OPERATOR_CAPABILITY_UNAVAILABLE`.
+failure. Invalid selected-provider setup fails before suite startup with a safe
+`OPERATOR_AGENT_*` reason. Readiness checks require provider authentication,
+independently of publication authentication. Agent selection does not change
+the managed Runner Pool provider.
 Neither result confirms a defect or publication. Non-suite commands retain their
 existing behavior and do not initialize operator capabilities.
 
