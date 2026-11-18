@@ -63,3 +63,8 @@ export function issueMatches(issue, content, config, repository) {
       row.login === config.assignee.login) &&
     issue.labels?.some(row => row.name === config.label);
 }
+
+export function issueBrowserUrl(issue, repository) {
+  const expected = `https://github.com/${repository}/issues/${issue.number}`;
+  return positiveId(issue.number) && issue.html_url === expected ? expected : null;
+}

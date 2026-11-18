@@ -1,6 +1,7 @@
 import { fixtureInventory } from './fixture-inventory.mjs';
 import {
   defectConfiguration, defectKey, defectMarker, issueMatches, validateFinding,
+  issueBrowserUrl,
 } from './defect-policy.mjs';
 
 const pending = reason => ({ state: 'pending', reason });
@@ -9,7 +10,10 @@ const pending = reason => ({ state: 'pending', reason });
 // It approves disclosure and English content, verifies the semantic identity and
 // necessary maintained change, and checks all current duplicate observations.
 export async function defectPublisher({ configuration, stateDir, modelRoot,
-  github, wake, assess }) {
+  github, wake, assess, publicationMode = 'direct-wake' }) {
+  if (!['direct-wake', 'issue-events'].includes(publicationMode)) {
+    throw new Error('DEFECT_PUBLICATION_MODE');
+  }
   const config = defectConfiguration(configuration);
   if (!github || typeof assess !== 'function') {
     throw new Error('DEFECT_PUBLISHER_UNAVAILABLE');
@@ -111,6 +115,14 @@ export async function defectPublisher({ configuration, stateDir, modelRoot,
         entry.id = issue.id;
         await save();
         const reference = { repository, number: issue.number };
+        if (publicationMode === 'issue-events') {
+          const url = issueBrowserUrl(issue, repository);
+          if (!url) return pending('ISSUE_URL_UNVERIFIED');
+          return { state: 'associated', reason: issue.state === 'closed' ?
+            'CLOSED_WORK' : 'VERIFIED_ISSUE',
+            issue: { ...reference, url, state: issue.state },
+            route: 'issue-events', wake: 'not-requested' };
+        }
         if (issue.state === 'closed') {
           return { state: 'associated', reason: 'CLOSED_WORK', issue: reference,
             wake: 'not-requested' };

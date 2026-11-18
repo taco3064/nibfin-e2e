@@ -56,6 +56,7 @@ export async function suiteCommand(args, investigation) {
   let request, session, result;
   try {
     request = parseSuiteArguments(args);
+    await investigation?.prepare?.(request);
     session = await createSimulatedSuite(request);
     const document = await runSuite(session, { runId: request.runId,
       phase: request.phase, resume: request.resume });
