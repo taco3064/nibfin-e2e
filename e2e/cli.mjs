@@ -1,3 +1,4 @@
+import { suiteCommand, suiteExitCode } from './suite-cli.mjs';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import { scenarios } from './registry.mjs';
@@ -5,6 +6,8 @@ import { run, runPrepared } from './runner.mjs';
 import { exitCode, report } from './schema.mjs';
 
 export async function command(args, entries = scenarios) {
+  if (args.some(arg => ['--suite', '--run-id', '--state-dir', '--phase', '--resume']
+    .includes(arg))) return suiteCommand(args);
   try {
     const groups = [];
     for (let index = 0; index < args.length; index++) {
@@ -26,5 +29,6 @@ const entry = process.argv[1] && pathToFileURL(resolve(process.argv[1])).href;
 if (entry === import.meta.url) {
   const document = await command(process.argv.slice(2));
   process.stdout.write(`${JSON.stringify(document)}\n`);
-  process.exitCode = exitCode(document);
+  process.exitCode = document.kind === 'suite' ? suiteExitCode(document) :
+    exitCode(document);
 }

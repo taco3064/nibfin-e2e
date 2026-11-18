@@ -1,3 +1,4 @@
+import { openSimulatedSession } from './simulated-session.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,7 +15,12 @@ import { reconcileSimulated } from './simulated-recovery.mjs';
 
 // Explicit offline entrypoint. Run requests retain the existing suite contract;
 // they cannot select providers, executable modules, credentials or host effects.
-export async function createSimulatedSuite({ controls = {}, retained, delivery } = {}) {
+export async function createSimulatedSuite(options = {}) {
+  if (options.stateDir !== undefined) {
+    return openSimulatedSession(options, createSimulatedSuite);
+  }
+  const { controls = {}, retained, checkpoint } = options;
+  let { delivery } = options;
   const root = retained?.root ?? await mkdtemp(join(tmpdir(), 'nibfin-simulated-suite-'));
   try {
     delivery ??= retained?.delivery;
@@ -22,7 +28,9 @@ export async function createSimulatedSuite({ controls = {}, retained, delivery }
       'simulated/source');
     const provider = simulatedProvider(definition, retained?.state, controls);
     const inventory = await fixtureInventory(join(root, 'inventory'), definition,
-      definition.account.id, join(root, 'worker'));
+      definition.account.id, join(root, 'worker'), state => {
+        if (checkpoint) state.simulation = checkpoint(provider.snapshot());
+      });
     const prepared = retained?.prepared ?? await simulatedSources(join(root, 'sources'));
     provider.bindSources(prepared.ownershipId);
     let runId;
@@ -49,8 +57,8 @@ export async function createSimulatedSuite({ controls = {}, retained, delivery }
         const resources = [...definition.repositories];
         const trigger = caller.trigger;
         caller.trigger = async binding => {
-          resources.splice(0, resources.length,
-            `${binding.repository}/issues/${binding.issue}`);
+          const resource = `${binding.repository}/issues/${binding.issue}`;
+          if (!resources.includes(resource)) resources.push(resource);
           return trigger(binding);
         };
         const history = caller.readConcurrencyEvidence;

@@ -1,3 +1,5 @@
+import { independentDeliveries } from './delivery-pair.mjs';
+import { fixtureResults, observeFixture } from './delivery-fixtures.mjs';
 import { simulatedCaller } from './simulated-caller.mjs';
 import { finishDelivery } from './delivery-observation.mjs';
 import { assertConcurrency } from './concurrency-assertions.mjs';
@@ -11,9 +13,11 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 export async function reconcileSimulated(provider, context, fault, delivery) {
   const repository = provider.definition.repositories[0];
   const record = provider.phases.get(context.intent);
+  const fixtures = fixtureResults('unresolved',
+    'SIM_TRIGGER_RECONCILIATION_REQUIRED');
   const unresolved = (code = 'SIM_TRIGGER_RECONCILIATION_REQUIRED',
     resource = repository) =>
-    ({ state: 'unresolved', code, resources: [resource] });
+    ({ state: 'unresolved', code, resources: [resource], fixtures });
   if (!record || record.intent !== context.intent ||
       record.runId !== context.runId ||
       record.sourceOwner !== context.prepared.ownershipId ||
@@ -53,12 +57,24 @@ export async function reconcileSimulated(provider, context, fault, delivery) {
       return unresolved('SIM_TRIGGER_OBSERVATION_UNAVAILABLE',
         `${repository}/issues/${legs[0].issue}`);
     }
-    for (const leg of legs) {
-      const result = await finishDelivery({ ...leg.binding,
-        wake: leg.wake.expected }, caller, call);
-      if (result.state !== 'passed') {
-        return unresolved(result.code, `${repository}/issues/${leg.issue}`);
+    const deliveries = [];
+    for (const [index, leg] of legs.entries()) {
+      const row = fixtures[index];
+      try {
+        const binding = { ...leg.binding, wake: leg.wake.expected };
+        const result = await finishDelivery(binding, caller, call, undefined,
+          evidence => deliveries.push(evidence));
+        Object.assign(row, observeFixture(result));
+      } catch {
+        row.state = 'unresolved';
+        row.code = 'SIM_TRIGGER_OBSERVATION_UNAVAILABLE';
       }
+    }
+    if (fixtures.some(row => row.state !== 'passed')) {
+      return unresolved('SIM_TRIGGER_OBSERVATION_UNAVAILABLE');
+    }
+    if (deliveries.length !== 2 || !independentDeliveries(deliveries, history)) {
+      return unresolved('PAIRED_ASSOCIATION_UNAVAILABLE');
     }
   } catch {
     return unresolved('SIM_TRIGGER_OBSERVATION_UNAVAILABLE',
@@ -66,5 +82,5 @@ export async function reconcileSimulated(provider, context, fault, delivery) {
   }
   provider.resolve('trigger', repository);
   return { state: 'passed', code: 'SIM_RECONCILED',
-    resources: provider.definition.repositories };
+    resources: provider.definition.repositories, fixtures };
 }

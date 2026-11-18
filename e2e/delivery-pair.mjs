@@ -9,11 +9,9 @@ import { assertConcurrency } from './concurrency-assertions.mjs';
 import { verifyConcurrencyNative } from './concurrency-protected.mjs';
 import { withDeliverySources } from './delivery-sources.mjs';
 
-export const javascriptRequests = Object.freeze([
-  Object.freeze({ path: 'ready.mjs', stdout: 'NIBFIN_E2E_READY\n' }),
-  Object.freeze({ path: 'ready-b.mjs', stdout: 'NIBFIN_E2E_READY_B\n' }),
-].map(item => Object.freeze({ ...item,
-  content: `process.stdout.write(${JSON.stringify(item.stdout)});\n` })));
+export { javascriptRequests } from './delivery-fixtures.mjs';
+import { javascriptRequests, fixtureResults, observeFixture }
+  from './delivery-fixtures.mjs';
 const capabilities = [...capabilityNames, 'readConcurrencyEvidence',
   'readIsolationEvidence'];
 const valid = request => /^[\w.-]+\/[\w.-]+$/.test(request?.repository ?? '') &&
@@ -21,7 +19,7 @@ const valid = request => /^[\w.-]+\/[\w.-]+$/.test(request?.repository ?? '') &&
 const admissionKeys = ['runRepository', 'runId', 'attempt', 'jobId'];
 
 // The paired chain must also be independent across Issues, not just within each.
-function independent(deliveries, history) {
+export function independentDeliveries(deliveries, history) {
   const [a, b] = deliveries;
   if (a.candidate.id === b.candidate.id || a.candidate.shape === b.candidate.shape ||
       a.pull.number === b.pull.number || a.pull.head === b.pull.head ||
@@ -41,7 +39,9 @@ function independent(deliveries, history) {
 
 async function execute(request, caller, bounds, sources, lifecycle) {
   const mode = caller?.mode === 'fixture' ? 'fixture' : 'live';
-  const output = (state, code) => ({ state, code, mode, liveVerified: false });
+  const fixtures = fixtureResults();
+  const output = (state, code) => ({ state, code, mode, liveVerified: false,
+    fixtures });
   if (!valid(request)) return output('blocked', 'INVALID_REQUEST');
   if (!['fixture', 'live'].includes(caller?.mode)) {
     return output('blocked', 'PROVENANCE_REQUIRED');
@@ -54,12 +54,15 @@ async function execute(request, caller, bounds, sources, lifecycle) {
   let outcome;
   let triggered = false;
   let safe = false;
+  let activeFixture;
   try {
     const budget = fixtureBudget(bounds);
     const call = action => budget.call(action);
     const pair = { requestId: randomUUID(), repository: request.repository,
       case: 'independent', issues: [] };
-    for (const program of javascriptRequests) {
+    for (const [index, program] of javascriptRequests.entries()) {
+      activeFixture = fixtures[index];
+      phase = 'FIXTURE_UNAVAILABLE';
       const definition = fixtureDefinition('javascript-delivery', request.repository);
       const fixture = await call(signal => caller.createFixture(definition, signal));
       if (fixture?.lifecycle) owned.push(fixture.lifecycle);
@@ -91,7 +94,8 @@ async function execute(request, caller, bounds, sources, lifecycle) {
       if (prepared?.state !== 'passing') throw new Error();
     }
     // Dispatch both before awaiting either terminal delivery observation.
-    for (const binding of bindings) {
+    for (const [index, binding] of bindings.entries()) {
+      activeFixture = fixtures[index];
       phase = 'TRIGGER_EFFECT_UNKNOWN';
       triggered = true;
       const wake = await call(signal => caller.trigger({ ...binding,
@@ -101,17 +105,27 @@ async function execute(request, caller, bounds, sources, lifecycle) {
       binding.wake = wake;
     }
     if (lifecycle) {
+      activeFixture = fixtures[0];
       phase = 'FAULT_LIFECYCLE_UNVERIFIED';
       await lifecycle(bindings, { sourceRoot: sources?.root });
     }
-    for (const binding of bindings) {
-      const result = await finishDelivery(binding, caller, call, bounds,
-        evidence => deliveries.push(evidence));
-      if (result.state !== 'passed') { outcome = result; break; }
-      phase = 'ISOLATION_PRODUCER_UNAVAILABLE';
-      const isolation = await call(signal => caller.readIsolationEvidence(
-        structuredClone(binding), signal));
-      if (!deliveryIsolation(binding, isolation, mode)) throw new Error();
+    activeFixture = undefined;
+    for (const [index, binding] of bindings.entries()) {
+      const row = fixtures[index];
+      try {
+        const result = await finishDelivery(binding, caller, call, bounds,
+          evidence => deliveries.push(evidence));
+        Object.assign(row, observeFixture(result));
+        if (result.state !== 'passed') { outcome ??= result; continue; }
+        phase = 'ISOLATION_PRODUCER_UNAVAILABLE';
+        const isolation = await call(signal => caller.readIsolationEvidence(
+          structuredClone(binding), signal));
+        if (!deliveryIsolation(binding, isolation, mode)) throw new Error();
+      } catch {
+        row.state = 'unresolved';
+        row.code = phase;
+        outcome ??= output('unverified', phase);
+      }
     }
     phase = 'PROTECTED_HISTORY_UNAVAILABLE';
     const history = await call(signal => caller.readConcurrencyEvidence(
@@ -122,7 +136,7 @@ async function execute(request, caller, bounds, sources, lifecycle) {
     if (!outcome && concurrency.state !== 'passed') outcome = concurrency;
     if (!outcome) {
       phase = 'PAIRED_ASSOCIATION_UNAVAILABLE';
-      if (deliveries.length !== 2 || !independent(deliveries, history)) {
+      if (deliveries.length !== 2 || !independentDeliveries(deliveries, history)) {
         throw new Error();
       }
       phase = 'NATIVE_EXECUTION_UNAVAILABLE';
@@ -133,7 +147,12 @@ async function execute(request, caller, bounds, sources, lifecycle) {
         ? 'LIVE_PAIRED_DELIVERY_OBSERVED' : 'SYNTHETIC_PAIRED_DELIVERY_CONFIRMED'),
       liveVerified: mode === 'live' };
     }
-  } catch { outcome ??= output('unverified', phase); }
+  } catch {
+    if (activeFixture?.state === 'unobserved') {
+      Object.assign(activeFixture, { state: 'unresolved', code: phase });
+    }
+    outcome ??= output('unverified', phase);
+  }
   outcome = { ...output(outcome.state, outcome.code), ...outcome };
   if (triggered && !safe) return { ...outcome, state: 'unverified',
     liveVerified: false, cleanup: 'unresolved' };

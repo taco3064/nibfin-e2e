@@ -272,3 +272,17 @@ Direct `node --test` without prepared inputs still reports component tests skipp
 Run requests cannot supply these composition capabilities. Executable
 doubles, isolated fixture trees and settled sessions are removed by their owners;
 prepared producer sources remain owned by the existing source lifecycle.
+
+## Simulated lifecycle CLI
+
+Run the complete maintained offline lifecycle with a durable local session:
+
+```sh
+node e2e/cli.mjs --suite --run-id demo --state-dir ./simulation-state
+```
+
+Use `--phase provision|install|delivery|failure|cleanup` to select one phase and
+`--resume` for subsequent processes using the same run ID and state directory.
+See [suite usage](e2e/SUITE.md) and [simulation recovery](e2e/SIMULATION.md).
+All GitHub and host effects in this command family are simulated; the harmless
+merged JavaScript fixtures execute locally. These results are controlled evidence.
