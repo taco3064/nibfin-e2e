@@ -1,3 +1,4 @@
+import { sourceIdentities, sourceSelection } from './source-selection.mjs';
 import { acquireIdentity, prepareSelected } from './selected-sources.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
@@ -13,6 +14,7 @@ import { prepareRelease } from './release-preflight.mjs';
 // Default owners require the complete compatible set; selected owners expose status.
 // Its owner keeps it across scenarios and release preparation, then disposes it.
 export async function prepareSources(options = {}) {
+  options = { ...options, selection: sourceSelection(options.selection) };
   const root = await mkdtemp(join(resolve(options.tempRoot ?? tmpdir()),
     'nibfin-sources-'));
   const remove = options.remove ?? rm;
@@ -48,17 +50,19 @@ export async function prepareSources(options = {}) {
       }
     }
   } catch (error) {
+    const evidence = { sourceIdentities: sourceIdentities(sources) };
     if (sourceTerminationUnknown(error)) {
-      throw new Error(`SOURCE_TERMINATION_UNKNOWN: retained ${root}`, {
-        cause: error,
-      });
+      throw Object.assign(new Error(
+        `SOURCE_TERMINATION_UNKNOWN: retained ${root}`, { cause: error },
+      ), evidence);
     }
     try { await remove(root, { recursive: true, force: true }); }
     catch (cleanup) {
-      throw new AggregateError([error, cleanup],
-        `SOURCE_CLEANUP_ERROR: retained ${root}; ${error}; ${cleanup}`);
+      throw Object.assign(new AggregateError([error, cleanup],
+        `SOURCE_CLEANUP_ERROR: retained ${root}; ${error}; ${cleanup}`), evidence);
     }
-    throw new Error(`SOURCE_PREPARATION_ERROR: ${error}`, { cause: error });
+    throw Object.assign(new Error(`SOURCE_PREPARATION_ERROR: ${error}`,
+      { cause: error }), evidence);
   }
   let disposed = false;
   let releaseStarted = false;

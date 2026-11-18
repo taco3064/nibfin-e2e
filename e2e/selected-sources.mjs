@@ -46,6 +46,8 @@ export async function prepareSelected(options, context, sources) {
 }
 
 export async function acquireIdentity(repository, options, context) {
+  const revision = options.selection?.[repository.id] ?? 'main';
+  repository = { ...repository, revision };
   const checkout = join(context.root, repository.id);
   const commit = await (options.acquire ?? acquireSource)(
     repository, checkout, context,
