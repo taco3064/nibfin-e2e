@@ -1,3 +1,4 @@
+import { sourceRevision } from './source-selection.mjs';
 import { sourceCommand } from './source-process.mjs';
 
 export const sourceRepositories = Object.freeze([
@@ -27,18 +28,30 @@ export function sourceEnvironment(root) {
 export async function acquireSource(source, checkout, context) {
   const { command = sourceCommand, env } = context;
   const invoke = args => command('git', args, { env, cwd: context.root });
-  await invoke([
-    'clone', '--no-checkout', '--depth=1', '--single-branch', '--no-tags',
-    '--branch', 'main', '--', source.url, checkout,
-  ]);
-  // Verify the branch ref explicitly: a tag named main cannot satisfy this.
+  const revision = sourceRevision(source.revision ?? 'main');
+  let ref;
+  if (revision === 'main') {
+    await invoke([
+      'clone', '--no-checkout', '--depth=1', '--single-branch', '--no-tags',
+      '--branch', 'main', '--', source.url, checkout,
+    ]);
+    // A tag named main cannot satisfy the default branch selection.
+    ref = 'refs/remotes/origin/main';
+  } else {
+    await invoke(['init', '--', checkout]);
+    await invoke(['-C', checkout, 'remote', 'add', 'origin', source.url]);
+    await invoke(['-C', checkout, 'fetch', '--depth=1', '--no-tags', '--',
+      'origin', revision]);
+    ref = 'FETCH_HEAD';
+  }
   const observed = await invoke([
-    '-C', checkout, 'rev-parse', '--verify', `${source.ref.replace(
-      'refs/heads/', 'refs/remotes/origin/',
-    )}^{commit}`,
+    '-C', checkout, 'rev-parse', '--verify', `${ref}^{commit}`,
   ]);
   const commit = observed.stdout.trim();
   if (!/^[a-f0-9]{40}$/.test(commit)) throw new Error('INVALID_CHECKOUT_IDENTITY');
+  if (/^[a-f0-9]{40}$/.test(revision) && revision !== commit) {
+    throw new Error('REQUESTED_COMMIT_MISMATCH');
+  }
   // Core's release producer requires local main. Bind it to the acquired
   // commit now; this never fetches or substitutes a later remote main.
   const branch = source.id === 'core' ? ['-B', 'main'] : ['--detach'];

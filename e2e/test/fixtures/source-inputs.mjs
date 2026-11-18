@@ -13,7 +13,9 @@ export async function verify(sources) {
   for (const [id, prepared] of Object.entries(expected)) {
     const source = sources[id];
     const repository = sourceRepositories.find(item => item.id === id);
-    const identity = { ...repository, commit: commits[id], checkout: source.checkout };
+    const identity = {
+      ...repository, revision: 'main', commit: commits[id], checkout: source.checkout,
+    };
     await access(source.checkout);
     const { output, ...actualIdentity } = source;
     assert.deepEqual(actualIdentity, identity);

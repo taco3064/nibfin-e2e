@@ -1,3 +1,4 @@
+import { groupArguments } from './source-selection.mjs';
 import { operatorInvestigation } from './operator-composition.mjs';
 import { suiteCommand, suiteExitCode } from './suite-cli.mjs';
 import { pathToFileURL } from 'node:url';
@@ -12,17 +13,11 @@ export const suiteRequest = args => args.some(arg =>
 export async function command(args, entries = scenarios, investigation) {
   if (suiteRequest(args)) return suiteCommand(args, investigation);
   try {
-    const groups = [];
-    for (let index = 0; index < args.length; index++) {
-      if (args[index] !== '--group' || !args[index + 1] ||
-          args[index + 1].startsWith('--')) {
-        throw new Error('Usage: npm run e2e -- [--group NAME ...]');
-      }
-      groups.push(args[++index]);
-    }
+    const { groups, selection } = groupArguments(args);
     const execute = entries === scenarios ? runPrepared : run;
     return await execute(entries, groups, {
       diagnostic: chunk => process.stderr.write(chunk),
+      sourceOptions: { selection },
     });
   } catch (error) {
     return report([], [`INVOCATION_OR_RUNNER_ERROR: ${error.message}`]);

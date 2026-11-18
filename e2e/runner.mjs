@@ -1,3 +1,4 @@
+import { sourceIdentities } from './source-selection.mjs';
 import { selectedSourceInputs } from './source-requirements.mjs';
 import { withPreparedSources } from './sources.mjs';
 import { select } from './registry.mjs';
@@ -31,14 +32,17 @@ export async function run(entries, groups = [], options = {}) {
 export async function runPrepared(entries, groups = [], options = {}) {
   const selected = select(entries, groups);
   if (!selected.some(scenario => !scenario.policyReason)) {
-    return run(entries, groups, options);
+    return { ...await run(entries, groups, options), sources: [] };
   }
   let document;
+  let identities = [];
   try {
     return await withPreparedSources(async prepared => {
+      identities = sourceIdentities(prepared.sources);
       document = await run(entries, groups, {
         ...options, sources: prepared.sources, availability: prepared.availability,
       });
+      document.sources = identities;
       if (document.results.some(item => item.reason.code === 'TERMINATION_ERROR')) {
         throw Object.assign(new Error('SOURCE_TERMINATION_UNKNOWN'), {
           terminationUnknown: true,
@@ -50,7 +54,10 @@ export async function runPrepared(entries, groups = [], options = {}) {
         .flatMap(item => item.sources))],
     });
   } catch (error) {
-    return report(document?.results ?? [], [...(document?.errors ?? []), String(error)]);
+    return {
+      ...report(document?.results ?? [], [...(document?.errors ?? []), String(error)]),
+      sources: error.sourceIdentities ?? identities,
+    };
   }
 }
 
