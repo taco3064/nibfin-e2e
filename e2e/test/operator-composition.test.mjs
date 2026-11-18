@@ -11,7 +11,7 @@ import { operatorEvidence } from '../operator-evidence.mjs';
 import { investigationSchema } from '../operator-schema.mjs';
 import { investigateFailure } from '../defect-investigation.mjs';
 import { defectKey } from '../defect-policy.mjs';
-import { suiteCommand, parseSuiteArguments } from '../suite-cli.mjs';
+import { suiteCommand, parseSuiteArguments, suiteExitCode } from '../suite-cli.mjs';
 import { operatorReadiness } from '../operator-readiness.mjs';
 import { claudeFlags, claudeResult } from '../operator-claude.mjs';
 import { sourceCommand } from '../source-process.mjs';
@@ -398,3 +398,116 @@ test('Claude accepts only one successful bounded structured envelope', () => {
     assert.throws(() => claudeResult(stdout));
   }
 });
+
+for (const outage of ['missing-executable', 'authentication', 'unknown']) {
+  test(`cleanup recovery precedes reporting ${outage}`, async t => {
+    const h = await setup(t);
+    const stateDir = join(h.config.suiteRoot, 'recovery');
+    const base = ['--suite', '--run-id', 'recovery', '--state-dir', stateDir];
+    const provision = await suiteCommand([...base, '--phase', 'provision']);
+    assert.equal(suiteExitCode(provision), 0);
+    await writeFile(join(stateDir, 'unrelated'), 'preserve');
+    if (outage === 'missing-executable') await rm(h.config.codexExecutable);
+    let probes = 0;
+    const command = async (file, args) => {
+      probes++;
+      assert.deepEqual((await readdir(stateDir)).sort(),
+        ['simulated-session.json', 'unrelated']);
+      const final = JSON.parse(await readFile(
+        join(stateDir, 'simulated-session.json'), 'utf8'));
+      assert.equal(final.final.cleanup, 'complete');
+      if (args.includes('--help')) return { stdout: [
+        '--strict-config', '--ignore-user-config', '--ignore-rules',
+        '--ephemeral', '--output-schema',
+      ].join(' ') };
+      throw Object.assign(new Error('private diagnostic'),
+        { terminationUnknown: outage === 'unknown' });
+    };
+    const capability = operatorInvestigation({ NIBFIN_E2E_OPERATOR: 'authorized',
+      NIBFIN_E2E_OPERATOR_CONFIG: h.path }, { command });
+    const report = await suiteCommand([...base, '--phase', 'cleanup', '--resume',
+      '--agent', 'codex'], capability);
+    assert.equal(suiteExitCode(report), 0, JSON.stringify(report));
+    assert.equal(report.phases.cleanup.state, 'passed');
+    assert.deepEqual(report.pending, []);
+    assert.equal(report.cleanup, 'complete');
+    assert.equal(report.reason, undefined);
+    assert.equal(report.investigation.reason, 'REQUEST_PASSED');
+    assert.equal(report.reporting.state, 'unavailable');
+    assert.equal(report.reporting.reason, outage === 'missing-executable' ?
+      'OPERATOR_AGENT_UNAVAILABLE' : 'OPERATOR_AGENT_AUTHENTICATION');
+    assert.equal(probes, outage === 'missing-executable' ? 0 : 2);
+    await assert.rejects(capability.resolve());
+    assert.equal(await readFile(join(stateDir, 'unrelated'), 'utf8'), 'preserve');
+    assert(!JSON.stringify(report).includes('private diagnostic'));
+    assert.equal((await readdir(h.config.scratchRoot)).length,
+      outage === 'unknown' ? 1 : 0);
+    // The controlled unknown command started no process; fixture teardown is safe.
+  });
+}
+
+test('cleanup recovery retains configuration boundaries and failed cleanup outcome',
+  async t => {
+    const h = await setup(t);
+    await rm(h.config.codexExecutable);
+    const env = { NIBFIN_E2E_OPERATOR: 'authorized',
+      NIBFIN_E2E_OPERATOR_CONFIG: h.path };
+    const args = ['--suite', '--run-id', 'missing', '--phase', 'cleanup',
+      '--resume', '--state-dir', join(h.config.suiteRoot, 'missing')];
+    const missing = await suiteCommand([...args, '--agent', 'codex'],
+      operatorInvestigation(env));
+    assert.equal(missing.reason, 'SIM_SESSION_NOT_FOUND');
+    assert.equal(suiteExitCode(missing), 1);
+    assert.equal(missing.reporting.state, 'unavailable');
+    assert.equal(missing.investigation.state, 'unavailable');
+    const noAgent = await suiteCommand(args, operatorInvestigation(env));
+    assert.equal(noAgent.reason, 'OPERATOR_AGENT_REQUIRED');
+    h.config.authorization = 'invalid';
+    await h.save();
+    const invalid = await suiteCommand([...args, '--agent', 'codex'],
+      operatorInvestigation(env));
+    assert.equal(invalid.reason, 'OPERATOR_AGENT_UNCONFIGURED');
+    assert.equal(invalid.reporting, undefined);
+  });
+
+test('recovery availability is independent; other requests still require readiness',
+  async t => {
+    const h = await setup(t);
+    const env = { NIBFIN_E2E_OPERATOR: 'authorized',
+      NIBFIN_E2E_OPERATOR_CONFIG: h.path };
+    const stateDir = join(h.config.suiteRoot, 'available');
+    const base = ['--suite', '--run-id', 'available', '--state-dir', stateDir];
+    assert.equal(suiteExitCode(await suiteCommand([...base,
+      '--phase', 'provision'])), 0);
+    let calls = 0;
+    const command = async (file, args) => {
+      calls++;
+      assert.deepEqual(await readdir(stateDir), ['simulated-session.json']);
+      if (args.includes('--help')) return { stdout: [
+        '--strict-config', '--ignore-user-config', '--ignore-rules',
+        '--ephemeral', '--output-schema',
+      ].join(' ') };
+      await writeFile(args[args.indexOf('--output-last-message') + 1],
+        JSON.stringify({ ready: true }));
+    };
+    const report = await suiteCommand([...base, '--phase', 'cleanup', '--resume',
+      '--agent', 'codex'], operatorInvestigation(env, { command }));
+    assert.equal(suiteExitCode(report), 0);
+    assert.deepEqual(report.reporting,
+      { state: 'available', reason: 'OPERATOR_READY' });
+    assert.equal(report.investigation.reason, 'REQUEST_PASSED');
+    assert.equal(calls, 2);
+    await rm(h.config.codexExecutable);
+    for (const options of [[], ['--phase', 'cleanup'],
+      ['--phase', 'install', '--resume']]) {
+      const refused = await suiteCommand([...base, ...options, '--agent', 'codex'],
+        operatorInvestigation(env));
+      assert.equal(refused.reason, 'OPERATOR_AGENT_UNAVAILABLE');
+      assert.equal(refused.reporting, undefined);
+    }
+    const outside = await suiteCommand(['--suite', '--run-id', 'outside',
+      '--state-dir', join(h.root, 'outside'), '--phase', 'cleanup', '--resume',
+      '--agent', 'codex'], operatorInvestigation(env));
+    assert.equal(outside.reason, 'SUITE_INVALID_REQUEST');
+    assert.equal(outside.reporting, undefined);
+  });

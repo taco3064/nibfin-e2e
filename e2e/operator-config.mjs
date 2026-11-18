@@ -28,6 +28,23 @@ export async function privatePath(path, directory = false) {
 }
 
 export async function operatorConfiguration(path, agent = 'codex') {
+  const config = await operatorBoundaries(path, agent);
+  await operatorAvailability(config);
+  return config;
+}
+
+async function optionalPrivatePath(path, directory = false) {
+  try { await privatePath(path, directory); }
+  catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    if (typeof path !== 'string' || !isAbsolute(path) || resolve(path) !== path) {
+      throw new Error('OPERATOR_PATH_UNSAFE');
+    }
+    await privatePath(dirname(path), true);
+  }
+}
+
+export async function operatorBoundaries(path, agent = 'codex') {
   if (!['codex', 'claude'].includes(agent)) {
     throw new Error('OPERATOR_AGENT_UNSUPPORTED');
   }
@@ -49,12 +66,11 @@ export async function operatorConfiguration(path, agent = 'codex') {
   }
   const configuration = defectConfiguration(value.configuration);
   const privateRoots = ['stateDir', 'scratchRoot', 'suiteRoot'];
-  if (agent === 'codex') privateRoots.push('codexHome');
-  else {
-    try { await privatePath(value.claudeCredentialFile); }
-    catch { throw new Error('OPERATOR_AGENT_AUTHENTICATION'); }
-  }
   for (const name of privateRoots) await privatePath(value[name], true);
+  if (agent === 'codex') {
+    await optionalPrivatePath(value.codexHome, true);
+    privateRoots.push('codexHome');
+  } else await optionalPrivatePath(value.claudeCredentialFile);
   // Missing publication authentication must not prevent read-only modeling.
   const credential = value.credentialFile;
   if (typeof credential !== 'string' || !isAbsolute(credential) ||
@@ -80,23 +96,7 @@ export async function operatorConfiguration(path, agent = 'codex') {
   if (typeof executable !== 'string' || !isAbsolute(executable)) {
     throw new Error('OPERATOR_EXECUTABLE');
   }
-  let canonical;
-  try { canonical = await realpath(executable); }
-  catch { throw new Error('OPERATOR_AGENT_UNAVAILABLE'); }
-  if (canonical !== executable) throw new Error('OPERATOR_EXECUTABLE');
-  const tool = await lstat(executable);
-  if (!tool.isFile() || ![0, process.getuid()].includes(tool.uid) ||
-      tool.mode & 0o022 || !(tool.mode & 0o111)) {
-    throw new Error('OPERATOR_EXECUTABLE');
-  }
-  for (let parent = dirname(executable); ; parent = dirname(parent)) {
-    const stat = await lstat(parent);
-    if (!stat.isDirectory() || ![0, process.getuid()].includes(stat.uid) ||
-        (stat.mode & 0o022) && !(stat.mode & 0o1000)) {
-      throw new Error('OPERATOR_EXECUTABLE');
-    }
-    if (dirname(parent) === parent) break;
-  }
+  await validateExecutable(executable, true);
   // No inherited repository/project configuration discovery in scratch parents.
   for (let parent = value.scratchRoot; ; parent = dirname(parent)) {
     for (const name of ['.git', '.codex/config.toml', 'AGENTS.md',
@@ -136,4 +136,41 @@ export async function rejectManagedProvider(agent) {
     catch (error) { if (error.code === 'ENOENT') continue; throw error; }
     throw new Error('OPERATOR_MODEL_SYSTEM_CONFIGURATION');
   }
+}
+
+async function validateExecutable(executable, allowMissing = false) {
+  if (resolve(executable) !== executable) {
+    throw new Error('OPERATOR_EXECUTABLE');
+  }
+  for (let parent = dirname(executable); ; parent = dirname(parent)) {
+    const stat = await lstat(parent);
+    if (!stat.isDirectory() || ![0, process.getuid()].includes(stat.uid) ||
+        (stat.mode & 0o022) && !(stat.mode & 0o1000)) {
+      throw new Error('OPERATOR_EXECUTABLE');
+    }
+    if (dirname(parent) === parent) break;
+  }
+  let canonical;
+  try { canonical = await realpath(executable); }
+  catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    if (allowMissing) return;
+    throw new Error('OPERATOR_AGENT_UNAVAILABLE');
+  }
+  if (canonical !== executable) throw new Error('OPERATOR_EXECUTABLE');
+  const tool = await lstat(executable);
+  if (!tool.isFile() || ![0, process.getuid()].includes(tool.uid) ||
+      tool.mode & 0o022 || !(tool.mode & 0o111)) {
+    throw new Error('OPERATOR_EXECUTABLE');
+  }
+
+}
+
+export async function operatorAvailability(config) {
+  if (config.agent === 'codex') await privatePath(config.codexHome, true);
+  else {
+    try { await privatePath(config.claudeCredentialFile); }
+    catch { throw new Error('OPERATOR_AGENT_AUTHENTICATION'); }
+  }
+  await validateExecutable(config[`${config.agent}Executable`]);
 }

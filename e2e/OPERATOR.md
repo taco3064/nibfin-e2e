@@ -160,6 +160,17 @@ Legacy programmatic callers that omit the mode still require direct-wake
 reconciliation; missing `wake` never silently selects event routing.
 
 Preflight setup failures prevent suite execution and return failure themselves.
+The sole readiness exception is `--suite --phase cleanup --resume`: explicit
+Agent selection, trusted configuration and authorized suite paths are still
+validated before restoring the existing session. Provider operability and
+authenticated readiness run only after normal cleanup and session closure.
+The independent `reporting` result uses `state: "available"` or `"unavailable"`
+and bounded reason codes. It never changes cleanup phases, pending resources,
+reason or exit status. Passing cleanup still reports investigation as
+`not-needed` / `REQUEST_PASSED`, even when reporting is unavailable. Failed or
+unresolved cleanup remains non-passing; unavailable reporting cannot authorize
+model invocation, assessment or publication. Other requests retain startup
+readiness. Unknown reporting-process termination retains its recovery scratch.
 Later failures in acquisition, model output, assessment, credential identity,
 metadata read-back or cleanup preserve the original test outcome and exit status.
 Public results use bounded reason codes and never include raw private diagnostics.
