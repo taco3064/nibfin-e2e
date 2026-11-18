@@ -33,6 +33,18 @@ const isolation = (id, group, title, module) => ({
 });
 const declarations = [
   ...wake,
+  {
+    id: 'dashboard.integration', group: 'dashboard',
+    title: 'Controlled actual Core and CLI Dashboard regression',
+    timeoutMs: 180000,
+    module: new URL('./scenarios/dashboard/contract.mjs', import.meta.url).href,
+  },
+  {
+    id: 'dashboard.browser', group: 'dashboard',
+    title: 'Packaged Dashboard browser regression (hosted browser required)',
+    timeoutMs: 180000,
+    module: new URL('./scenarios/dashboard/browser.mjs', import.meta.url).href,
+  },
   isolation('delivery.claude.fixture', 'claude-delivery',
     'Controlled Claude component delivery through simulated protected closure',
     'claude-delivery'),
@@ -104,6 +116,8 @@ const declarations = [
 
 // Actual worker inputs: protected stubs and local correlation fixtures need none.
 const inputs = {
+  'dashboard.integration': ['core', 'cli'],
+  'dashboard.browser': ['core', 'cli'],
   'delivery.claude.fixture': ['core-source'],
   'managed-wake.contract': ['core-source', 'cli'],
   'pressure.fixture': ['core-source'],

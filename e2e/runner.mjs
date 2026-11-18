@@ -4,6 +4,8 @@ import { withPreparedSources } from './sources.mjs';
 import { select } from './registry.mjs';
 import { execute } from './execution.mjs';
 import { report, result } from './schema.mjs';
+import { mkdir } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 
 export async function run(entries, groups = [], options = {}) {
   const selected = select(entries, groups);
@@ -31,6 +33,12 @@ export async function run(entries, groups = [], options = {}) {
 // preparation, retain a set with withPreparedSources and pass its sources to run.
 export async function runPrepared(entries, groups = [], options = {}) {
   const selected = select(entries, groups);
+  if (selected.some(entry => entry.group === 'dashboard')) {
+    const tempRoot = fileURLToPath(new URL('./.dashboard-work/', import.meta.url));
+    await mkdir(tempRoot, { recursive: true });
+    options = { ...options, tempRoot,
+      sourceOptions: { ...options.sourceOptions, tempRoot } };
+  }
   if (!selected.some(scenario => !scenario.policyReason)) {
     return { ...await run(entries, groups, options), sources: [] };
   }

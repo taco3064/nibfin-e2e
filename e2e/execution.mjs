@@ -4,11 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { result } from './schema.mjs';
 import { sourceTerminationUnknown } from './source-process.mjs';
-import {
-  invokeNative, nativeFailure,
-} from './scenarios/cli-onboarding/native-command.mjs';
-
-import { invokeManagedWake } from './scenarios/managed-wake/native.mjs';
+import { nativeFailure } from './scenarios/cli-onboarding/native-command.mjs';
+import { nativeDispatch } from './native-dispatch.mjs';
 
 function executeWorker(scenario, tempDir, diagnostic, sources, env) {
   return new Promise(resolve => {
@@ -21,9 +18,6 @@ function executeWorker(scenario, tempDir, diagnostic, sources, env) {
     const abort = new AbortController();
     let native;
     let nativeTerminationError;
-    const nativeModule = new URL(
-      './scenarios/cli-onboarding/contract.mjs', import.meta.url,
-    ).href;
     const settle = async fields => {
       if (settled) return;
       settled = true;
@@ -45,26 +39,21 @@ function executeWorker(scenario, tempDir, diagnostic, sources, env) {
       });
     }
     worker.on('message', fields => {
-      const managed = fields?.type === 'managed-wake-native';
-      if (fields?.type === 'cli-onboarding-native' || managed) {
-        const module = managed ? new URL(
-          './scenarios/managed-wake/contract.mjs', import.meta.url,
-        ).href : nativeModule;
-        const response = managed ? 'managed-wake-result' : 'cli-onboarding-result';
-        if (settled || native || scenario.module !== module) {
+      const request = nativeDispatch(fields);
+      if (request) {
+        if (settled || native || scenario.module !== request.module) {
           void settle(['failing', 'INVALID_NATIVE_REQUEST', 'Invalid native request']);
           return;
         }
         // The command is parent-owned and has no worker-controlled parameters.
-        const invoke = managed ? invokeManagedWake : invokeNative;
-        native = invoke(tempDir, abort.signal, sources?.core).then(commandResult => {
+        native = request.invoke(tempDir, abort.signal, sources).then(commandResult => {
           if (!settled) worker.postMessage({
-            type: response, result: commandResult,
+            type: request.response, result: commandResult,
           });
         }, error => {
           if (sourceTerminationUnknown(error)) nativeTerminationError = error;
           if (!settled) worker.postMessage({
-            type: response,
+            type: request.response,
             error: nativeFailure(error),
             terminationUnknown: sourceTerminationUnknown(error),
           });

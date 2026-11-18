@@ -5,6 +5,8 @@ GitHub delivery or releases. The `runner` group exercises actual current-main
 CLI commands with controlled inputs; see [Runner scenarios](e2e/RUNNERS.md).
 The [CLI onboarding contract](e2e/scenarios/cli-onboarding/README.md) uses
 synthetic provider observations and does not establish live coverage.
+See [controlled Dashboard coverage](e2e/scenarios/dashboard/README.md) for the
+registered Core/CLI and packaged browser cases and their evidence limits.
 Fixtures under `e2e/test/fixtures/` remain framework unit tests only.
 
 Use Node 24 or later:
