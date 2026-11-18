@@ -1,3 +1,4 @@
+import { evidenceReason } from './issue-context.mjs';
 import { failureObservations, investigationResult } from './defect-observations.mjs';
 import { withScopeSource } from './defect-source.mjs';
 
@@ -29,8 +30,9 @@ export async function investigateFailure(report, capabilities) {
       try {
         findings = await capabilities.model({ skill: source.skill, revision,
           symptoms: failureObservations(report) });
-      } catch {
-        return investigationResult('unresolved', 'MODEL_INVOCATION_UNRESOLVED',
+      } catch (error) {
+        return investigationResult('unresolved',
+          evidenceReason(error) ?? 'MODEL_INVOCATION_UNRESOLVED',
           { coreRevision: revision });
       }
       const publications = [];

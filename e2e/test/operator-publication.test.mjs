@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { defectPublisher } from '../defect-publisher.mjs';
@@ -95,3 +95,47 @@ test('event mode retains unknown-create intent rather than publishing twice', as
   assert.equal((await h.publish(finding, evidence, 'controlled')).reason,
     'CREATE_EFFECT_UNRESOLVED');
 });
+
+test('incomplete required lookup prevents creation with a safe specific reason',
+  async t => {
+    const h = await harness(t);
+    h.github.issues = async () => ({ complete: false, issues: [] });
+    const result = await h.publish(finding, evidence, 'controlled');
+    assert.equal(result.reason, 'OPERATOR_ISSUES_INCOMPLETE');
+    assert.equal(h.creates(), 0);
+  });
+
+for (const message of ['OPERATOR_ASSESSMENT_LIMIT', 'private token and URL']) {
+  test(`assessment exceptions remain safe: ${message}`, async t => {
+    const h = await harness(t);
+    const publish = await defectPublisher({ ...h.options,
+      assess: async () => { throw new Error(message); } });
+    const result = await publish(finding, evidence, 'controlled');
+    assert.equal(result.reason, message === 'OPERATOR_ASSESSMENT_LIMIT' ?
+      message : 'PUBLICATION_UNRESOLVED');
+    assert.equal(h.creates(), 0);
+  });
+}
+
+test('existing null body is journaled exactly and changed read-back is rejected',
+  async t => {
+    const h = await harness(t);
+    await h.publish(finding, evidence, 'controlled');
+    h.issues[0].body = null;
+    // Use a fresh inventory to associate pre-existing work without rewriting it.
+    const options = { ...h.options, stateDir: join(h.options.stateDir, 'existing'),
+      assess: async () => ({ publicSafe: true, english: true, codeBacked: true,
+        key: defectKey(finding), duplicate: 'existing', number: 4,
+        existingId: 3, existingTitle: h.issues[0].title, existingBody: null }) };
+    const publish = await defectPublisher(options);
+    const result = await publish(finding, evidence, 'controlled');
+    assert.equal(result.state, 'associated');
+    const journal = JSON.parse(await readFile(
+      join(options.stateDir, 'defect-publication.json'), 'utf8'));
+    assert.equal(journal.resources[0].content.body, null);
+    assert.equal(h.issues[0].body, null);
+    h.github.read = async () => ({ ...h.issues[0], body: '' });
+    assert.equal((await publish(finding, evidence, 'controlled')).reason,
+      'ISSUE_READBACK_CONFLICT');
+    assert.equal(h.creates(), 1);
+  });

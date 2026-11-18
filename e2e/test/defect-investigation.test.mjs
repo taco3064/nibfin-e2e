@@ -342,3 +342,20 @@ test('skill-loading failure records acquired revision without private errors',
     assert.equal(result.coreRevision, revision);
     assert(!JSON.stringify(result).includes('private'));
   });
+
+for (const reason of ['OPERATOR_EVIDENCE_LIMIT', 'OPERATOR_ISSUES_INCOMPLETE',
+  'OPERATOR_INPUT_LIMIT', 'private diagnostics https://secret.example/token']) {
+  test(`read failures preserve only recognized public reasons: ${reason}`, async () => {
+    const model = scopeModel({
+      observe: async () => { throw new Error(reason); },
+      approvePublic: async () => true,
+      invoke: async input => input.read({ kind: 'issues', target: 'owner/source' }),
+    });
+    const result = await investigateFailure(report, { model,
+      scopeSource: async callback => callback({ skill: 'Official Scope',
+        revision: 'a'.repeat(40) }) });
+    assert.equal(result.reason, reason.startsWith('OPERATOR_') ? reason :
+      'MODEL_INVOCATION_UNRESOLVED');
+    assert.equal(suiteExitCode({ ...report, investigation: result }), 1);
+  });
+}

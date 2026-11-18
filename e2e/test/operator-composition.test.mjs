@@ -62,9 +62,13 @@ function transport() {
         labels: [{ name: 'scope' }], id: 3, number: 4, node_id: 'ISSUE_4',
         state: 'open', url: 'https://api.github.com/repos/owner/repo/issues/4',
         html_url: 'https://github.com/owner/repo/issues/4' });
-      result = issues[0];
-    } else if (url.endsWith('/issues/4')) result = issues[0];
-    else if (url.includes('/issues?')) result = issues;
+      result = issues.at(-1);
+    } else if (url.endsWith('/issues/4')) {
+      result = issues.find(row => row.number === 4);
+    } else if (url.includes('/issues?')) {
+      const page = Number(new URL(url).searchParams.get('page'));
+      result = issues.slice((page - 1) * 100, page * 100);
+    }
     else throw new Error('unexpected endpoint');
     return new Response(JSON.stringify(result));
   };
@@ -159,13 +163,14 @@ test('fresh controlled model/assessment compose event publication after evidence
     assert(!journal.includes('ghp_controlled'));
   });
 
-test('public evidence rejects non-allowlisted paths and oversized complete Issues',
+test('public evidence rejects non-allowlisted paths and oversized inventories',
   async t => {
     const h = await setup(t);
     const network = transport();
     const evidence = operatorEvidence(h.config, network.request);
     await assert.rejects(evidence.observe({ kind: 'source', target: '/etc/passwd' }));
-    network.issues.push({ body: 'x'.repeat(16001) });
+    network.issues.push({ id: 1, number: 1, state: 'closed',
+      title: 'x'.repeat(16001), body: 'Full content' });
     await assert.rejects(evidence.observe({ kind: 'issues', target: 'owner/repo' }),
       /EVIDENCE_LIMIT/);
     await chmod(h.path, 0o644);
@@ -202,4 +207,63 @@ test('invalid operator setup leaves suite execution available without compositio
       NIBFIN_E2E_OPERATOR_CONFIG: '/nonexistent/private/config.json' });
     await capabilities.prepare({ stateDir: '/nonexistent/session' });
     await assert.rejects(capabilities.resolve(), /SETUP_UNAVAILABLE/);
+  });
+
+test('large metadata is omitted; full bodies across batches find unmarked work',
+  async t => {
+    const h = await setup(t);
+    const network = transport();
+    for (let index = 0; index < 104; index++) {
+      network.issues.push({ id: 100 + index, number: 100 + index,
+        title: `Old work ${index}`, state: index % 2 ? 'open' : 'closed',
+        body: index === 0 ? null : 'Full semantic evidence. '.repeat(110),
+        irrelevant: 'API metadata'.repeat(500) });
+    }
+    const existing = { id: 3, number: 4, node_id: 'ISSUE_4', state: 'open',
+      title: 'Existing semantic work',
+      body: 'Same maintained change, no marker. '.repeat(600),
+      url: 'https://api.github.com/repos/owner/repo/issues/4',
+      html_url: 'https://github.com/owner/repo/issues/4',
+      assignees: [{ id: 2, login: 'owner' }], labels: [{ name: 'scope' }] };
+    network.issues.push(existing);
+    const inputs = [];
+    const command = async (file, args, options) => {
+      const input = JSON.parse(options.input.slice(options.input.indexOf('\n') + 1));
+      inputs.push(input);
+      assert(!options.input.includes('API metadata'));
+      let result;
+      if (!input.finding) {
+        const inventory = JSON.parse(input.evidence.at(-1).text);
+        assert.equal(inventory.complete, true);
+        assert.equal(inventory.inventoryOnly, true);
+        assert.equal(inventory.duplicateAbsenceEstablished, false);
+        assert.equal(inventory.issues.length, 105);
+        result = { findings: [proposal(input.evidence)] };
+      } else {
+        assert.equal(input.finding.evidence, undefined);
+        assert(Buffer.byteLength(options.input) <= 256000);
+        result = { publicSafe: true, english: true, codeBacked: true,
+          key: defectKey(input.finding), duplicate: 'none' };
+        if (input.issues.some(row => row.number === 4)) {
+          Object.assign(result, { duplicate: 'existing', number: 4,
+            existingId: existing.id, existingTitle: existing.title,
+            existingBody: existing.body });
+        }
+      }
+      await writeFile(args[args.indexOf('--output-last-message') + 1],
+        JSON.stringify(result));
+    };
+    const capabilities = await composeOperator(await operatorConfiguration(h.path),
+      { request: network.request, command });
+    const result = await capabilities.model({ skill: 'Controlled Scope',
+      revision: 'b'.repeat(40), symptoms: {} });
+    await writeFile(h.config.credentialFile, 'ghp_controlled', { mode: 0o600 });
+    const published = await capabilities.publish(result.findings[0], result.evidence,
+      'controlled');
+    assert.equal(published.state, 'associated');
+    assert(inputs.length > 2);
+    const assessed = inputs.slice(1).flatMap(input => input.issues);
+    assert.deepEqual(assessed.map(row => row.body), network.issues.map(row => row.body));
+    assert.equal(network.calls.filter(row => row.options.method === 'POST').length, 0);
+    assert.deepEqual(await readdir(h.config.scratchRoot), []);
   });
