@@ -286,3 +286,79 @@ Use `--phase provision|install|delivery|failure|cleanup` to select one phase and
 See [suite usage](e2e/SUITE.md) and [simulation recovery](e2e/SIMULATION.md).
 All GitHub and host effects in this command family are simulated; the harmless
 merged JavaScript fixtures execute locally. These results are controlled evidence.
+
+### Automatic suite failure investigation
+
+Full and selected-phase suite requests now include an `investigation` result
+separate from the test outcome, cleanup and process exit status. After session
+settlement, a non-passing request automatically attempts investigation. Passing
+selected phases do not investigate unrequested later phases. Raw diagnostics,
+resource identifiers and provider replies are not sent to the model.
+
+The ordinary controlled CLI has no model, GitHub publisher or installed wake
+credentials. It reports `AUTHORIZED_MODEL_UNAVAILABLE` on a failing request.
+This is an explicit unavailable prerequisite, not a confirmed defect, successful
+publication, or live E2E claim. Non-suite commands retain their existing behavior.
+
+Owner-authorized programmatic composition can use
+`e2e/defect-composition.mjs`'s `failureInvestigation` and pass its result as the
+third argument of `command(args, entries, investigation)` or the second argument
+of `suiteCommand(args, investigation)`. No report field, persisted session, CLI
+option or repository instruction can load a provider or select a target.
+The composition supplies:
+
+- `configuration`: approved public repository names and numeric IDs in `targets`,
+  the approved assignee's numeric ID and login, and the `scope` label.
+- `model`: an authorized `invoke` facility with enforced read-only isolation,
+  private model authentication and cancellation support; `observe` reads current
+  owning source, relevant callers and open/closed Issues from an allowlist;
+  `approvePublic` independently approves each observation for disclosure.
+  The E2E adapter permits at most 40 reads, 16 KB per observation, a 64 KB model
+  response and a bounded invocation timeout. It supplies Scope in Plan mode.
+- `publication`: a private GitHub token and optional trusted fetch transport.
+  The token is held only by the publisher adapter. No model tool receives it.
+- `assess`: an independent trusted assessment of code grounding, English content,
+  disclosure, semantic identity, necessary change and refreshed duplicate Issues.
+  It returns `publicSafe`, `english`, `codeBacked`, the verified semantic `key`
+  and `duplicate` (`none`, `existing`, `addressed` or `recurrence`). Reusing
+  existing work additionally binds its number, `existingId`, `existingTitle`
+  and `existingBody`; recurrence requires `newMaintainedChange`. This assessment
+  cannot be supplied by the investigating model or the run report.
+- `stateDir` outside the model's `modelRoot`, owned by protected composition.
+  Both directories must be disjoint. Keep the publication journal across runs.
+- Optional `wake` capabilities bound to the installed Core's authorized wake
+  route: `requestWake` and `reconcileWake`. Both receive only verified Issue
+  locators. Reconciliation uses Core's native dispatch journal and readback,
+  including its actual `scheduled`/`denied`/`skipped`/`pending` disposition.
+  Positive journal absence must be explicit; an HTTP acknowledgement is never
+  evidence of dispatch. Core retains all adoption, approval, pause, dependency,
+  assignee and Runner admission checks. Missing wake capability remains visible.
+
+Investigation independently acquires official Core main using the existing
+credential-free bounded source process, reads its maintained Scope Skill and
+records that observed revision. It does not replace installed Core or relabel
+controlled recovery sources as official acquisitions. Acquisition and invocation
+failures leave the original suite result intact. Source checkouts are removed
+when process termination is known; unknown termination retains recovery material.
+
+Findings require a behavior identifier, owning source, semantic `changeIdentity`,
+necessary change, evidence IDs for source/callers/Issues, duplicate assessment,
+and actionable English title/body. Publication independently validates these
+fields and the approved repository, assignee and label before any write. A
+semantic tuple of repository, owning source, behavior and change identity keys
+reconciliation across runs; run IDs, timestamps and diagnostic wording do not.
+A confirmed recurrence needing a different maintained change has its own verified
+semantic change identity. Addressed duplicates do not create or reopen work.
+
+The durable journal persists intent before create and wake operations. Repeated
+and concurrent runs reuse verified Issues. Lost create replies reconcile using a
+stable Issue marker; incomplete observations, conflicting matches, changed
+protected content and unknown effects remain pending. Unknown creates are never
+blindly retried. Closed Issues are never reopened or automatically rewritten.
+Unknown wake effects reconcile through Core before any further dispatch.
+Locks are exclusive and are never retired by age. Keep journals and unresolved
+locks until protected recovery establishes ownership and external effects; they
+are operational recovery resources, not Candidate artifacts.
+
+Controlled tests exercise these boundaries with model, GitHub and wake doubles.
+They establish no live provider, host installation, release or platform support.

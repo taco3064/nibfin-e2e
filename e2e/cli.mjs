@@ -5,9 +5,9 @@ import { scenarios } from './registry.mjs';
 import { run, runPrepared } from './runner.mjs';
 import { exitCode, report } from './schema.mjs';
 
-export async function command(args, entries = scenarios) {
+export async function command(args, entries = scenarios, investigation) {
   if (args.some(arg => ['--suite', '--run-id', '--state-dir', '--phase', '--resume']
-    .includes(arg))) return suiteCommand(args);
+    .includes(arg))) return suiteCommand(args, investigation);
   try {
     const groups = [];
     for (let index = 0; index < args.length; index++) {
