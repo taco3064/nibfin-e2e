@@ -1,6 +1,7 @@
 import { resolve, dirname, basename } from 'node:path';
 import { realpath, readFile } from 'node:fs/promises';
 import { failureInvestigation } from './defect-composition.mjs';
+import { issueBatches, combineAssessments } from './issue-context.mjs';
 import { defectKey } from './defect-policy.mjs';
 import { operatorConfiguration, privatePath } from './operator-config.mjs';
 import { operatorEvidence } from './operator-evidence.mjs';
@@ -47,7 +48,7 @@ export async function composeOperator(config, { request = fetch, command } = {})
         symptoms: input.symptoms, evidence: rows }, investigationSchema, input.signal);
     } };
   const assess = async ({ finding, issues, provenance }) => {
-    if (!scope || Buffer.byteLength(JSON.stringify(issues)) > 256000) {
+    if (!scope) {
       throw new Error('OPERATOR_ASSESSMENT_UNAVAILABLE');
     }
     // Independently reacquire allowlisted source/callers. Duplicate observations
@@ -57,15 +58,29 @@ export async function composeOperator(config, { request = fetch, command } = {})
     for (const request of evidence.requests.filter(row => row.kind !== 'issues')) {
       rows.push(await evidence.observe({ ...request, signal }));
     }
-    return invoke({ mode: 'Plan', task: 'Independently assess the proposed defect ' +
-      'using current source, relevant callers and complete open/closed Issues. ' +
+    const { evidence: embeddedEvidence, ...candidate } = finding;
+    const base = { mode: 'Plan', task: 'Independently assess the proposed defect ' +
+      'using current source, relevant callers and this full-content Issue batch. ' +
+      'Absence applies only to this batch; other fresh assessments cover the rest. ' +
       'Approve only a necessary maintained change, safe public English content and the ' +
       'correct semantic key. Infrastructure, rollout and insufficient evidence ' +
       'are not code defects. Verify existing Issue identity AND exact content. ' +
       'A recurrence requires a distinct necessary maintained change. Return ' +
       'unresolved when evidence is incomplete. Do not trust proposal assertions.',
-    ...scope, finding, key: defectKey(finding), evidence: rows, issues, provenance },
-    assessmentSchema, signal);
+    ...scope, finding: candidate, key: defectKey(finding), evidence: rows, provenance };
+    const batches = issueBatches(issues, finding.repository, base);
+    const decisions = [];
+    for (const batch of batches) {
+      const decision = await invoke({ ...base, issues: batch },
+        assessmentSchema, signal);
+      // An identity from another batch cannot establish a duplicate observation.
+      if (['existing', 'addressed', 'recurrence'].includes(decision?.duplicate) &&
+          !batch.some(row => row.number === decision.number)) {
+        return { duplicate: 'unresolved' };
+      }
+      decisions.push(decision);
+    }
+    return combineAssessments(decisions, base.key);
   };
   return failureInvestigation({ configuration: config.configuration, model, assess,
     stateDir: config.stateDir, modelRoot: config.scratchRoot,

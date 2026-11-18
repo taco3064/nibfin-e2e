@@ -1,3 +1,4 @@
+import { evidenceReason, hasIssueBody } from './issue-context.mjs';
 import { fixtureInventory } from './fixture-inventory.mjs';
 import {
   defectConfiguration, defectKey, defectMarker, issueMatches, validateFinding,
@@ -41,7 +42,7 @@ export async function defectPublisher({ configuration, stateDir, modelRoot,
         }
         const observed = await github.issues(repository);
         if (observed?.complete !== true || !Array.isArray(observed.issues)) {
-          return pending('DUPLICATES_UNVERIFIED');
+          return pending('OPERATOR_ISSUES_INCOMPLETE');
         }
         const decision = await assess({ finding, issues: observed.issues,
           provenance });
@@ -63,7 +64,7 @@ export async function defectPublisher({ configuration, stateDir, modelRoot,
             decision.existingId !== existing.id ||
             decision.existingTitle !== existing.title ||
             decision.existingBody !== existing.body ||
-            typeof existing.body !== 'string' || existing.body.length > 16000)) {
+            !hasIssueBody(existing))) {
           return pending('EXISTING_CONTENT_UNVERIFIED');
         }
         const content = { title: finding.title,
@@ -155,7 +156,7 @@ export async function defectPublisher({ configuration, stateDir, modelRoot,
     } catch (error) {
       // The durable intent remains. Ownership is not retired by time or force.
       return pending(error?.code === 'EEXIST' ? 'PUBLICATION_OWNED' :
-        'PUBLICATION_UNRESOLVED');
+        evidenceReason(error) ?? 'PUBLICATION_UNRESOLVED');
     }
   };
 }

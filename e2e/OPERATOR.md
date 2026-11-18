@@ -136,3 +136,24 @@ protected recovery proves settlement. Disposable model/authentication copies and
 Scope source checkouts are removed only when their owning processes have stopped;
 unknown process termination retains recovery material. Investigate and retire
 that process before removing retained files. No extra publication journal exists.
+
+Issue history is enumerated across open and closed Issues using the existing
+paginated GitHub reader; pull requests are excluded. Investigation receives an
+explicitly complete compact inventory (repository, identity, title and state),
+not API metadata or a claim that titles establish duplicate absence. The existing
+16,000-byte evidence-row and 512,000-byte model-input limits still apply.
+
+Independent assessment reacquires source and callers, removes embedded proposal
+evidence, and reviews every Issue's full title and body in sequential fresh
+conversations. Each batch includes its surrounding input within 256,000 UTF-8
+bytes. Absence requires successful assessments of every batch; unresolved batches
+or contradictory duplicate identities prevent creation. The existing assessment
+timeout covers the entire sequence. A single body that cannot fit fails safely.
+Publisher reconciliation continues to use full authoritative records under its
+existing lock, exact existing content, durable create intent and final read-back.
+
+Recognized evidence failures retain safe code-owned reasons, including
+`OPERATOR_EVIDENCE_LIMIT`, `OPERATOR_INPUT_LIMIT`, `OPERATOR_ASSESSMENT_LIMIT`,
+`OPERATOR_ISSUES_INCOMPLETE` and `OPERATOR_ISSUE_CONTENT_UNAVAILABLE`. Unknown
+exceptions expose only the existing generic failure reason. These failures never
+establish successful publication or change the original suite exit status.

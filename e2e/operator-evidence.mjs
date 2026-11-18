@@ -1,4 +1,5 @@
 import { defectGitHub } from './defect-github.mjs';
+import { issueContext } from './issue-context.mjs';
 import { operatorJson } from './operator-http.mjs';
 
 export function operatorEvidence(config, request = fetch) {
@@ -21,7 +22,9 @@ export function operatorEvidence(config, request = fetch) {
           !await github.validate(target)) throw new Error('OPERATOR_TARGET');
       const result = await github.issues(target);
       if (!result.complete) throw new Error('OPERATOR_ISSUES_INCOMPLETE');
-      text = JSON.stringify(result.issues);
+      text = JSON.stringify({ repository: target, complete: true,
+        inventoryOnly: true, duplicateAbsenceEstablished: false,
+        issues: result.issues.map(row => issueContext(row, target)) });
     } else {
       const route = routes.find(row => row.kind === kind && row.target === target);
       if (!route) throw new Error('OPERATOR_EVIDENCE_DENIED');
