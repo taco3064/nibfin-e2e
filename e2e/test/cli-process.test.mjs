@@ -34,7 +34,7 @@ test('worker timeout stops native descendants before removing their files', asyn
     ].join('\n');
     const script = [
       `#!${process.execPath}`,
-      "const { spawn } = require('node:child_process');",
+      "import { spawn } from 'node:child_process';",
       `spawn(process.execPath, ['-e', ${JSON.stringify(descendant)}],`,
       "  {stdio:'inherit'});",
       'setInterval(() => {}, 1000);',

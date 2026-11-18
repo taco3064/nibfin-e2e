@@ -16,6 +16,9 @@ export function sourceEnvironment(root) {
   return {
     PATH: process.env.PATH ?? '/usr/bin:/bin', LANG: 'C.UTF-8',
     HOME: root, TMPDIR: root, TMP: root, TEMP: root,
+    GOCACHE: `${root}/go-cache`, GOPATH: `${root}/go-path`,
+    npm_config_cache: `${root}/npm-cache`, XDG_CACHE_HOME: `${root}/cache`,
+    PLAYWRIGHT_BROWSERS_PATH: `${root}/browsers`,
     GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
     GIT_TERMINAL_PROMPT: '0', GIT_NO_REPLACE_OBJECTS: '1',
     GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'core.hooksPath',
