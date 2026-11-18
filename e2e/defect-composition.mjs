@@ -7,12 +7,13 @@ import { defectWake } from './defect-wake.mjs';
 // capabilities here. Ordinary CLI composition intentionally reports unavailable
 // when these capabilities have not been installed and authorized.
 export async function failureInvestigation({ configuration, model, publication,
-  wake, stateDir, modelRoot, assess }) {
+  wake, stateDir, modelRoot, assess, publicationMode }) {
   const invoke = scopeModel(model);
   if (!publication) return Object.freeze({ model: invoke });
   const github = defectGitHub({ ...publication, configuration });
-  const route = wake ? defectWake({ ...wake, configuration }) : null;
+  const route = wake && publicationMode !== 'issue-events' ?
+    defectWake({ ...wake, configuration }) : null;
   const publish = await defectPublisher({ configuration, stateDir, modelRoot,
-    assess, github, wake: route });
+    assess, github, wake: route, publicationMode });
   return Object.freeze({ model: invoke, publish });
 }

@@ -295,10 +295,14 @@ settlement, a non-passing request automatically attempts investigation. Passing
 selected phases do not investigate unrequested later phases. Raw diagnostics,
 resource identifiers and provider replies are not sent to the model.
 
-The ordinary controlled CLI has no model, GitHub publisher or installed wake
-credentials. It reports `AUTHORIZED_MODEL_UNAVAILABLE` on a failing request.
-This is an explicit unavailable prerequisite, not a confirmed defect, successful
-publication, or live E2E claim. Non-suite commands retain their existing behavior.
+The executable suite CLI supports an explicitly authorized operator setup; see
+[operator investigation setup](e2e/OPERATOR.md). Its reusable private configuration
+composes current public evidence, the installed Codex model and a fresh independent
+assessment, then publishes through the existing journal and GitHub adapter.
+Without opt-in, controlled requests report `AUTHORIZED_MODEL_UNAVAILABLE` on
+failure. Invalid operator setup reports `OPERATOR_CAPABILITY_UNAVAILABLE`.
+Neither result confirms a defect or publication. Non-suite commands retain their
+existing behavior and do not initialize operator capabilities.
 
 Owner-authorized programmatic composition can use
 `e2e/defect-composition.mjs`'s `failureInvestigation` and pass its result as the
@@ -326,6 +330,10 @@ The composition supplies:
   cannot be supplied by the investigating model or the run report.
 - `stateDir` outside the model's `modelRoot`, owned by protected composition.
   Both directories must be disjoint. Keep the publication journal across runs.
+- `publicationMode: 'issue-events'` explicitly completes publication after verified
+  Issue identity, content, metadata and browser URL read-back. It reports the route
+  without requesting or claiming Actions dispatch or Core admission. Closed work
+  remains closed. Omitting the mode retains legacy direct-wake behavior.
 - Optional `wake` capabilities bound to the installed Core's authorized wake
   route: `requestWake` and `reconcileWake`. Both receive only verified Issue
   locators. Reconciliation uses Core's native dispatch journal and readback,

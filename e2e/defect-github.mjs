@@ -2,19 +2,24 @@ import { positiveId, defectConfiguration } from './defect-policy.mjs';
 
 // This adapter has no fixture deletion or release operations. Its credential is
 // never returned, logged or included in the model's capability graph.
-export function defectGitHub({ token, configuration,
+export function defectGitHub({ token, configuration, publicRead = false,
   fetch: request = globalThis.fetch }) {
   const config = defectConfiguration(configuration);
-  if (typeof token !== 'string' || !token || typeof request !== 'function') {
+  if ((!publicRead && !(typeof token === 'string' && token) &&
+      typeof token !== 'function') || typeof request !== 'function') {
     throw new Error('DEFECT_TRANSPORT_CONFIGURATION');
   }
   async function call(method, repository, path = '', body) {
     if (!config.targets.some(row => row.repository === repository)) return null;
+    if (publicRead && method !== 'GET') return null;
     try {
+      const credential = publicRead ? null :
+        typeof token === 'function' ? await token() : token;
+      if (!publicRead && !credential) return null;
       const response = await request(
         `https://api.github.com/repos/${repository}${path}`, {
           method, redirect: 'error', signal: AbortSignal.timeout(30000),
-          headers: { Authorization: `Bearer ${token}`,
+          headers: { ...(credential ? { Authorization: `Bearer ${credential}` } : {}),
             Accept: 'application/vnd.github+json',
             'X-GitHub-Api-Version': '2022-11-28',
             ...(body ? { 'Content-Type': 'application/json' } : {}) },

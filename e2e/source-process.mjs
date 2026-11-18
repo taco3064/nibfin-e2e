@@ -15,11 +15,12 @@ export function sourceCommand(file, args, options = {}) {
     throw new Error('SOURCE_PROCESS_UNSUPPORTED: process-group ownership required');
   }
   const {
-    cwd, env, timeoutMs = 600000, limit = 4 * 1024 * 1024, signal: abort,
+    cwd, env, timeoutMs = 600000, limit = 4 * 1024 * 1024, signal: abort, input,
   } = options;
   return new Promise((resolve, reject) => {
     const child = spawn(file, args, {
-      cwd, env, detached: true, shell: false, stdio: ['ignore', 'pipe', 'pipe'],
+      cwd, env, detached: true, shell: false,
+      stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
     });
     const output = { stdout: [], stderr: [] };
     let size = 0;
@@ -43,6 +44,10 @@ export function sourceCommand(file, args, options = {}) {
       stop();
     }, timeoutMs);
     child.on('error', error => { failure ??= error; });
+    if (input !== undefined) {
+      child.stdin.on('error', error => { failure ??= error; stop(); });
+      child.stdin.end(input);
+    }
     for (const name of Object.keys(output)) {
       child[name].on('data', chunk => {
         size += chunk.length;

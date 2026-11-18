@@ -8,6 +8,12 @@ export async function investigateFailure(report, capabilities) {
   const passing = !report.reason && (phase === 'complete' ?
     report.outcome === 'passed' : report.phases?.[phase]?.state === 'passed');
   if (passing) return investigationResult('not-needed', 'REQUEST_PASSED');
+  if (capabilities?.resolve) {
+    try { capabilities = await capabilities.resolve(); }
+    catch {
+      return investigationResult('unavailable', 'OPERATOR_CAPABILITY_UNAVAILABLE');
+    }
+  }
   if (!capabilities?.model) {
     return investigationResult('unavailable', 'AUTHORIZED_MODEL_UNAVAILABLE');
   }
