@@ -1,3 +1,4 @@
+import { investigateFailure } from './defect-investigation.mjs';
 import { runSuite } from './runner.mjs';
 import { createSimulatedSuite } from './simulated-suite.mjs';
 import { suiteId, suitePhases, unobservedPhases } from './suite-result.mjs';
@@ -51,7 +52,7 @@ function failure(request, error) {
     outcome: 'non-passing', reason: code };
 }
 
-export async function suiteCommand(args) {
+export async function suiteCommand(args, investigation) {
   let request, session, result;
   try {
     request = parseSuiteArguments(args);
@@ -69,5 +70,6 @@ export async function suiteCommand(args) {
     try { await session?.close(); }
     catch (error) { result = failure(request, error); }
   }
+  result.investigation = await investigateFailure(result, investigation);
   return result;
 }
