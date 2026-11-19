@@ -101,7 +101,8 @@ export async function workerFixture(context, stage = 'deliver', binding = {},
             Memory: 4294967296, MemorySwap: 8589934592, NanoCpus: 2000000000,
             PidsLimit: 256, CapDrop: ['ALL'],
             SecurityOpt: ['no-new-privileges', 'apparmor=codex-security-container'],
-            Tmpfs: { '/tmp': 'rw,nosuid,nodev,size=2g,mode=1777' },
+            Tmpfs: Object.fromEntries(cmd.filter(arg => arg.startsWith('--tmpfs='))
+              .map(arg => arg.slice(8).split(/:(.*)/s).slice(0, 2))),
           }, Mounts: mounts, NetworkSettings: { Networks: { [egress.network]: {} } },
         };
         controls.mutate?.(container);
