@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { workerFixture, capturedMounts } from './claude-worker-fixture.mjs';
+import { workerFixture, capturedMounts, capturedTmpfs }
+  from './claude-worker-fixture.mjs';
 import { coreModule } from './isolation-common.mjs';
 
 export async function modelFixture(context, binding = {}) {
@@ -46,8 +47,7 @@ export async function modelFixture(context, binding = {}) {
             MemorySwap: 2147483648, NanoCpus: 1000000000, PidsLimit: 128,
             CapDrop: ['ALL'],
             SecurityOpt: ['no-new-privileges', 'apparmor=codex-security-container'],
-            Tmpfs: Object.fromEntries(cmd.filter(arg => arg.startsWith('--tmpfs='))
-              .map(arg => arg.slice(8).split(/:(.*)/s).slice(0, 2))) },
+            Tmpfs: capturedTmpfs(cmd) },
           Mounts: capturedMounts(cmd),
           NetworkSettings: { Networks: { [modelEgress.network]: {} } },
         };
