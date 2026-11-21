@@ -13,7 +13,7 @@ export async function modelFixture(context, binding = {}) {
   const f = await workerFixture(context, 'deliver', binding);
   try {
     const modelId = 'd'.repeat(64);
-    const key = 'sk-ant-' + 'synthetic'.repeat(8);
+    const key = 'sk-ant-oat01-' + 'synthetic'.repeat(8);
     const modelEgress = { ...f.egress, gatewayId: 'e'.repeat(64),
       network: f.egress.network.replace('work', 'model') };
     await writeFile(join(f.egress.directory, 'claude-model-proxy.mjs'),
@@ -72,7 +72,8 @@ export async function modelFixture(context, binding = {}) {
       if (cmd[0] === 'image') {
         const value = JSON.parse((await f.run(exe, args, options)).stdout);
         value[0].Config.Labels = {
-          'io.nibfin.claude-version': claudeModelComponent.cli.version };
+          'io.nibfin.claude-version': claudeModelComponent.cli.version,
+          'io.nibfin.claude-managed-settings': 'absent' };
         return reply(value);
       }
       if (cmd[0] === 'network' && cmd.at(-1) === modelEgress.network ||
