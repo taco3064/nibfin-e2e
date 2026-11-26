@@ -71,7 +71,11 @@ export const deliveryLifecycle: Scenario = lifecycle({
 
     // R3.15, R6.5: only the Writer writes the branch; the Validator and the Acceptor never push.
     const windows = await k.windows(s, exec, n, true);
-    const acts = (await k.obs.activity(exec, { ref: `refs/heads/${branch}` })).filter((a) => BRANCH_WRITES.has(a.activity_type));
+    // Every write to a branch derived from A, so a push to another of A's branches is seen too.
+    const allOfA = (await k.obs.activity(exec)).filter((a) => isIssueBranch(a.ref, n) && BRANCH_WRITES.has(a.activity_type));
+    const elsewhere = allOfA.filter((a) => a.ref !== `refs/heads/${branch}`);
+    c.check('R3.16', elsewhere.length === 0, `A's work was pushed to ${[...new Set(elsewhere.map((a) => a.ref))].join(', ')}, not only ${branch}`);
+    const acts = allOfA.filter((a) => a.ref === `refs/heads/${branch}`);
     const inside = (a: Activity, w: Window) => time(a.timestamp) >= w.start && time(a.timestamp) <= w.end;
     c.check('R3.15', acts.length > 0, `no push to ${branch} is recorded in the repository activity`);
     for (const a of acts) {
