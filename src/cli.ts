@@ -1,15 +1,16 @@
 import { parseArgs } from 'node:util';
 import { computeCoverage, crossCheck, loadMap, validateRegistry } from './coverage.ts';
-import { provisioning, scenarios } from './registry.ts';
+import { host, provisioning, scenarios } from './registry.ts';
 import { detectPlatform, run } from './run.ts';
 import { select } from './select.ts';
 import type { Selection } from './select.ts';
-import type { MapEntry, ProvisioningStep, Scenario } from './types.ts';
+import type { HostContext, MapEntry, ProvisioningStep, Scenario } from './types.ts';
 
 export interface CliDeps {
   loadMap(): { entries: MapEntry[]; errors: string[] };
   scenarios: Scenario[];
   steps: ProvisioningStep[];
+  host: HostContext;
   nodePlatform: string;
   stdout(text: string): void;
   stderr(text: string): void;
@@ -17,13 +18,12 @@ export interface CliDeps {
 }
 
 const COMMIT = /^[0-9a-f]{40}$/;
-const IMAGE = /^[^\s@]+@(sha256:[0-9a-f]{64})$/;
 
-export const USAGE = `usage: npm run e2e -- <selection> [--list | --uncovered | --gh-nibfin-commit <sha> --image <ref@sha256:digest>]
+export const USAGE = `usage: npm run e2e -- <selection> [--list | --uncovered | --gh-nibfin-commit <sha>]
   selection: --all, or one or more of --rule R<section>.<n> and --section <n> (repeatable, union)
   --list, --uncovered   report without running anything (default selection: --all)`;
 
-/** Runs the CLI and returns the exit code: 0 ok, 1 a scenario or the gate failed, 2 usage or validation error. */
+/** Runs the CLI and returns the exit code: 0 ok, 1 a scenario, a teardown or the gate failed, 2 usage or validation error. */
 export async function main(argv: string[], deps: CliDeps): Promise<number> {
   const print = (doc: unknown) => deps.stdout(JSON.stringify(doc, null, 2) + '\n');
   const fail = (kind: 'usage' | 'validation', messages: string[]) => {
@@ -46,7 +46,6 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
         list: { type: 'boolean' },
         uncovered: { type: 'boolean' },
         'gh-nibfin-commit': { type: 'string' },
-        image: { type: 'string' },
       },
     }));
   } catch (error) {
@@ -61,13 +60,11 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
   if (values.all && hasSelection) usage.push('use either --all or --rule/--section, not both');
   if (values.list && values.uncovered) usage.push('use either --list or --uncovered, not both');
   const commit = values['gh-nibfin-commit'];
-  const image = values.image;
   if (report) {
-    if (commit !== undefined || image !== undefined) usage.push('--gh-nibfin-commit and --image are only for execution');
+    if (commit !== undefined) usage.push('--gh-nibfin-commit is only for execution');
   } else {
     if (!values.all && !hasSelection) usage.push('execution needs --all or a --rule/--section selection');
     if (commit === undefined || !COMMIT.test(commit)) usage.push('--gh-nibfin-commit must be a full 40-hex commit sha');
-    if (image === undefined || !IMAGE.test(image)) usage.push('--image must be pinned by digest: <ref>@sha256:<64 hex>');
   }
   const platform = detectPlatform(deps.nodePlatform);
   if (!report && !platform) usage.push(`unsupported platform ${deps.nodePlatform}`);
@@ -98,17 +95,17 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
     return 0;
   }
 
-  const digest = IMAGE.exec(image as string)?.[1] as string;
   const result = await run({
     selection,
     selected,
     steps: deps.steps,
-    target: { ghNibfinCommit: commit as string, image: image as string, imageDigest: digest, platform: platform as NonNullable<typeof platform> },
+    target: { ghNibfinCommit: commit as string, platform: platform as NonNullable<typeof platform> },
+    host: deps.host,
     log: (m) => deps.stderr(m + '\n'),
     now: deps.now,
   });
   print(result);
-  const anyFailed = result.scenarios.some((s) => s.status === 'failed');
+  const anyFailed = [...result.scenarios, ...result.teardown].some((s) => s.status === 'failed');
   return anyFailed || result.gate?.passed === false ? 1 : 0;
 }
 
@@ -117,6 +114,7 @@ if (import.meta.main) {
     loadMap: () => loadMap(new URL('../coverage-map.json', import.meta.url)),
     scenarios,
     steps: provisioning,
+    host,
     nodePlatform: process.platform,
     stdout: (t) => process.stdout.write(t),
     stderr: (t) => process.stderr.write(t),

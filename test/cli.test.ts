@@ -1,19 +1,19 @@
 import { deepEqual, equal, match } from 'node:assert/strict';
 import { test } from 'node:test';
 import { main } from '../src/cli.ts';
-import type { MapEntry, Scenario } from '../src/types.ts';
-import { map, passed, scenario, scenarioA, scenarioB, scenarios } from './fixtures.ts';
+import type { MapEntry, ProvisioningStep, Scenario } from '../src/types.ts';
+import { fakeHostContext, map, passed, scenario, scenarioA, scenarioB, scenarios, step } from './fixtures.ts';
 
 const commit = ['--gh-nibfin-commit', 'c'.repeat(40)];
-const image = ['--image', 'ghcr.io/taco3064/nibfin@sha256:' + 'd'.repeat(64)];
 
-async function cli(argv: string[], opts: { entries?: MapEntry[]; scenarios?: Scenario[]; errors?: string[]; nodePlatform?: string } = {}) {
+async function cli(argv: string[], opts: { entries?: MapEntry[]; scenarios?: Scenario[]; steps?: ProvisioningStep[]; errors?: string[]; nodePlatform?: string } = {}) {
   let stdout = '';
   let stderr = '';
   const code = await main(argv, {
     loadMap: () => ({ entries: opts.entries ?? map, errors: opts.errors ?? [] }),
     scenarios: opts.scenarios ?? scenarios,
-    steps: [],
+    steps: opts.steps ?? [],
+    host: fakeHostContext,
     nodePlatform: opts.nodePlatform ?? 'linux',
     stdout: (t) => (stdout += t),
     stderr: (t) => (stderr += t),
@@ -27,10 +27,10 @@ test('usage errors exit 2 with one JSON document', async () => {
     [['--all', '--rule', 'R3.1', '--list'], /either --all or/],
     [['--list', '--uncovered'], /either --list or --uncovered/],
     [['--list', ...commit], /only for execution/],
-    [[...commit, ...image], /needs --all or/],
-    [['--all', ...image], /--gh-nibfin-commit must be/],
-    [['--all', '--gh-nibfin-commit', 'main', ...image], /--gh-nibfin-commit must be/],
-    [['--all', ...commit, '--image', 'ghcr.io/x:latest'], /--image must be pinned/],
+    [[...commit], /needs --all or/],
+    [['--all'], /--gh-nibfin-commit must be/],
+    [['--all', '--gh-nibfin-commit', 'main'], /--gh-nibfin-commit must be/],
+    [['--all', ...commit, '--image', 'ghcr.io/x@sha256:' + 'd'.repeat(64)], /Unknown option '--image'/],
     [['--list', '--rule', 'R9.9'], /not in the coverage map/],
     [['--list', '--section', '7'], /no rules/],
   ];
@@ -40,12 +40,12 @@ test('usage errors exit 2 with one JSON document', async () => {
     equal(r.json.error.kind, 'usage');
     match(r.json.error.messages.join('\n'), expected);
   }
-  match((await cli(['--all', ...commit, ...image], { nodePlatform: 'aix' })).json.error.messages[0], /unsupported platform/);
+  match((await cli(['--all', ...commit], { nodePlatform: 'aix' })).json.error.messages[0], /unsupported platform/);
 });
 
 test('validation errors exit 2 in every mode', async () => {
   const broken = { scenarios: [scenario('x', ['R5.14'], ['macos'], passed)] };
-  for (const argv of [['--list'], ['--uncovered'], ['--all', ...commit, ...image]]) {
+  for (const argv of [['--list'], ['--uncovered'], ['--all', ...commit]]) {
     const r = await cli(argv, broken);
     equal(r.code, 2);
     equal(r.json.error.kind, 'validation');
@@ -69,19 +69,30 @@ test('--list and --uncovered report without running', async () => {
 });
 
 test('execution exits 0 when selected scenarios pass and 1 when the gate fails', async () => {
-  const sel = await cli(['--rule', 'R3.1', ...commit, ...image]);
+  const sel = await cli(['--rule', 'R3.1', ...commit]);
   equal(sel.code, 0);
   deepEqual(sel.json.scenarios.map((s: { id: string; status: string }) => [s.id, s.status]), [['a', 'passed']]);
-  equal(sel.json.meta.imageDigest, 'sha256:' + 'd'.repeat(64));
+  equal(sel.json.meta.imageDigest, null);
+  equal(sel.json.meta.ghNibfinCommit, 'c'.repeat(40));
+  deepEqual(sel.json.teardown, []);
   equal(sel.json.meta.platform, 'linux');
-  const all = await cli(['--all', ...commit, ...image]);
+  const all = await cli(['--all', ...commit]);
   equal(all.code, 1);
   equal(all.json.gate.passed, false);
 });
 
 test('execution exits 1 when a scenario fails', async () => {
   const failing = [scenario('a', ['R3.1', 'R3.2'], ['linux'], new Error('nope')), scenarioB];
-  const r = await cli(['--rule', 'R3.1', ...commit, ...image], { scenarios: failing });
+  const r = await cli(['--rule', 'R3.1', ...commit], { scenarios: failing });
   equal(r.code, 1);
   equal(r.json.scenarios[0].reason, 'nope');
+});
+
+test('execution exits 1 when a teardown fails, even if every scenario passed', async () => {
+  const steps = [step('host', passed, undefined, { teardown: async () => ({ status: 'failed', reason: 'Issues left' }) })];
+  const withStep = [scenario('a', ['R3.1', 'R3.2'], ['linux'], passed, ['host']), scenarioB];
+  const r = await cli(['--rule', 'R3.1', ...commit], { scenarios: withStep, steps });
+  equal(r.code, 1);
+  deepEqual(r.json.scenarios.map((s: { status: string }) => s.status), ['passed']);
+  deepEqual(r.json.teardown, [{ id: 'host', status: 'failed', reason: 'Issues left' }]);
 });

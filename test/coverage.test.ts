@@ -96,3 +96,9 @@ test('the real coverage map is valid and consistent with the real registry', () 
 test('loadMap reports an unreadable file', () => {
   match(loadMap(new URL('./missing.json', import.meta.url)).errors[0] ?? '', /cannot read/);
 });
+
+test('a provisioning step may require only earlier steps', () => {
+  const steps = [step('b', passed, undefined, { requires: ['a'] }), step('a', passed)];
+  deepEqual(validateRegistry([], steps), ['provisioning step b: requires a, which is not an earlier step']);
+  deepEqual(validateRegistry([], [...steps].reverse()), []);
+});
