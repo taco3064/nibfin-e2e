@@ -303,6 +303,7 @@ export const fixLoops: Scenario = lifecycle({
       await k.obs.until('a deliver job with REASON cd-failure', async (s) => (await fixJobs(k, s, n, 'cd-failure'))[0], DEADLINE.stage, show);
       const pr2 = await k.obs.until('a new fix PR for F', (s) => s.pulls.get(exec)?.find((p) => p.number !== merged.number && isIssueBranch(p.head.ref, n)), DEADLINE.stage, show);
       c.check('R3.30', time(pr2.created_at) > time(cd.updated_at) && pr2.base.ref === 'main', `PR #${pr2.number} is not a new PR against main after the CD failure`);
+      c.check('R3.30', await k.obs.descends(exec, mergeSha, pr2.head.sha), `the fix PR #${pr2.number} (${pr2.head.sha}) is not cut from the main F's CD ran on (${mergeSha})`);
       const done = await k.obs.until('F to close with delivered', (s) => k.delivered(s, exec, n), DEADLINE.delivery, show);
       const s = await k.obs.fresh();
       const pr2m = s.pulls.get(exec)?.find((p) => p.number === pr2.number);
