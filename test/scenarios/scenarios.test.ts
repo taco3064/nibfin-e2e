@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { CASES, configRejections } from '../../scenarios/config-rejections.ts';
+import { CASES, configRejections, names } from '../../scenarios/config-rejections.ts';
 import { failureLogs } from '../../scenarios/failure-logs.ts';
 import { hostMemoryCheck } from '../../scenarios/host-memory-check.ts';
 import { imageProvenance } from '../../scenarios/image-provenance.ts';
@@ -25,6 +25,20 @@ test('config-rejections: every case passes when Nibfin rejects it with pending a
   const writes = sim.fake.writes.filter((w) => w === `POST /repos/${EXEC}/issues`);
   equal(writes.length, CASES.length);
   deepEqual(sim.repo(EXEC).issues.map((i) => i.state), CASES.map(() => 'closed'));
+});
+
+test('config-rejections: items are matched as whole words', () => {
+  equal(names('unknown skill "shap"; valid: accept, deliver, scope, shape', 'shap'), true);
+  equal(names('valid: accept, deliver, scope, shape', 'shap'), false);
+  equal(names('path ../outside.md is outside the workspace', '../outside.md'), true);
+  equal(names('see .nibfin.json.bak', '.nibfin.json'), true);
+});
+
+test('config-rejections: a comment listing only the valid role names does not name the wrong one', async () => {
+  let n = 0;
+  const sim = simulate(() => (n++ === 1 ? { labels: ['pending'], comments: ['.nibfin.json: valid skills are accept, deliver, scope, shape'] } : { labels: ['pending'], comments: [`.nibfin.json ${ALL_NAMES}`] }));
+  const out = await configRejections(() => sim.kit).run(ctxFor());
+  match(out.reason, /R7\.5: wrong role name: the comment names .* \(observed: missing shap\)/);
 });
 
 test('config-rejections: a case whose comment misses an item, or where an agent ran, fails naming the case', async () => {

@@ -1,7 +1,7 @@
 import type { KitFor } from './lib/kit.ts';
 import type { Outcome, Scenario } from '../src/types.ts';
 import { Checks } from './lib/checks.ts';
-import { OVERRIDE_MARKER, OVERRIDE_TEXT, json } from './lib/files.ts';
+import { OVERRIDE_MARKER, OVERRIDE_TEXT, PROBE_FILE, json } from './lib/files.ts';
 import { close, comments, labels, prepareFixture } from './lib/fixture.ts';
 import { initEvents, stageJob } from './lib/joblog.ts';
 import { message } from './lib/kit.ts';
@@ -51,6 +51,7 @@ export function modelChoice(kitFor: KitFor): Scenario {
           files: [
             { path: '.nibfin.json', content: json({ skills: { shape: { mode: 'override', path: '.nibfin/skills/shape-override.md' } } }) },
             { path: '.nibfin/skills/shape-override.md', content: OVERRIDE_TEXT },
+            PROBE_FILE,
           ],
           variables: { NIBFIN_MODEL: 'haiku' },
         });

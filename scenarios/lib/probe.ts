@@ -22,6 +22,9 @@ for f in CLAUDE.md .mcp.json .claude/skills/e2e-probe-skill/SKILL.md; do
   if [ -e "$f" ]; then echo "exists:$f=yes"; else echo "exists:$f=no"; fi
   if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then echo "tracked:$f=yes"; else echo "tracked:$f=no"; fi
 done
+for d in . "$HOME" /tmp $(sed -n 's/^[^ ]* \\([^ ]*\\) .*/\\1/p' /proc/self/mounts 2>/dev/null); do
+  for m in "$d"/e2e-decoy-*; do if [ -e "$m" ]; then echo "decoy=$m"; fi; done
+done
 if [ -f .claude/settings.json ]; then echo "workspace_settings=$(tr -d '\\n' < .claude/settings.json)"; else echo "workspace_settings=absent"; fi
 echo "node=$(node --version 2>&1 | head -n 1)"
 echo "python=$(python3 --version 2>&1 | head -n 1)"

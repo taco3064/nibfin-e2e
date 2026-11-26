@@ -65,12 +65,21 @@ export const RULESYNC_FILES: FixtureFile[] = [
 
 export const PROBE_FILE: FixtureFile = { path: 'e2e/probe.sh', content: PROBE_SCRIPT };
 
+/**
+ * Shell that leaves the marker `e2e-decoy-<name>` in the workspace, $HOME, /tmp and
+ * every mount point of the container, so it lands in the tools and login volumes
+ * wherever they are mounted.
+ */
+const mark = (name: string) =>
+  `for d in . "$HOME" "$HOME/.claude" /tmp $(sed -n 's/^[^ ]* \\([^ ]*\\) .*/\\1/p' /proc/self/mounts 2>/dev/null); do touch "$d/e2e-decoy-${name}" 2>/dev/null; done; true`;
+
 /** Files a tool preparer must never run (Proposal R7.3); each would leave a marker. */
 export const DECOY_FILES: FixtureFile[] = [
-  { path: 'Dockerfile', content: 'FROM scratch\nRUN touch /nibfin/tools/e2e-decoy-dockerfile\n' },
-  { path: 'install.sh', content: '#!/bin/sh\ntouch /nibfin/tools/e2e-decoy-install "$HOME/e2e-decoy-install"\n' },
-  { path: '.nibfin/setup.sh', content: '#!/bin/sh\ntouch /nibfin/tools/e2e-decoy-setup "$HOME/e2e-decoy-setup"\n' },
-  { path: '.devcontainer/devcontainer.json', content: json({ postCreateCommand: 'touch /nibfin/tools/e2e-decoy-devcontainer "$HOME/e2e-decoy-devcontainer"' }) },
+  // A build is also caught by the build-output check on the Job log (job-container, project-tools).
+  { path: 'Dockerfile', content: `FROM docker.io/library/busybox:1.37.0\nRUN ${mark('dockerfile')}\n` },
+  { path: 'install.sh', content: `#!/bin/sh\n${mark('install')}\n` },
+  { path: '.nibfin/setup.sh', content: `#!/bin/sh\n${mark('setup')}\n` },
+  { path: '.devcontainer/devcontainer.json', content: json({ postCreateCommand: mark('devcontainer') }) },
   { path: '.python-version', content: '3.12.0\n' },
   { path: '.nvmrc', content: '20.0.0\n' },
 ];

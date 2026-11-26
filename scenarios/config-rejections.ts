@@ -46,6 +46,12 @@ export const CASES: RejectionCase[] = [
   },
 ];
 
+/** Whether the text names the item as a whole word (`shap` inside `shape` does not count). */
+export function names(text: string, item: string): boolean {
+  const escaped = item.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?<![A-Za-z0-9_])${escaped}(?![A-Za-z0-9_])`).test(text);
+}
+
 /** Proposal R7.1, R7.2, R7.4, R7.5, R7.7, R7.10: an invalid `.nibfin.json` rejects the Job with a readable diagnostic. */
 export function configRejections(kitFor: KitFor): Scenario {
   return {
@@ -66,7 +72,7 @@ export function configRejections(kitFor: KitFor): Scenario {
           const l = await labels(kit, repo, n);
           const text = (await comments(kit, repo, n)).map((x) => x.body).join('\n');
           c.hold(k.rule, `${k.name}: the Issue gets pending`, l.includes('pending'), l.join(', '));
-          const missing = ['.nibfin.json', ...k.names].filter((s) => !text.includes(s));
+          const missing = ['.nibfin.json', ...k.names].filter((s) => !names(text, s));
           c.hold(k.rule, `${k.name}: the comment names ${['.nibfin.json', ...k.names].join(', ')}`, missing.length === 0, missing.length ? `missing ${missing.join(', ')}` : 'all named');
           const agent = initEvents(job.log?.text ?? '').length > 0 || l.includes('shaped');
           c.hold(k.rule, `${k.name}: no agent ran`, job.log !== undefined && !agent, job.logError ?? (agent ? 'an agent ran' : 'no init event, no Shape'));
