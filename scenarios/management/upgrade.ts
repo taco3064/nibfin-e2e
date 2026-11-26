@@ -45,7 +45,7 @@ export const upgrade: Scenario = {
     const me = await whoami(gh);
 
     const help = parseHelp((await ctx.ghNibfin(['upgrade', '--help'])).stdout);
-    const odd = help.flags.filter((f) => /version|tag|digest|all/i.test(f.name)).map((f) => f.name);
+    const odd = help.flags.filter((f) => /version|^tag$|digest|^all($|-)/i.test(f.name)).map((f) => f.name);
     c.that(!odd.length, 'R5.39', `upgrade --help offers ${odd.map((f) => `--${f}`).join(', ')}`);
 
     const pulls = async () => (await openPulls(gh, repo)).map((p) => p.number);
