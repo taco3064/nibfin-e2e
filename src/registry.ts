@@ -1,16 +1,16 @@
 import { fileURLToPath } from 'node:url';
+import { createScenarios } from '../scenarios/index.ts';
 import { createHostContext } from './host/context.ts';
 import { createServices } from './host/services.ts';
 import { createProvisioning } from './provisioning.ts';
 import type { ProvisioningStep, Scenario } from './types.ts';
 
-// Explicit import lists. Scenario modules live under `scenarios/`; import each one
-// here and list it. Real scenarios arrive with later Issues.
-export const scenarios: Scenario[] = [];
-
 // Creating the services touches nothing: the environment is read and `.e2e-work/` is
 // reset only when a step first needs them.
 const services = createServices(fileURLToPath(new URL('..', import.meta.url)), (m) => process.stderr.write(m + '\n'));
+
+// Explicit lists. Scenario modules live under `scenarios/`; `scenarios/index.ts` imports and lists each one.
+export const scenarios: Scenario[] = createScenarios(services);
 
 /** Provisioning steps, in the order they run. */
 export const provisioning: ProvisioningStep[] = createProvisioning(services);
