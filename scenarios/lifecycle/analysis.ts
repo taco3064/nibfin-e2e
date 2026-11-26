@@ -149,10 +149,14 @@ export function wakeRuns(runs: Run[], issueRepo: string, issue: number): Run[] {
 
 export const issueKey = (repo: string, n: number) => `${repo}#${n}`;
 
-/** A job's window; a job that has not started has none. */
+/**
+ * A job's window. A job no Runner took has none: one not started yet, or one GitHub
+ * cancelled or skipped while it waited (its timestamps are set but it never ran).
+ */
 export function jobWindow(job: Job, issue: string, stage: Stage): Window | undefined {
   const start = time(job.started_at);
   if (Number.isNaN(start) || job.status === 'queued' || job.status === 'waiting' || job.status === 'pending') return undefined;
+  if (!job.runner_name) return undefined;
   const end = job.completed_at ? time(job.completed_at) : Infinity;
   return { issue, stage, jobId: job.id, runner: job.runner_name, start, end };
 }
