@@ -164,6 +164,8 @@ export interface HoldJourney {
   pendingAt: number;
   /** Review runs of P created while `pending` was on, after the PR's `test` completed and the woken runs completed. */
   reviewWhilePending: number;
+  /** Why the pending hold could not be observed (it came after PR CI completed or a review started), if so. */
+  pendingLate?: string;
   unpendedAt: number;
 }
 
@@ -243,8 +245,15 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
   );
   const quiet = await k.settle('P\'s PR test', testDone, ofP);
   const reviewWhilePending = k.stages(quiet, exec, n, ['review']).filter((r) => time(r.created_at) >= pendingAt).length;
+  // The hold is only shown when PR CI completed, and so woke the review, after `pending` was on.
+  const reviewBefore = k.stages(quiet, exec, n, ['review']).filter((r) => time(r.created_at) < pendingAt).length;
+  const pendingLate = reviewBefore
+    ? `${reviewBefore} review run(s) started before pending was added`
+    : testDone < pendingAt
+      ? `the PR's test completed before pending was added`
+      : undefined;
   await k.removeLabel(exec, n, 'pending');
   const unpendedAt = k.now();
   await k.obs.until('P to close with delivered', (s) => k.delivered(s, exec, n), DEADLINE.delivery, show);
-  return { p, pausedAt, deliverWhilePaused, shapedWhilePaused, editedAt, sentBack: next === 'sent back', reshapedAt, pendingAt, reviewWhilePending, unpendedAt };
+  return { p, pausedAt, deliverWhilePaused, shapedWhilePaused, editedAt, sentBack: next === 'sent back', reshapedAt, pendingAt, reviewWhilePending, pendingLate, unpendedAt };
 }
