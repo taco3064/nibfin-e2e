@@ -149,8 +149,8 @@ export interface Running {
   /** Resolves with the first match in the output, or rejects with the output's tail after `timeoutMs`. */
   waitFor(pattern: RegExp, timeoutMs: number): Promise<RegExpExecArray>;
   /**
-   * Idempotent. SIGTERM, then SIGKILL after the grace period, then waits for `close` up
-   * to a bound. Always destroys the child's stdio and unrefs it, so the child cannot
+   * Idempotent. SIGTERM to the child's process group, then SIGKILL after the grace period,
+   * then waits for `close` up to a bound. Always destroys the child's stdio and unrefs it, so the child cannot
    * keep this process alive even when it ignored both signals.
    */
   stop(): Promise<ExecResult>;
@@ -173,7 +173,21 @@ export function createStart(env: Env, log: (message: string) => void, spawnFn: S
     const childEnvironment: Env = {};
     for (const [k, v] of Object.entries(base)) if (options.path === undefined || k.toUpperCase() !== 'PATH') childEnvironment[k] = v;
     if (options.path !== undefined) childEnvironment[envKey(env, 'PATH')] = options.path;
-    const child = spawnFn(cmd, args, { cwd: options.cwd, env: childEnvironment, shell: false, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    // Its own process group, so stop() also reaches what it starts: `gh` runs an extension
+    // as a child and does not pass signals on.
+    const group = process.platform !== 'win32';
+    const child = spawnFn(cmd, args, { cwd: options.cwd, env: childEnvironment, shell: false, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: group });
+    const signal = (sig: NodeJS.Signals) => {
+      if (group && child.pid !== undefined) {
+        try {
+          process.kill(-child.pid, sig);
+          return;
+        } catch {
+          // the group is gone; fall back to the child itself
+        }
+      }
+      child.kill(sig);
+    };
     let stdout = '';
     let stderr = '';
     let all = '';
@@ -238,9 +252,9 @@ export function createStart(env: Env, log: (message: string) => void, spawnFn: S
       stop() {
         stopping ??= (async () => {
           if (!closed && !spawnError) {
-            child.kill('SIGTERM');
+            signal('SIGTERM');
             if (!(await waitClose(options.graceMs ?? 5000))) {
-              child.kill('SIGKILL');
+              signal('SIGKILL');
               await waitClose(options.closeMs ?? 5000);
             }
           }

@@ -7,6 +7,7 @@ import type { Issue } from './github.ts';
 import {
   bodyText,
   button,
+  portClosed,
   defineScenario,
   gotoView,
   issueElement,
@@ -84,14 +85,16 @@ async function remoteChange(ctx: RunContext, secrets: Secrets, markers: Record<s
     const D = await readIssue(gh, exec, f.D.number);
     check(D.labels.includes('pending'), 'R9.24', 'fixture D to keep pending (so the label event dispatches nothing)', `[${D.labels.join(', ')}]`);
     await gh.rest('POST', `/repos/${exec}/issues/${D.number}/labels`, { labels: [PLAIN_LABEL] });
+    // Every view's window starts at the edit, not when its own check starts.
+    const changedAt = Date.now();
     let liveSeen = 0;
     for (const [name, page] of [['person', person], ['repo', repo]] as const) {
       const shows = async (p: Page = page) => (await issueElement(p, D.title).innerText().catch(() => '')).includes(PLAIN_LABEL);
       if (markers[name] === 'live') {
-        const ms = await seenWithin(page, shows, POLL_MS + TOLERANCE_MS);
-        check(ms !== undefined, 'R9.24', `the ${name} view (marked Live) to show D's new label within ${(POLL_MS + TOLERANCE_MS) / 1000} s without navigation`, 'not shown');
+        const ms = await seenWithin(page, shows, Math.max(0, POLL_MS + TOLERANCE_MS - (Date.now() - changedAt)));
+        check(ms !== undefined, 'R9.24', `the ${name} view (marked Live) to show D's new label within ${(POLL_MS + TOLERANCE_MS) / 1000} s of the edit, without navigation`, 'not shown');
         check(await sameDocument(page), 'R9.24', `no reload of the ${name} view`, 'the document was reloaded');
-        notes.push(`${name} view showed a label edited on GitHub after ${Math.round((ms as number) / 1000)} s`);
+        notes.push(`${name} view showed a label edited on GitHub ${Math.round((Date.now() - changedAt) / 1000)} s after the edit`);
         liveSeen++;
       } else {
         const again = await refreshed(ctx, secrets, page, name, name === 'repo' ? exec : undefined);
@@ -261,6 +264,8 @@ async function failures(ctx: RunContext, secrets: Secrets, markers: Record<strin
     await gotoView(page, 'person');
     await dash.stop();
     stopped = true;
+    // Only with nothing left on the port is a click guaranteed to reach no server.
+    if (!(await portClosed(dash.port))) throw new Error(`harness: the Dashboard on 127.0.0.1:${dash.port} still accepts connections after it was stopped; nothing was clicked`);
     await sleep(15_000);
     if (markers.person === 'live') {
       const marker = await readUpdateMarker(page).catch(() => 'neither');
