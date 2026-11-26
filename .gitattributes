@@ -1,0 +1,2 @@
+# The sandbox template is seeded byte for byte; keep LF endings on every checkout.
+sandbox-template/** -text
