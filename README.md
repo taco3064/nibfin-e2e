@@ -97,7 +97,7 @@ or through another step), in this order:
 | `podman` | Linux: checks Podman. Windows: installs the pinned Podman MSI (sha256 checked) and runs `podman machine init`; `runner add` starts the machine |
 | `claude-login` | Writes the Claude token into `env` of `settings.json` in the `nibfin-home-claude` volume, keeping every other key |
 | `sandboxes` | Refuses to start while a runner registration is online on the execution sandbox, then resets both sandboxes and reads them back |
-| `nibfin` | In a clone of the execution sandbox: `gh nibfin runner add claude --count 2`, `init` on execution then peer; reads the image digest from the init PR, rebase-merges both init PRs and records each sandbox's `main` head and tree as its baseline |
+| `nibfin` | In a clone of the execution sandbox: records the host state (`hostBefore`; on Windows it first adds a `[wsl2]` section with the default `nestedVirtualization=true` when `.wslconfig` has none), then `gh nibfin runner add claude --count 2`, `init` on execution then peer; reads the image digest from the init PR, rebase-merges both init PRs and records each sandbox's `main` head and tree as its baseline |
 | `observed-job` | Runs one agent fixture on the execution sandbox through Shape, Deliver and Review and records what its Jobs ran with (container projection, probe output, log facts, login volume facts, the pushed branch, how the PR ended) for the scenarios that read it |
 | `collaborator` | Linux only. Checks that the second account is a write (not admin) collaborator on the execution sandbox; creates the OS user `e2epeer` (subordinate ids, linger and its user manager); installs the built gh-nibfin for it; clones the execution sandbox into its home; writes its `nibfin-home-claude` volume; generates an ed25519 key as `e2epeer` and adds the public half to the second account as `nibfin-e2e-peer-<time>` |
 
@@ -110,8 +110,9 @@ something fails that scenario.
 After the scenarios, teardown runs for every step that ran, in reverse order:
 the collaborator's `runner remove` and the deletion of every
 `nibfin-e2e-peer-*` SSH key from the second account (read back), the Owner's
-`runner remove`, then a second reset of both sandboxes, read back to show
-nothing is left. It needs these environment variables:
+`runner remove` (skipped when `status --json` lists no claude Runner, as after
+the `runner-remove` scenario), then a second reset of both sandboxes, read back
+to show nothing is left. It needs these environment variables:
 
 - `E2E_SANDBOX_TOKEN`: fine-grained token for both sandboxes. The harness sends it
   only in its own GitHub API calls and as `GH_TOKEN` to `gh`.
@@ -186,27 +187,47 @@ rules, change 不測 marks, and keep ids as they are (they are never reused).
 1. Write it under `scenarios/` as a `Scenario` (`src/types.ts`): an id, the rule
    ids it verifies, the platforms it runs on, the provisioning steps it
    `requires` (usually `nibfin`), and `run`. Use only public interfaces; never
-   import Core or gh-nibfin source. Its context gives `ghNibfin(args)` (runs
-   `gh nibfin` in the execution clone), `github`, `sandbox` names,
-   `facts('nibfin')` (the command results, init PR numbers and digest) and
-   `withExecutionVisibility('private', fn)` for scenarios that need a private
-   execution repository; it restores public afterwards. `start`/`startGhNibfin`
-   run long-lived children, `exec` runs one without secrets, `workDir()` and
-   `browserEnv()` place and configure a browser, `defer(fn)` registers a
-   cleanup for the end of the scenario (each scenario has its own, also when it
-   runs concurrently), `upcoming()` lists the scenarios the run still starts
-   after this one, and `peer()` gives the collaborator (requires
-   `collaborator`): its login and id, this run's SSH key id, `ghNibfin(args)` in
-   its clone, `run`, `stat`, `list`, `readPublic`, `units` and its own `github`
-   client.
+   import Core or gh-nibfin source. Its context gives:
+   - `ghNibfin(args, {input, env})`: runs `gh nibfin` in the execution clone;
+     `startGhNibfin(args, {path})` and `start(argv)` run long-lived children
+     (for example the Dashboard) with `waitFor` and `stop`;
+   - `gh(args, {env})` (with the sandbox token) and `exec(argv, {input, cwd,
+     env})` (no token) for other host commands. `env` adds variables after the
+     credential filter and refuses `GH_TOKEN` and `E2E_*`;
+   - `github`, `sandbox` names, `workDir()` and `workPath(...)` (under
+     `.e2e-work/`; the gh-nibfin clone is `workPath('gh-nibfin')`),
+     `browserEnv()` for a browser, and `claudeSettings()` (the login volume's
+     settings.json, compared in memory only);
+   - `facts('nibfin')`: the command results, init PR numbers, image digest and
+     `hostBefore`, the host state read just before `runner add` (Linux: user
+     unit files, linger and `/etc/systemd/system`; Windows: `.wslconfig` and
+     the scheduled tasks), so a scenario can see what the setup changed;
+   - `withExecutionVisibility('private', fn)` for scenarios that need a
+     private execution repository; it restores public afterwards;
+   - the host operations below (Linux only);
+   - `upcoming()`, which lists the scenarios the run still starts after this
+     one;
+   - `peer()`, the collaborator (requires `collaborator`): its login and id,
+     this run's SSH key id, `ghNibfin(args)` in its clone, `run`, `stat`,
+     `list`, `readPublic`, `units` and its own `github` client;
+   - `defer(fn)`, which registers a cleanup for the end of the scenario (each
+     scenario has its own, also when it runs concurrently).
+
+   `scenarios/lib/` holds the shared helpers. The management scenarios use
+   `Check` (collects every mismatch by rule, hides tokens and the Dashboard
+   proof), `waitFor` (bounded polling within the run), `readWorkflow`
+   (line-based workflow reads), `statusValidator` (gh-nibfin's
+   `schema/status.schema.json`, draft 2020-12, strict),
+   `mainDigest`/`requireCurrentImage` (anonymous GHCR `:main`), the hold
+   fixture (a plain `self-hosted` workflow that keeps one Runner busy) and
+   `--help` and read-back parsing.
 2. Import it in `scenarios/index.ts` and add it to the list `createScenarios`
-   returns (a scenario that needs the host's processes takes the `HostServices`).
-   The delivery-lifecycle scenarios are listed before that list in
-   `src/registry.ts`, and the Dashboard and site scenarios after it, so the
-   Dashboard scenarios run last. Registry order is run order. Set
-   `concurrent: true` to let a scenario overlap its neighbours: each run of
-   consecutive concurrent scenarios starts together and is awaited together, and
-   every other scenario runs alone.
+   returns (a scenario that needs the host's processes takes the `HostServices`),
+   or list it directly in `src/registry.ts`, as the installation and management,
+   delivery-lifecycle, Dashboard and site scenarios are. Registry order is run
+   order. Set `concurrent: true` to let a scenario overlap its neighbours: each
+   run of consecutive concurrent scenarios starts together and is awaited
+   together, and every other scenario runs alone.
 3. List its id under each of its rules in `coverage-map.json`.
 
 Scenarios that run fixture Issues use the shared library in `scenarios/lib/`:
@@ -274,6 +295,17 @@ followed without the token.
   spending Runner time.
 - A rule whose triggering situation did not happen is reported `failed` as
   "not exercised", never `passed`.
+
+### Run order
+
+The installation and management scenarios (`scenarios/management/`) run
+first, on the fresh host and the init PRs; `upgrade` runs before the
+delivery-lifecycle scenarios so GHCR's main image has little time to move after
+`init`. Their fixture Issues are left paused or without `scope`, and the
+lifecycle scenarios judge only their own tagged fixtures and the runs created
+since they started. Then come the Issue #299 and site scenarios, then the
+Dashboard scenarios, and `runner-remove` comes last because it removes every
+local Runner and the login volume.
 
 ## Proposal relay
 
