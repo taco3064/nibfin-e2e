@@ -28,6 +28,9 @@ import type { Secrets } from './support.ts';
 export const READ_ONLY_REPO = 'octocat/Hello-World';
 
 const PREVIEW = /^(preview|next|continue|plan|check)\b/i;
+
+/** Open dialogs only, so controls elsewhere on the page (for example run strips) never count as a confirm step. */
+const openDialogs = (page: Page) => page.getByRole('dialog').or(page.getByRole('alertdialog'));
 const CONFIRM = /^(confirm|apply|run|yes|proceed)\b/i;
 
 /** Sets a dialog field by its label: a select, a combobox, a checkbox or a text field. */
@@ -130,7 +133,7 @@ async function planningProgress(page: Page, ctx: RunContext, notes: string[]) {
   check(sawElapsed, 'R9.6', 'the item being checked to show an elapsed time during planning', 'planning ended without one');
   await (await mustButton(d, /^cancel\b/i, 'R9.6', 'the planning step')).click();
   await sleep(3000);
-  const confirmAfter = await page.getByRole('button', { name: CONFIRM }).filter({ visible: true }).count();
+  const confirmAfter = await openDialogs(page).getByRole('button', { name: CONFIRM }).filter({ visible: true }).count();
   check(confirmAfter === 0, 'R9.6', 'no confirm step after cancelling planning', 'a confirm button appeared');
   await closeDialog(page);
 
@@ -167,8 +170,20 @@ async function failedPlan(page: Page, ctx: RunContext, notes: string[]) {
 }
 
 async function runnerCycle(ctx: RunContext, secrets: Secrets, notes: string[]) {
-  const exec = ctx.sandbox.execution;
-  const regs = () => ctx.github.list<{ name: string; status: string }>(`/repos/${exec}/actions/runners`, 'runners');
+  const regs = () => ctx.github.list<{ name: string; status: string }>(`/repos/${ctx.sandbox.execution}/actions/runners`, 'runners');
+  try {
+    await runnerCycleSteps(ctx, secrets, regs, notes);
+  } finally {
+    // Keep the run's end state (two online claude Runners) for later scenarios even when a step failed.
+    const online = (await regs()).filter((r) => r.status === 'online').length;
+    if (online < 2) {
+      ctx.log(`restoring claude Runners through the CLI (${online} online)`);
+      await ctx.ghNibfin(['runner', 'add', 'claude', '--count', String(2 - online), '--yes']);
+    }
+  }
+}
+
+async function runnerCycleSteps(ctx: RunContext, secrets: Secrets, regs: () => Promise<{ name: string; status: string }[]>, notes: string[]) {
   const before = await regs();
   let dash = await startDashboard(ctx, secrets);
   try {
@@ -233,15 +248,16 @@ async function pauseResume(ctx: RunContext, secrets: Secrets, f: Fixtures, notes
     await gotoView(page, 'person');
     const from = Date.now();
     const el = issueElement(page, F.title);
+    await el.getByRole('button', { name: /^resume\b/i }).first().waitFor({ state: 'visible', timeout: 90_000 }).catch(() => {});
     await (await mustButton(el, /^resume\b/i, 'R9.20', 'fixture F')).click();
     await sleep(1500);
-    check(!(await page.getByRole('button', { name: CONFIRM }).filter({ visible: true }).count()), 'R9.21', 'resume without a confirmation step', 'a confirm button appeared');
+    check(!(await openDialogs(page).getByRole('button', { name: CONFIRM }).filter({ visible: true }).count()), 'R9.21', 'resume without a confirmation step', 'a confirm button appeared');
     const resumed = await until(() => readIssue(gh, F.repo, F.number), (i) => !i.labels.includes('pause') && !i.labels.includes('pending'), 60_000, 2000);
     check(!resumed.labels.includes('pause') && !resumed.labels.includes('pending'), 'R9.20', 'resume to remove pause and pending on GitHub', `[${resumed.labels.join(', ')}]`);
     await page.waitForTimeout(3000);
     await (await mustButton(issueElement(page, F.title), /^pause\b/i, 'R9.20', 'fixture F after resume')).click();
     await sleep(1500);
-    check(!(await page.getByRole('button', { name: CONFIRM }).filter({ visible: true }).count()), 'R9.21', 'pause without a confirmation step', 'a confirm button appeared');
+    check(!(await openDialogs(page).getByRole('button', { name: CONFIRM }).filter({ visible: true }).count()), 'R9.21', 'pause without a confirmation step', 'a confirm button appeared');
     const paused = await until(() => readIssue(gh, F.repo, F.number), (i) => i.labels.includes('pause'), 60_000, 2000);
     check(paused.labels.includes('pause'), 'R9.20', 'pause to add pause on GitHub', `[${paused.labels.join(', ')}]`);
 

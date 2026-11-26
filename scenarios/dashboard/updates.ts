@@ -19,19 +19,38 @@ import {
   startDashboard,
   watchLocalJobStarts,
 } from './support.ts';
-import type { Secrets } from './support.ts';
+import type { Secrets, View } from './support.ts';
+import { issueFeatures } from './views.ts';
 
 const PLAIN_LABEL = 'e2e-plain';
 /** R9.24 checks every 30–60 s; the tolerance covers the push to the browser and rendering. */
 const POLL_MS = 60_000;
 const TOLERANCE_MS = 30_000;
 
-/** A manual refresh: the page's own Refresh control, else a reload. */
-async function refresh(page: Page): Promise<void> {
+/**
+ * A manual refresh. The page's own Refresh control when it has one; otherwise a fresh
+ * server and page on the same view, since reloading would re-send a spent one-time proof (R9.26).
+ */
+async function refreshed(ctx: RunContext, secrets: Secrets, page: Page, view: View, repo?: string): Promise<Page> {
   const r = await button(page, /refresh/i);
-  if (r) await r.click();
-  else await page.reload();
+  if (r) {
+    await r.click();
+    await sleep(3000);
+    return page;
+  }
+  return freshView(ctx, secrets, view, repo);
+}
+
+/** A new server and page opened on a view; both are stopped when the scenario ends. */
+async function freshView(ctx: RunContext, secrets: Secrets, view: View, repo?: string): Promise<Page> {
+  const dash = await startDashboard(ctx, secrets);
+  ctx.defer(() => dash.stop());
+  const { page } = await openPage(ctx);
+  await openDashboard(page, dash);
+  await gotoView(page, view);
+  if (repo) await selectRepo(page, repo);
   await sleep(3000);
+  return page;
 }
 
 /** Checks `seen` at least once and until `ms` passed, without navigating; returns the elapsed ms or undefined. */
@@ -67,7 +86,7 @@ async function remoteChange(ctx: RunContext, secrets: Secrets, markers: Record<s
     await gh.rest('POST', `/repos/${exec}/issues/${D.number}/labels`, { labels: [PLAIN_LABEL] });
     let liveSeen = 0;
     for (const [name, page] of [['person', person], ['repo', repo]] as const) {
-      const shows = async () => (await issueElement(page, D.title).innerText().catch(() => '')).includes(PLAIN_LABEL);
+      const shows = async (p: Page = page) => (await issueElement(p, D.title).innerText().catch(() => '')).includes(PLAIN_LABEL);
       if (markers[name] === 'live') {
         const ms = await seenWithin(page, shows, POLL_MS + TOLERANCE_MS);
         check(ms !== undefined, 'R9.24', `the ${name} view (marked Live) to show D's new label within ${(POLL_MS + TOLERANCE_MS) / 1000} s without navigation`, 'not shown');
@@ -75,8 +94,8 @@ async function remoteChange(ctx: RunContext, secrets: Secrets, markers: Record<s
         notes.push(`${name} view showed a label edited on GitHub after ${Math.round((ms as number) / 1000)} s`);
         liveSeen++;
       } else {
-        await refresh(page);
-        check(await shows(), 'R9.8', `the ${name} view (marked manual) to show D's new label after a manual refresh`, 'not shown');
+        const again = await refreshed(ctx, secrets, page, name, name === 'repo' ? exec : undefined);
+        check(await shows(again), 'R9.8', `the ${name} view (marked manual) to show D's new label after a manual refresh`, 'not shown');
         notes.push(`${name} view is manual and showed the label after a refresh`);
       }
     }
@@ -118,17 +137,24 @@ async function localJob(ctx: RunContext, secrets: Secrets, markers: Record<strin
     const inProgress = async () => /in progress|running|queued/i.test(`${await issueElement(person, issue.title).innerText().catch(() => '')} ${await issueElement(person, issue.title).locator('[aria-label]').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')).join(' ')).catch(() => '')}`);
     const stripMs = await seenWithin(person, inProgress, 20_000);
     check(stripMs !== undefined && (await sameDocument(person)), 'R9.23', "E's run strip to show an in-progress run within 20 s of the Job start, without navigation", 'not shown');
-    const busyWithE = async () => {
-      const t = await bodyText(runner);
+    const busyWithE = async (p: Page = runner) => {
+      const t = await bodyText(p);
       return /\bbusy\b/i.test(t) && new RegExp(`#${issue.number}\\b`).test(t) && /\bshape\b/i.test(t) && /\b\d{1,2}:\d{2}\b|\b\d+\s?(s|m|min)\b/.test(t);
     };
     if (markers.runner === 'live') {
       const ms = await seenWithin(runner, busyWithE, 20_000 - (Date.now() - startedAt));
       check(ms !== undefined && (await sameDocument(runner)), 'R9.23', `a Runner busy with ${'#'}${issue.number}, its stage and a time within 20 s, without navigation`, (await bodyText(runner)).slice(0, 300));
     } else {
-      await refresh(runner);
-      check(await busyWithE(), 'R9.5', `after a refresh, a Runner busy with #${issue.number}, its stage and a time`, (await bodyText(runner)).slice(0, 300));
+      const again = await refreshed(ctx, secrets, runner, 'runner');
+      check(await busyWithE(again), 'R9.5', `after a refresh, a Runner busy with #${issue.number}, its stage and a time`, (await bodyText(runner)).slice(0, 300));
     }
+
+    // R9.2: the same Issue element in the Runner view while a Runner is busy with it.
+    const inRunner = issueElement(runner, issue.title);
+    check(await inRunner.count(), 'R9.2', `E's Issue element in the Runner view while busy`, 'only other text');
+    const runnerFeatures = await issueFeatures(inRunner, issue);
+    const personFeatures = await issueFeatures(issueElement(person, issue.title), issue);
+    check(JSON.stringify(runnerFeatures) === JSON.stringify(personFeatures), 'R9.2', 'the same Issue element in the person and Runner views', JSON.stringify({ personFeatures, runnerFeatures }));
 
     // Back to idle: pause E (no redispatch) and cancel its run.
     await gh.rest('POST', `/repos/${exec}/issues/${issue.number}/labels`, { labels: ['pause'] });
@@ -136,14 +162,14 @@ async function localJob(ctx: RunContext, secrets: Secrets, markers: Record<strin
     const mine = runs.filter((r) => new RegExp(`#${issue.number}\\b`).test(r.display_title));
     check(mine.length, 'R9.23', `an in-progress run titled with #${issue.number} (R5.5)`, runs.map((r) => r.display_title).join(' | ') || 'none');
     for (const r of mine) await gh.rest('POST', `/repos/${exec}/actions/runs/${r.id}/cancel`, undefined, [409]);
-    const idle = async () => !/\bbusy\b/i.test(await bodyText(runner));
+    const idle = async (p: Page = runner) => !/\bbusy\b/i.test(await bodyText(p));
     if (markers.runner === 'live') {
       const ms = await seenWithin(runner, idle, POLL_MS + TOLERANCE_MS);
       check(ms !== undefined && (await sameDocument(runner)), 'R9.23', 'the Runner back to idle without navigation after the Job ended', 'still busy');
     } else {
       await sleep(POLL_MS);
-      await refresh(runner);
-      check(await idle(), 'R9.5', 'the Runner idle after a refresh once the Job ended', 'still busy');
+      const again = await refreshed(ctx, secrets, runner, 'runner');
+      check(await idle(again), 'R9.5', 'the Runner idle after a refresh once the Job ended', 'still busy');
     }
     const starts = startsInWindow(watcher.starts(), from - 5000, Date.now());
     if (starts.length !== 1) {
@@ -164,10 +190,10 @@ async function localJob(ctx: RunContext, secrets: Secrets, markers: Record<strin
       5000,
     );
     check(job?.completed_at, 'R9.5', "E's self-hosted job record with completed_at", JSON.stringify(job));
-    await runner.reload();
-    await sleep(5000);
+    // A fresh page, so the check does not depend on the update path.
+    const timeline = await freshView(ctx, secrets, 'runner');
     const rec = job as { runner_name: string; started_at: string; completed_at: string };
-    const row = runner.locator('li, [role="listitem"], [role="row"], section, article').filter({ hasText: rec.runner_name }).last();
+    const row = timeline.locator('li, [role="listitem"], [role="row"], section, article').filter({ hasText: rec.runner_name }).last();
     check(await row.count(), 'R9.5', `a timeline row for Runner ${rec.runner_name}`, 'none');
     const shown = await row.locator('[title], [aria-label]').evaluateAll((els) => els.map((e) => `${e.getAttribute('title') ?? ''} ${e.getAttribute('aria-label') ?? ''}`));
     check(intervalMatches(shown, rec.started_at, rec.completed_at), 'R9.5', `a busy interval ${rec.started_at} – ${rec.completed_at} (±1 min) on ${rec.runner_name}'s 24-hour timeline`, shown.filter((s) => s.trim()).slice(0, 5).join(' | ') || 'an empty timeline');
@@ -217,10 +243,12 @@ async function failures(ctx: RunContext, secrets: Secrets, markers: Record<strin
     const D = await readIssue(gh, exec, f.D.number);
     check(!D.labels.includes('pause') && D.labels.includes('pending'), 'R9.34', 'D unchanged on GitHub (no pause, still pending)', `[${D.labels.join(', ')}]`);
     await page.clock.install();
+    const early = await bodyText(page);
     await page.clock.fastForward('02:00:00');
     await sleep(2000);
     const late = await bodyText(page);
-    check(/stale|outdated|ago|as of|last updated/i.test(late), 'R9.34', 'the data marked stale after two hours without updates', late.slice(0, 300));
+    const STALE = /\b(stale|outdated|out of date|[2-9]\s?h(ours?)?\s+ago|1[0-9]{2}\s?m(in(utes?)?)?\s+ago)\b/i;
+    check(late !== early && STALE.test(late) && (late.match(new RegExp(STALE.source, 'gi'))?.length ?? 0) > (early.match(new RegExp(STALE.source, 'gi'))?.length ?? 0), 'R9.34', 'the data marked stale (a stale marker or a two-hour age that was not there before) after the page clock moved two hours', late.slice(0, 300));
     notes.push('a failed read and a stopped server are shown as such, never as success');
   } finally {
     if (!stopped) await dash.stop();

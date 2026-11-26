@@ -11,6 +11,9 @@ import {
   localeProblems,
   parseJobStarts,
   parseSessionUrl,
+  lightProblem,
+  stateOf,
+  statusValue,
   pauseResumePreconditions,
   quietProblems,
   redact,
@@ -168,4 +171,17 @@ test('the R9.20 target F needs scope+pause without shaped and the open, undelive
   deepEqual(pauseResumePreconditions(F, { ...A, labels: ['scope'] }, [{ id: 1 }]), ['A is open with [scope]']);
   deepEqual(pauseResumePreconditions(F, { ...A, state: 'closed', labels: ['delivered'] }, [{ id: 1 }]), ['A is closed with [delivered]']);
   deepEqual(pauseResumePreconditions({ ...F, labels: ['scope', 'shaped', 'pause'] }, A, [{ id: 1 }]), ['F has [scope, shaped, pause]']);
+});
+
+test('health lights agree with the state status --json reports', () => {
+  const status = { repos: [{ repo: 'o/x', nibfinRun: { ok: true }, imageState: 'outdated', workflows: 'current' }] };
+  equal(statusValue(status, /^nibfinRun$/), true);
+  equal(stateOf(statusValue(status, /^imageState$/)), 'bad');
+  equal(stateOf(statusValue(status, /^workflows$/)), 'good');
+  equal(statusValue(status, /^missing$/), undefined);
+  equal(lightProblem('Nibfin run', 'Nibfin run: running', 'good'), undefined);
+  equal(lightProblem('image', 'Image: upgrade available', 'bad'), undefined);
+  ok(lightProblem('image', 'Image: up to date', 'bad'));
+  ok(lightProblem('Workflows', 'Workflows: not installed', 'good'));
+  ok(lightProblem('Workflows', 'Workflows', undefined)?.includes('no readable state'));
 });
