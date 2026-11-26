@@ -73,6 +73,7 @@ export const deliveryLifecycle: Scenario = lifecycle({
     const windows = await k.windows(s, exec, n, true);
     const acts = (await k.obs.activity(exec, { ref: `refs/heads/${branch}` })).filter((a) => BRANCH_WRITES.has(a.activity_type));
     const inside = (a: Activity, w: Window) => time(a.timestamp) >= w.start && time(a.timestamp) <= w.end;
+    c.check('R3.15', acts.length > 0, `no push to ${branch} is recorded in the repository activity`);
     for (const a of acts) {
       const ws = windows.filter((w) => inside(a, w));
       c.check('R3.15', ws.some((w) => w.stage === 'deliver'), `the ${a.activity_type} at ${a.timestamp} to ${branch} is outside every deliver job of A`);
@@ -146,7 +147,9 @@ export const deliveryLifecycle: Scenario = lifecycle({
     for (const cm of (await k.obs.comments(exec, n)).filter((x) => markerOf(x.body))) {
       c.check('R4.34', cm.user?.login === owner.login, `marked comment ${cm.html_url} is by ${String(cm.user?.login)}`);
     }
-    const strays = (await k.agentJobs(s, exec, n)).filter((x) => !x.labels.includes(label));
+    const agentJobs = await k.agentJobs(s, exec, n);
+    const strays = agentJobs.filter((x) => !x.labels.includes(label));
+    c.check('R4.18', agentJobs.length > 0, 'A has no agent jobs');
     c.check('R4.18', strays.length === 0, `A's agent jobs ran on ${strays.map((x) => x.labels.join('+')).join(', ')}, not ${label}`);
     return c.outcome(`#${n} went Shape → Deliver → PR CI → review → merge → CD → delivered (PR #${pr.number}, ${j.mergeSha.slice(0, 7)})`);
   },
@@ -252,7 +255,8 @@ export const pauseAndPending: Scenario = lifecycle({
     const c = new Checks();
     const s = await k.obs.fresh();
     const n = h.p.number;
-    c.check('R4.12', h.shapedWhilePaused && h.deliverWhilePaused === 0, `with pause on, P had shaped=${h.shapedWhilePaused} and ${h.deliverWhilePaused} deliver runs`);
+    if (h.pauseLate) c.notExercised('R4.12', h.pauseLate);
+    else c.check('R4.12', h.shapedWhilePaused && h.deliverWhilePaused === 0, `with pause on, P had shaped=${h.shapedWhilePaused} and ${h.deliverWhilePaused} deliver runs`);
     c.check('R3.38', h.deliverWhilePaused === 0, 'pause did not hold P');
     if (h.pendingLate) c.notExercised('R4.13', h.pendingLate);
     else c.check('R4.13', h.reviewWhilePending === 0, `${h.reviewWhilePending} review runs started while P had pending`);
