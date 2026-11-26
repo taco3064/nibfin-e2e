@@ -2,7 +2,7 @@
 import type { Locator, Page } from 'playwright-core';
 import type { RunContext } from '../../src/types.ts';
 import { check, dateTexts, fail, localeProblems, shiftedBy, stageOf } from './checks.ts';
-import { blockedBy, ensureFixtures, me, sleep } from './github.ts';
+import { blockedBy, ensureFixtures, me, sleep, until } from './github.ts';
 import type { Fixtures, Issue } from './github.ts';
 import {
   bodyText,
@@ -56,8 +56,16 @@ interface Listed {
   issues: Issue[];
 }
 
-/** The Proposal's person-view set: open scope Issues assigned to self (R5.48, R9.14). */
-async function personSet(ctx: RunContext): Promise<Listed> {
+/**
+ * The Proposal's person-view set: open scope Issues assigned to self (R5.48, R9.14).
+ * The search index lags behind new Issues, so it is read until it holds the fixtures.
+ */
+async function personSet(ctx: RunContext, f: Fixtures): Promise<Listed> {
+  const want = [f.A, f.B, f.D, f.F, f.P].map((i) => i.html_url);
+  return until(() => searchSet(ctx), (l) => want.every((u) => l.issues.some((i) => i.html_url === u)), 120_000, 5000);
+}
+
+async function searchSet(ctx: RunContext): Promise<Listed> {
   const login = await me(ctx.github);
   const q = encodeURIComponent(`is:issue is:open label:scope assignee:${login}`);
   const { data } = await ctx.github.rest<{ items: { number: number; title: string; html_url: string; repository_url: string; labels: { name: string }[]; id: number; node_id: string; state: string }[] }>(
@@ -94,7 +102,7 @@ async function personView(page: Page, ctx: RunContext, f: Fixtures, notes: strin
   for (const k of ['N', 'C'] as const) check(!text.includes(f[k].title), 'R9.14', `fixture ${k} not in the person view`, 'listed');
 
   // R9.1: tiles computed from the listed Issues.
-  const listed = (await personSet(ctx)).issues;
+  const listed = (await personSet(ctx, f)).issues;
   const tiles = page.locator('section, [role="region"], [role="group"], dl, article').filter({ hasText: /open/i }).first();
   const tileText = (await tiles.innerText().catch(() => '')) || text;
   const open = numberNear(tileText, /open(?: issues?)?/);
