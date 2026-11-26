@@ -256,6 +256,7 @@ export const fixLoops: Scenario = lifecycle({
 
       // 2: a harness commit the review must reject (R3.24, R3.25).
       const { data: now1 } = await k.gh.rest<Pull>('GET', `/repos/${exec}/pulls/${pr1.number}`);
+      let fixesExpected = 3;
       if (now1.merged_at) c.notExercised('R3.24', `PR #${pr1.number} merged before the harness commit`);
       else {
         const sha = await k.commitFiles(
@@ -268,6 +269,7 @@ export const fixLoops: Scenario = lifecycle({
           'Make sum subtract',
         );
         const at = k.now();
+        fixesExpected = 4;
         await k.obs.until('a marked review comment on F\'s PR after the harness commit', async () => {
           const cs = await k.obs.comments(exec, pr1.number);
           return cs.some((x) => markerOf(x.body) && time(x.updated_at) >= at) ? true : undefined;
@@ -306,7 +308,7 @@ export const fixLoops: Scenario = lifecycle({
       c.check('R3.31', cd2?.conclusion === 'success', `CD of the fix PR's merge is ${String(cd2?.status)}/${String(cd2?.conclusion)}`);
       if (pr2m) c.none('R3.31', closingProblems(await k.obs.comments(exec, n), [merged, pr2m]));
       const fixes = (await k.agentJobs(s, exec, n, ['deliver'])).length;
-      c.check('R3.38', fixes >= 4, `${fixes} deliver jobs; expected the first and three fixes`);
+      c.check('R3.38', fixes >= fixesExpected, `${fixes} deliver jobs; expected the first and ${fixesExpected - 1} fixes`);
 
       // 5: every branch of F is deleted only after closure (R3.17).
       const deletions = await k.obs.until('F\'s branches to be deleted', async () => {

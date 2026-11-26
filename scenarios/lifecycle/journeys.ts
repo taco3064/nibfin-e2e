@@ -161,7 +161,6 @@ export interface HoldJourney {
   pendingAt: number;
   /** Review runs of P created while `pending` was on, after the PR's `test` completed and the woken runs completed. */
   reviewWhilePending: number;
-  prTestDone: boolean;
   unpendedAt: number;
 }
 
@@ -220,7 +219,8 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
     const s = await k.obs.until('P to be shaped again', (x) => (hasLabel(k, x, n, 'shaped') ? x : undefined), DEADLINE.stage, show);
     reshapedAt = s.at;
   }
-  await k.obs.until('P\'s next deliver job to run', running('deliver', reshapedAt ?? editedAt), DEADLINE.stage, show);
+  // After a send-back the next Deliver is the one to hold; otherwise Deliver already opened the PR.
+  if (reshapedAt !== undefined) await k.obs.until('P\'s next deliver job to run', running('deliver', reshapedAt), DEADLINE.stage, show);
   await k.addLabels(exec, n, ['pending']);
   const pendingAt = k.now();
 
@@ -240,5 +240,5 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
   await k.removeLabel(exec, n, 'pending');
   const unpendedAt = k.now();
   await k.obs.until('P to close with delivered', (s) => k.delivered(s, exec, n), DEADLINE.delivery, show);
-  return { p, pausedAt, deliverWhilePaused, shapedWhilePaused, editedAt, sentBack: next === 'sent back', reshapedAt, pendingAt, reviewWhilePending, prTestDone: true, unpendedAt };
+  return { p, pausedAt, deliverWhilePaused, shapedWhilePaused, editedAt, sentBack: next === 'sent back', reshapedAt, pendingAt, reviewWhilePending, unpendedAt };
 }
