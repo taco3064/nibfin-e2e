@@ -48,8 +48,11 @@ test('a dirty sandbox is converged: everything deleted, settings fixed, main fas
   repo.keys.push({ id: 7, title: 'hook' });
   repo.runners.push({ id: 9, name: 'old', status: 'offline' });
   repo.rulesets = [{ id: 3, name: 'main' }];
+  repo.tags.push('r1-a-cd', 'nested/tag');
 
   deepEqual(await resetSandbox(deps, 'o/exec', 'public'), []);
+  deepEqual(repo.tags, []);
+  equal(fake.writes.includes('DELETE /repos/o/exec/git/refs/tags/nested/tag'), true);
   equal(repo.settings.visibility, 'public');
   equal(repo.settings.pull_request_creation_policy, 'collaborators_only');
   deepEqual([...repo.branches.keys()], ['main']);
@@ -125,4 +128,11 @@ test('a failed restore fails the scenario and names both causes', async () => {
   const ctx = context(fake);
   const err = await ctx.withExecutionVisibility('private', async () => { throw new Error('inner'); }).catch((e: Error) => e);
   match(String(err), /restoring taco3064\/nibfin-e2e-sandbox to public failed: .*500: nope; the scenario had also failed: inner/);
+});
+
+test('a leftover tag that does not delete is reported by the read-back', async () => {
+  const { fake, repo, deps } = setup();
+  repo.tags.push('r1-a-ci2');
+  fake.failures.set('DELETE /repos/o/exec/git/refs/tags/r1-a-ci2', 204);
+  deepEqual(await resetSandbox(deps, 'o/exec', 'public'), ['o/exec: tag r1-a-ci2 exists']);
 });

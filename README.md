@@ -71,7 +71,7 @@ The sandboxes are fixed: `taco3064/nibfin-e2e-sandbox` (execution, public) and
 `taco3064/nibfin-e2e-sandbox-peer` (private). A reset makes `main`'s tree equal
 `sandbox-template/` (with a fast-forward commit), leaves `main` as the only
 branch, and deletes every Issue, label, Actions secret and variable, deploy key,
-runner registration and ruleset. It closes open pull requests and resets the merge
+runner registration, ruleset and tag. It closes open pull requests and resets the merge
 and pull request settings and the visibility. Collaborators are not touched.
 
 **Only one host at a time may use the sandboxes.** A matrix of hosts must run its

@@ -18,6 +18,7 @@ export interface FakeRepo {
   runners: { id: number; name: string; status: string; busy?: boolean }[];
   /** `'upgrade'` answers the rules API with GitHub's 403 for free private repositories. */
   rulesets: { id: number; name: string; rules?: { type: string }[] }[] | 'upgrade';
+  tags: string[];
   /** Paths present on main (for the init read-back). */
   mainFiles: Set<string>;
 }
@@ -44,6 +45,7 @@ export function cleanRepo(visibility: string, tree: string): FakeRepo {
     keys: [],
     runners: [],
     rulesets: [],
+    tags: [],
     mainFiles: new Set(),
   };
 }
@@ -160,6 +162,8 @@ export class FakeGitHub {
       const f = repo.pulls.flatMap((p) => (p.head.sha === q.get('ref') ? (p.files ?? []) : [])).find((ff) => ff.filename === file);
       return f ? ok({ content: Buffer.from(f.content).toString('base64') }) : { status: 404, data: { message: 'Not Found' } };
     }
+    if (rest === '/git/matching-refs/tags') return ok(repo.tags.map((t) => ({ ref: `refs/tags/${t}` })));
+    if ((x = /^\/git\/refs\/tags\/(.+)$/.exec(rest)) && method === 'DELETE') return del(repo.tags, (t) => t === x?.[1]);
     if ((x = /^\/git\/refs\/heads\/(.+)$/.exec(rest))) {
       const name = x[1] as string;
       if (method === 'DELETE') return repo.branches.delete(name) ? { status: 204, data: undefined } : { status: 422, data: { message: 'Reference does not exist' } };

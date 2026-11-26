@@ -99,6 +99,7 @@ interface State {
   keys: { id: number; title: string }[];
   runners: { id: number; name: string; status: string }[];
   rulesets: Ruleset[];
+  tags: string[];
   mainCommit?: string;
   mainTree?: string;
 }
@@ -121,6 +122,8 @@ async function read(gh: GitHub, repo: string): Promise<State> {
     rulesets: await rulesets(gh, repo),
     mainCommit: main?.commit,
     mainTree: main?.tree,
+    // matching-refs returns every match in one answer (it is not paginated).
+    tags: (await gh.rest<{ ref: string }[]>('GET', `${r}/git/matching-refs/tags`)).data.map((t) => t.ref.replace(/^refs\/tags\//, '')),
   };
 }
 
@@ -147,6 +150,7 @@ export function differences(repo: string, state: State, visibility: Visibility, 
   for (const k of state.keys) out.push(`${repo}: deploy key ${k.title} exists`);
   for (const r of state.runners) out.push(`${repo}: runner registration ${r.name} (${r.status}) exists`);
   for (const r of state.rulesets) out.push(`${repo}: ruleset ${r.name} exists`);
+  for (const t of state.tags) out.push(`${repo}: tag ${t} exists`);
   return out;
 }
 
@@ -213,6 +217,7 @@ export async function resetSandbox(deps: SandboxDeps, repo: string, visibility: 
   for (const name of s.variables) await gh.rest('DELETE', `${r}/actions/variables/${encodeURIComponent(name)}`);
   for (const k of s.keys) await gh.rest('DELETE', `${r}/keys/${k.id}`);
   for (const rn of s.runners) await gh.rest('DELETE', `${r}/actions/runners/${rn.id}`);
+  for (const t of s.tags) await gh.rest('DELETE', `${r}/git/refs/tags/${ref(t)}`);
 
   if (s.mainTree !== tree) {
     log(`${repo}: main's tree differs from the template; adding a commit`);
