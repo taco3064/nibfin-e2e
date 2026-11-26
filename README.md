@@ -130,11 +130,16 @@ rules, change 不測 marks, and keep ids as they are (they are never reused).
    execution repository; it restores public afterwards. `start`/`startGhNibfin`
    run long-lived children, `exec` runs one without secrets, `workDir()` and
    `browserEnv()` place and configure a browser, and `defer(fn)` registers a
-   cleanup for the end of the scenario.
+   cleanup for the end of the scenario (each scenario has its own, also when it
+   runs concurrently).
 2. Import it in `scenarios/index.ts` and add it to the list `createScenarios`
    returns (a scenario that needs the host's processes takes the `HostServices`).
-   The Dashboard and site scenarios are listed after that list in
-   `src/registry.ts`, so the Dashboard scenarios run last.
+   The delivery-lifecycle scenarios are listed before that list in
+   `src/registry.ts`, and the Dashboard and site scenarios after it, so the
+   Dashboard scenarios run last. Registry order is run order. Set
+   `concurrent: true` to let a scenario overlap its neighbours: each run of
+   consecutive concurrent scenarios starts together and is awaited together, and
+   every other scenario runs alone.
 3. List its id under each of its rules in `coverage-map.json`.
 
 Scenarios that run fixture Issues use the shared library in `scenarios/lib/`:
@@ -165,3 +170,40 @@ Scenarios that run fixture Issues use the shared library in `scenarios/lib/`:
   ended, and a restarted Runner's registration showing online.
 
 `npm run verify` fails when the map and the registry disagree.
+
+### Host operations (Linux only)
+
+The context also gives:
+
+- `claudeLogin('valid' | 'invalid')`: writes the real token, or a random
+  non-secret string, into the login volume on stdin and reads it back;
+- `runnerServices('stop' | 'start')`: stops or starts each
+  `nibfin-runner-claude-*` systemd user unit by name and reads it back;
+- `stopJobContainers(repo, issue)`: stops one Issue's Job containers by
+  Nibfin's Podman labels;
+- `secretValues()`: the secrets, for in-memory absence checks only (never print
+  them);
+- `ownerLogin()` and `ownerId()`: the sandbox token's account.
+
+`github.download(path)` downloads a job log; the redirect to the log storage is
+followed without the token.
+
+### Lifecycle fixtures (`scenarios/lifecycle/`)
+
+- Fixture Issues are small: a few lines in their own `src/<slug>.js` with a
+  `node:test` test. Titles start with `[e2e <scenario>]` and end with the run's
+  tag, so fixtures of one run never collide.
+- One shared observer reads the sandboxes at most once a minute. Every wait has
+  a deadline and fails naming the last observed labels, runs and comment.
+- Shared journeys (`journey()`, `holdJourney()`) drive one set of fixtures
+  for several scenarios; each scenario reports its own rules.
+- The template's CI and CD run `scripts/e2e-hook.js` with the rules in the
+  `E2E_CI_RULES` / `E2E_CD_RULES` variables (`kit.hookRules`). A rule
+  applies only when its `when` path is among the paths the triggering event
+  changed, so **a rule's `when` path must belong to exactly one fixture**. Rules
+  can require a file to mention a text, or hold the run until a tag exists
+  (failing after 25 minutes).
+- A scenario pauses its open fixtures in `finally`, so a failure does not keep
+  spending Runner time.
+- A rule whose triggering situation did not happen is reported `failed` as
+  "not exercised", never `passed`.
