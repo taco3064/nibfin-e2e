@@ -11,7 +11,7 @@ export interface FirstJob {
   issue: number;
   /** The projection taken when the container started; undefined when it was already gone. */
   projection?: Projection;
-  log?: { job: StageJob; text: string };
+  log?: { job: StageJob; text: string; secretFound: boolean };
   /** Why the log could not be read, when it could not. */
   logError?: string;
 }
@@ -21,8 +21,13 @@ export interface FirstJob {
  * start and end, then reads that Job's log. With `pause`, `pause` is added as soon as the
  * container starts, so no later stage follows.
  */
-export async function runFirstJob(kit: Kit, repo: string, opts: { title: string; file: string; deadlineMs: number; stage: string; pause?: boolean }): Promise<FirstJob> {
+export async function runFirstJob(
+  kit: Kit,
+  repo: string,
+  opts: { title: string; file: string; deadlineMs: number; stage: string; pause?: boolean; onOpen?: (issue: number) => void },
+): Promise<FirstJob> {
   const issue = await openFixture(kit, repo, opts.title, TASK_BODY);
+  opts.onOpen?.(issue);
   const watch = watchJobContainers(kit, repo, issue, async (_e, index) => {
     if (opts.pause && index === 0) await addLabel(kit, repo, issue, 'pause');
   });

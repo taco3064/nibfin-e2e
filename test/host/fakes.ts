@@ -127,7 +127,8 @@ export class FakeGitHub {
         if (method === 'POST') issue.labels = [...new Set([...(issue.labels ?? []), ...((body?.labels as string[]) ?? [])])];
         return ok((issue.labels ?? []).map((name) => ({ name })));
       }
-      if (x[2] === '/comments') return ok((issue.comments ?? []).map((b) => ({ body: b })));
+      // Comments are the Owner's, as Nibfin writes with the Owner's credential.
+      if (x[2] === '/comments') return ok((issue.comments ?? []).map((b) => ({ body: b, user: { login: (m?.[1] ?? '').split('/')[0] } })));
       if (method === 'PATCH') Object.assign(issue, body);
       return ok(issue);
     }

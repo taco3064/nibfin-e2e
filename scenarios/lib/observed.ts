@@ -2,6 +2,7 @@ import type { StepOutcome } from '../../src/types.ts';
 import { watchJobContainers } from './containers.ts';
 import type { Projection, Watch } from './containers.ts';
 import { DECOY_FILES, DECOY_PATTERN, EXTEND_TEXT, PROBE_FILE, RULESYNC_FILES, TASK_BODY, TOOLS, json } from './files.ts';
+import type { Comment } from './fixture.ts';
 import { approvalRuleset, close, comments, deleteE2eRulesets, issueState, labels, openFixture, prepareFixture } from './fixture.ts';
 import { buildOutput, imageLine, initEvents, jobLog } from './joblog.ts';
 import type { InitEvent } from './joblog.ts';
@@ -68,6 +69,16 @@ async function stageDied(kit: Kit, watch: Watch, repo: string, n: number, count:
   }
 }
 
+/**
+ * The line of a Nibfin PR comment saying the merge waits for an approving review
+ * (Proposal R3.26). Nibfin writes with the Owner's credential, so its comments are the
+ * Owner's; the harness never comments on a PR. Other review comments do not count.
+ */
+export function missingApprovalLine(list: Comment[], owner: string): string | undefined {
+  const lines = list.filter((c) => c.user?.login === owner).flatMap((c) => c.body.split('\n'));
+  return lines.find((l) => /approv/i.test(l) && /wait|missing|requir|need|until|before|pending|blocked/i.test(l))?.trim().slice(0, 300);
+}
+
 /** Runs one fixture through Shape → Deliver → Review and records what its Jobs ran with (Issue #299). */
 export async function runObservedJob(kit: Kit): Promise<StepOutcome> {
   const repo = kit.sandbox.execution;
@@ -126,11 +137,11 @@ export async function runObservedJob(kit: Kit): Promise<StepOutcome> {
     // Review, then the finish Job on a GitHub-hosted runner (no local event marks its end).
     await stageDied(kit, watch, repo, n, 3, 'Review', DEADLINE.review);
     const pr = facts.pr;
-    facts.finish = await remoteWait(kit, `PR #${pr} to merge or get a comment about the missing approval`, DEADLINE.finish, 30_000, async () => {
+    facts.finish = await remoteWait(kit, `PR #${pr} to merge or get Nibfin's comment about the missing approving review`, DEADLINE.finish, 30_000, async () => {
       const { data } = await kit.github.rest<{ merged?: boolean }>('GET', `/repos/${repo}/pulls/${pr}`);
       if (data.merged) return { merged: true };
-      const line = (await comments(kit, repo, pr)).flatMap((c) => c.body.split('\n')).find((l) => /approv|review/i.test(l));
-      return line ? { merged: false, approvalComment: line.trim().slice(0, 300) } : undefined;
+      const line = missingApprovalLine(await comments(kit, repo, pr), owner);
+      return line ? { merged: false, approvalComment: line } : undefined;
     });
     return { status: 'passed', reason: `fixture ${repo}#${n} ran Shape, Deliver and Review; PR #${pr} ${facts.finish.merged ? 'merged' : 'waits for an approving review'}`, facts: out() };
   } catch (error) {

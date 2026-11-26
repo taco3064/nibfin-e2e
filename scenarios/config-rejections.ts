@@ -61,7 +61,7 @@ export function configRejections(host: HostServices): Scenario {
         let n: number | undefined;
         try {
           await prepareFixture(kit, repo, { files: k.files });
-          const job = await runFirstJob(kit, repo, { title: `e2e config rejection: ${k.name}`, file: 'config-rejections', deadlineMs: DEADLINE.rejected, stage: 'rejected' });
+          const job = await runFirstJob(kit, repo, { title: `e2e config rejection: ${k.name}`, file: 'config-rejections', deadlineMs: DEADLINE.rejected, stage: 'rejected', onOpen: (i) => (n = i) });
           n = job.issue;
           const l = await labels(kit, repo, n);
           const text = (await comments(kit, repo, n)).map((x) => x.body).join('\n');

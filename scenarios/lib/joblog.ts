@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { freeOfSecrets } from './checks.ts';
 import type { Kit } from './kit.ts';
 import { runnerSlot } from './runners.ts';
 import { DEADLINE, remoteWait } from './waits.ts';
@@ -37,9 +38,10 @@ export async function stageJob(kit: Kit, runRepo: string, runId: string): Promis
 
 /**
  * The stage Job's log, once the Job completed (its post steps finish shortly after the
- * container died), saved under `.e2e-work/logs/`.
+ * container died), saved under `.e2e-work/logs/`. The text is checked for secret values
+ * first: the saved copy never holds one (each is replaced), and `secretFound` says so.
  */
-export async function jobLog(kit: Kit, runRepo: string, runId: string, file: string): Promise<{ job: StageJob; text: string }> {
+export async function jobLog(kit: Kit, runRepo: string, runId: string, file: string): Promise<{ job: StageJob; text: string; secretFound: boolean }> {
   const job = await remoteWait(kit, `the stage Job of run ${runId} to complete`, DEADLINE.jobLog, 10_000, async () => {
     const j = await stageJob(kit, runRepo, runId);
     return j.status === 'completed' ? j : undefined;
@@ -47,8 +49,11 @@ export async function jobLog(kit: Kit, runRepo: string, runId: string, file: str
   const { text } = await kit.github.download(`/repos/${runRepo}/actions/jobs/${job.id}/logs`);
   const dir = join(kit.workDir, 'logs');
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, `${file}.log`), text);
-  return { job, text };
+  const secrets = kit.secrets();
+  const secretFound = !freeOfSecrets(text, secrets);
+  const saved = secretFound ? secrets.reduce((t, s) => (s.length < 8 ? t : t.split(s).join('[secret value removed by nibfin-e2e]')), text) : text;
+  writeFileSync(join(dir, `${file}.log`), saved);
+  return { job, text, secretFound };
 }
 
 export interface InitEvent {

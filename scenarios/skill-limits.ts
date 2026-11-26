@@ -30,7 +30,7 @@ export function skillLimits(host: HostServices): Scenario {
       const before = await mainHead(kit.github, repo);
       let n: number | undefined;
       try {
-        const job = await runFirstJob(kit, repo, { title: 'e2e skill limits: add double(n)', file: 'skill-limits', deadlineMs: DEADLINE.shape, stage: 'Shape', pause: true });
+        const job = await runFirstJob(kit, repo, { title: 'e2e skill limits: add double(n)', file: 'skill-limits', deadlineMs: DEADLINE.shape, stage: 'Shape', pause: true, onOpen: (i) => (n = i) });
         n = job.issue;
         const after = await mainHead(kit.github, repo);
         c.hold('R7.8', 'the Shape Skill text could not change main', after?.commit === before?.commit, `main ${before?.commit} → ${after?.commit}`);
