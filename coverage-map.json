@@ -284,7 +284,7 @@
   {"id": "R9.34", "platforms": ["linux"], "scenarios": ["dashboard-updates"]},
   {"id": "R9.35", "notE2e": "無法證明不存在"},
   {"id": "R9.1", "platforms": ["linux"], "scenarios": ["dashboard-views"]},
-  {"id": "R9.2", "platforms": ["linux"], "scenarios": ["live-page", "dashboard-views"]},
+  {"id": "R9.2", "platforms": ["linux"], "scenarios": ["live-page", "dashboard-views", "dashboard-updates"]},
   {"id": "R9.3", "platforms": ["linux"], "scenarios": ["dashboard-views"]},
   {"id": "R9.4", "platforms": ["linux"], "scenarios": ["dashboard-views"]},
   {"id": "R9.5", "platforms": ["linux"], "scenarios": ["dashboard-views", "dashboard-updates"]},

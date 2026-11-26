@@ -132,36 +132,43 @@ async function localJob(ctx: RunContext, secrets: Secrets, markers: Record<strin
     E = await createIssue(gh, exec, fixtureTitle('E'), FIXTURE_E.labels, await me(gh));
     const first = await until(async () => watcher.starts().filter((s) => s.at >= from - 5000), (s) => s.length > 0, 20 * 60_000, 2000);
     check(first.length, 'R9.23', 'a local Nibfin Job container to start for fixture E', 'no Job container start was seen in 20 min');
-    const startedAt = Date.now();
+    const startedAt = Math.min(Date.now(), (first[0] as { at: number }).at);
     const issue = E;
     const inProgress = async () => /in progress|running|queued/i.test(`${await issueElement(person, issue.title).innerText().catch(() => '')} ${await issueElement(person, issue.title).locator('[aria-label]').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')).join(' ')).catch(() => '')}`);
-    const stripMs = await seenWithin(person, inProgress, 20_000);
+    const stripMs = await seenWithin(person, inProgress, Math.max(0, 20_000 - (Date.now() - startedAt)));
     check(stripMs !== undefined && (await sameDocument(person)), 'R9.23', "E's run strip to show an in-progress run within 20 s of the Job start, without navigation", 'not shown');
     const busyWithE = async (p: Page = runner) => {
       const t = await bodyText(p);
       return /\bbusy\b/i.test(t) && new RegExp(`#${issue.number}\\b`).test(t) && /\bshape\b/i.test(t) && /\b\d{1,2}:\d{2}\b|\b\d+\s?(s|m|min)\b/.test(t);
     };
+    // The page the Runner view is read on: the live page, or a manually refreshed one.
+    let runnerPage = runner;
     if (markers.runner === 'live') {
-      const ms = await seenWithin(runner, busyWithE, 20_000 - (Date.now() - startedAt));
-      check(ms !== undefined && (await sameDocument(runner)), 'R9.23', `a Runner busy with ${'#'}${issue.number}, its stage and a time within 20 s, without navigation`, (await bodyText(runner)).slice(0, 300));
+      const ms = await seenWithin(runner, busyWithE, Math.max(0, 20_000 - (Date.now() - startedAt)));
+      check(ms !== undefined && (await sameDocument(runner)), 'R9.23', `a Runner busy with #${issue.number}, its stage and a time within 20 s, without navigation`, (await bodyText(runner)).slice(0, 300));
     } else {
-      const again = await refreshed(ctx, secrets, runner, 'runner');
-      check(await busyWithE(again), 'R9.5', `after a refresh, a Runner busy with #${issue.number}, its stage and a time`, (await bodyText(runner)).slice(0, 300));
+      runnerPage = await refreshed(ctx, secrets, runner, 'runner');
+      check(await busyWithE(runnerPage), 'R9.5', `after a refresh, a Runner busy with #${issue.number}, its stage and a time`, (await bodyText(runnerPage)).slice(0, 300));
     }
 
     // R9.2: the same Issue element in the Runner view while a Runner is busy with it.
-    const inRunner = issueElement(runner, issue.title);
+    const inRunner = issueElement(runnerPage, issue.title);
     check(await inRunner.count(), 'R9.2', `E's Issue element in the Runner view while busy`, 'only other text');
     const runnerFeatures = await issueFeatures(inRunner, issue);
     const personFeatures = await issueFeatures(issueElement(person, issue.title), issue);
     check(JSON.stringify(runnerFeatures) === JSON.stringify(personFeatures), 'R9.2', 'the same Issue element in the person and Runner views', JSON.stringify({ personFeatures, runnerFeatures }));
 
-    // Back to idle: pause E (no redispatch) and cancel its run.
-    await gh.rest('POST', `/repos/${exec}/issues/${issue.number}/labels`, { labels: ['pause'] });
+    // Back to idle: find E's run with a self-hosted job, pause E (no redispatch) and cancel that one run.
     const runs = await gh.list<{ id: number; display_title: string; status: string }>(`/repos/${exec}/actions/runs?status=in_progress`, 'workflow_runs');
-    const mine = runs.filter((r) => new RegExp(`#${issue.number}\\b`).test(r.display_title));
-    check(mine.length, 'R9.23', `an in-progress run titled with #${issue.number} (R5.5)`, runs.map((r) => r.display_title).join(' | ') || 'none');
-    for (const r of mine) await gh.rest('POST', `/repos/${exec}/actions/runs/${r.id}/cancel`, undefined, [409]);
+    const titled = runs.filter((r) => new RegExp(`#${issue.number}\\b`).test(r.display_title));
+    const mine: typeof titled = [];
+    for (const r of titled) {
+      const jobs = await gh.list<{ labels: string[] }>(`/repos/${exec}/actions/runs/${r.id}/jobs`, 'jobs');
+      if (jobs.some((j) => j.labels.includes('self-hosted'))) mine.push(r);
+    }
+    check(mine.length === 1, 'R9.23', `one in-progress run titled with #${issue.number} (R5.5) with a self-hosted job`, runs.map((r) => `${r.id} ${r.display_title}`).join(' | ') || 'none');
+    await gh.rest('POST', `/repos/${exec}/issues/${issue.number}/labels`, { labels: ['pause'] });
+    await gh.rest('POST', `/repos/${exec}/actions/runs/${(mine[0] as { id: number }).id}/cancel`, undefined, [409]);
     const idle = async (p: Page = runner) => !/\bbusy\b/i.test(await bodyText(p));
     if (markers.runner === 'live') {
       const ms = await seenWithin(runner, idle, POLL_MS + TOLERANCE_MS);
@@ -257,7 +264,7 @@ async function failures(ctx: RunContext, secrets: Secrets, markers: Record<strin
 
 export const dashboardUpdates = defineScenario({
   id: 'dashboard-updates',
-  rules: ['R9.23', 'R9.24', 'R9.5', 'R9.8', 'R9.34'],
+  rules: ['R9.23', 'R9.24', 'R9.5', 'R9.8', 'R9.34', 'R9.2'],
   requires: ['nibfin'],
   async run(ctx, secrets) {
     const notes: string[] = [];

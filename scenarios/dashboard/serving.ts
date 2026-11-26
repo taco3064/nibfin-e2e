@@ -29,13 +29,18 @@ function call(port: number, method: string, path: string, headers: Record<string
   });
 }
 
-/** True when a TCP connection to the address is accepted within 3 s. */
-function accepts(address: string, port: number): Promise<boolean> {
+/**
+ * `accepted` when a TCP connection to the address is accepted within 3 s; `refused` when it
+ * is refused, unreachable or times out; otherwise the error code, which proves nothing either way.
+ */
+const UNREACHABLE = ['ECONNREFUSED', 'EADDRNOTAVAIL', 'ENETUNREACH', 'EHOSTUNREACH'];
+
+function connectTo(address: string, port: number): Promise<string> {
   return new Promise((resolve) => {
     const s = connect({ host: address, port, timeout: 3000 });
-    s.once('connect', () => (s.destroy(), resolve(true)));
-    s.once('timeout', () => (s.destroy(), resolve(false)));
-    s.once('error', () => resolve(false));
+    s.once('connect', () => (s.destroy(), resolve('accepted')));
+    s.once('timeout', () => (s.destroy(), resolve('refused')));
+    s.once('error', (e: NodeJS.ErrnoException) => resolve(UNREACHABLE.includes(e.code ?? '') ? 'refused' : (e.code ?? 'error')));
   });
 }
 
@@ -91,9 +96,14 @@ export const dashboardServing = defineScenario({
       const url = new URL(dash.sessionUrl);
       check(url.hostname === '127.0.0.1', 'R9.26', 'the session URL on 127.0.0.1', url.hostname);
       check(!url.search && url.hash.includes('proof='), 'R9.26', 'the proof only in the URL fragment', 'a query string or no fragment');
-      check(await accepts('127.0.0.1', dash.port), 'R9.26', `127.0.0.1:${dash.port} to accept connections`, 'refused');
-      const others = ['::1', ...Object.values(networkInterfaces()).flatMap((l) => (l ?? []).filter((i) => !i.internal).map((i) => i.address))];
-      for (const a of others) check(!(await accepts(a, dash.port)), 'R9.26', `port ${dash.port} not reachable on ${a}`, 'a connection was accepted');
+      const local = await connectTo('127.0.0.1', dash.port);
+      check(local === 'accepted', 'R9.26', `127.0.0.1:${dash.port} to accept connections`, local);
+      // Link-local IPv6 addresses need a scope id to be dialled at all, so they are skipped.
+      const others = ['::1', ...Object.values(networkInterfaces()).flatMap((l) => (l ?? []).filter((i) => !i.internal && !(i.family === 'IPv6' && /^fe80:/i.test(i.address))).map((i) => i.address))];
+      for (const a of others) {
+        const got = await connectTo(a, dash.port);
+        check(got === 'refused', 'R9.26', `port ${dash.port} refused on ${a}`, got === 'accepted' ? 'a connection was accepted' : `an inconclusive ${got}`);
+      }
       notes.push(`bound only to 127.0.0.1 (refused on ${others.length} other addresses)`);
 
       const host = `127.0.0.1:${dash.port}`;

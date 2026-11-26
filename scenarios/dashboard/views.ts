@@ -378,7 +378,7 @@ export const dashboardViews = defineScenario({
       markers.person = await readUpdateMarker(page);
       await repoView(page, ctx, f, notes);
       markers.repo = await readUpdateMarker(page);
-      // The Runner view shows an Issue only while a Runner is busy with it; dashboard-updates compares it there.
+      // The Runner view shows an Issue only while a Runner is busy with it; dashboard-updates (also R9.2) compares it there.
       const repoEl = await mustIssue(page, f.A, 'R9.2', 'repo view');
       const repoFeatures = await issueFeatures(repoEl, f.A);
       check(JSON.stringify(repoFeatures) === JSON.stringify(personFeatures), 'R9.2', 'the same Issue element in the person and repo views', JSON.stringify({ personFeatures, repoFeatures }));
