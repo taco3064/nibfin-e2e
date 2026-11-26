@@ -1,7 +1,7 @@
 // Phase 1: scenarios that change the whole host (the login, the Runner services), so
 // each runs alone.
 import type { Scenario } from '../../src/types.ts';
-import { AGENT_STAGES, Checks, duplicateMarkers, markerOf, queuedHoldProblems, selfHosted, time } from './analysis.ts';
+import { AGENT_STAGES, Checks, duplicateMarkers, markerOf, queuedHoldProblems, selfHosted, startedBefore, time } from './analysis.ts';
 import type { Comment, Issue, Job, Run } from './analysis.ts';
 import { DEADLINE, changeRequest, lifecycle, message } from './kit.ts';
 import type { Kit } from './kit.ts';
@@ -208,7 +208,7 @@ export const interruptedDeliver: Scenario = lifecycle({
         if (!j3) return;
         const s = await k.obs.fresh();
         const cur = await k.obs.job(exec, j3.id);
-        if (cur.status !== 'queued' && cur.started_at && time(cur.started_at) < stopAt) return notExercised();
+        if (startedBefore(cur, stopAt)) return notExercised();
         const later = k.stages(s, exec, n3, ['route', 'shape', 'deliver', 'review']).filter((r) => time(r.created_at) > recordedAt);
         c.none('R4.23', queuedHoldProblems({ id: j3.id, label, runId: j3.run.id }, cur, later).map((p) => `${when}: ${p}`));
       };

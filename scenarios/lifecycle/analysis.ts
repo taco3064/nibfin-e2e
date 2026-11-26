@@ -251,6 +251,9 @@ export function duplicateMarkers(comments: Comment[]): string[] {
   return [...count].filter(([, n]) => n > 1).map(([k, n]) => `${k} ×${n}`);
 }
 
+/** Whether a job left the queue before `t` (so a hold that starts at `t` cannot be observed). */
+export const startedBefore = (job: Job, t: number) => job.status !== 'queued' && !!job.started_at && time(job.started_at) < t;
+
 /**
  * R4.23: while the Runners are offline, the job dispatched while they were online is
  * still queued with the same id and label, and the Issue got no new route or stage run.

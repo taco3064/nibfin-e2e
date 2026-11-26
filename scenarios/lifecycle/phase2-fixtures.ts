@@ -69,6 +69,21 @@ export const assigneeRouting: Scenario = lifecycle({
   },
 });
 
+/**
+ * Commits a different wording of sum's JSDoc line to main (a true conflict with the
+ * Issue's change), unless the Issue's PR already merged; then returns undefined.
+ */
+export async function writeConflict(k: Kit, repo: string, branch: string, observedMerged: boolean): Promise<{ sha: string; at: number } | undefined> {
+  if (observedMerged) return undefined;
+  const prs = await k.gh.list<Pull>(`/repos/${repo}/pulls?state=all&head=${encodeURIComponent(`${repo.split('/')[0]}:${branch}`)}`);
+  if (prs.some((p) => p.merged_at)) return undefined;
+  const text = (await k.fileOn(repo, 'main', 'src/sum.js')) ?? '';
+  const changed = text.replace(/\/\*\*[^\n]*\*\//, '/** Adds a and b together. */');
+  const content = changed === text ? `/** Adds a and b together. */\n${text}` : changed;
+  const sha = await k.commitFiles(repo, 'main', { 'src/sum.js': content }, 'Reword the sum JSDoc on main (e2e conflict)');
+  return { sha, at: k.now() };
+}
+
 export const peerDispatch: Scenario = lifecycle({
   id: 'peer-dispatch',
   concurrent: true,
@@ -100,14 +115,8 @@ export const peerDispatch: Scenario = lifecycle({
         const pushes = (await k.obs.activity(peer, { ref: `refs/heads/${branch}` })).filter((a) => a.activity_type === 'push' || a.activity_type === 'branch_creation');
         return pushes.length ? ('pushed' as const) : undefined;
       }, DEADLINE.delivery, show);
-      let conflict: { sha: string; at: number } | undefined;
-      const prs = await k.gh.list<Pull>(`/repos/${peer}/pulls?state=all&head=${encodeURIComponent(`${peer.split('/')[0]}:${branch}`)}`);
-      if (trigger === 'merged' || prs.some((p) => p.merged_at)) c.notExercised('R3.18', 'the PR merged before the first observed push');
-      else {
-        const text = (await k.fileOn(peer, 'main', 'src/sum.js')) ?? '';
-        const changed = text.replace(/\/\*\*[^\n]*\*\//, '/** Adds a and b together. */');
-        conflict = { sha: await k.commitFiles(peer, 'main', { 'src/sum.js': changed === text ? `/** Adds a and b together. */\n${text}` : changed }, 'Reword the sum JSDoc on main (e2e conflict)'), at: k.now() };
-      }
+      const conflict = await writeConflict(k, peer, branch, trigger === 'merged');
+      if (!conflict) c.notExercised('R3.18', 'the PR merged before the first observed push');
 
       await k.obs.until('Q to close with delivered', (s) => k.delivered(s, peer, n), DEADLINE.delivery, show);
       const s = await k.obs.fresh();
