@@ -218,27 +218,41 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
   const editedAt = k.now();
   await k.removeLabel(exec, n, 'pause');
 
-  const next = await k.obs.until(
-    'Deliver to send the Shape back or open a PR',
-    (s) => {
-      if (!hasLabel(k, s, n, 'shaped')) return 'sent back' as const;
-      if (s.pulls.get(exec)?.some((pr) => pr.head.ref === `nibfin/issue-${n}`)) return 'pr' as const;
-      return undefined;
-    },
+  const outcome = (s: Snapshot) => {
+    if (!hasLabel(k, s, n, 'shaped')) return 'sent back' as const;
+    if (s.pulls.get(exec)?.some((pr) => pr.head.ref === `nibfin/issue-${n}`)) return 'pr' as const;
+    return undefined;
+  };
+  // Put `pending` on while the first Deliver after the edit runs, before it can open a
+  // PR whose CI would wake a review. If that Deliver sends the Shape back instead,
+  // `pending` comes off for the re-Shape and goes on again during the next Deliver.
+  const first = await k.obs.until(
+    'P\'s first Deliver after the edit',
+    async (s) => outcome(s) ?? ((await running('deliver', editedAt)(s)) ? ('running' as const) : undefined),
     DEADLINE.stage,
     show,
   );
+  let pendingAt: number | undefined;
+  if (first === 'running') {
+    await k.addLabels(exec, n, ['pending']);
+    pendingAt = k.now();
+  }
+  const next = first === 'running' ? await k.obs.until('Deliver to send the Shape back or open a PR', outcome, DEADLINE.stage, show) : first;
   let reshapedAt: number | undefined;
   if (next === 'sent back') {
+    if (pendingAt !== undefined) await k.removeLabel(exec, n, 'pending');
     await k.obs.until('P to be shaped again', (x) => (hasLabel(k, x, n, 'shaped') ? x : undefined), DEADLINE.stage, show);
     // The label's own time, not the snapshot's: a Deliver may start before the next snapshot.
     reshapedAt = await k.labeledAt(exec, n, 'shaped', editedAt);
     if (reshapedAt === undefined) throw new Error(`#${n} shows \`shaped\` again but its timeline has no labeled event after the edit`);
+    await k.obs.until('P\'s next deliver job to run', running('deliver', reshapedAt), DEADLINE.stage, show);
+    await k.addLabels(exec, n, ['pending']);
+    pendingAt = k.now();
+  } else if (pendingAt === undefined) {
+    // The PR was already open when first seen; the late-pending check below reports it.
+    await k.addLabels(exec, n, ['pending']);
+    pendingAt = k.now();
   }
-  // After a send-back the next Deliver is the one to hold; otherwise Deliver already opened the PR.
-  if (reshapedAt !== undefined) await k.obs.until('P\'s next deliver job to run', running('deliver', reshapedAt), DEADLINE.stage, show);
-  await k.addLabels(exec, n, ['pending']);
-  const pendingAt = k.now();
 
   const testDone = await k.obs.until(
     'P\'s PR test check to complete',
