@@ -1,5 +1,6 @@
 import { commitOnMain, createTree, mainHead, rulesets } from '../../src/host/sandbox.ts';
 import type { TreeEntry } from '../../src/host/sandbox.ts';
+import { excerpt, redact } from './checks.ts';
 import { runningJobContainers, watchJobContainers } from './containers.ts';
 import { baselineOf } from './kit.ts';
 import type { Kit } from './kit.ts';
@@ -180,13 +181,14 @@ export async function addLabel(kit: Kit, repo: string, n: number, label: string)
   await kit.github.rest('POST', `/repos/${repo}/issues/${n}/labels`, { labels: [label] });
 }
 
-/** The Issue's labels and latest comment, for a failure message. */
+/** The Issue's labels and latest comment, for a failure message, with secret values removed (GitHub does not mask comments). */
 export async function issueState(kit: Kit, repo: string, n: number): Promise<string> {
   try {
     const l = await labels(kit, repo, n);
-    const last = (await comments(kit, repo, n)).at(-1)?.body.trim().slice(0, 1500) ?? 'none';
+    const body = (await comments(kit, repo, n)).at(-1)?.body.trim();
+    const last = body === undefined ? 'none' : excerpt(body, 1500, kit.secrets());
     return `${repo}#${n} labels [${l.join(', ')}]; latest comment: ${last}`;
   } catch (error) {
-    return `${repo}#${n}: reading its state failed: ${error instanceof Error ? error.message : String(error)}`;
+    return redact(`${repo}#${n}: reading its state failed: ${error instanceof Error ? error.message : String(error)}`, kit.secrets());
   }
 }

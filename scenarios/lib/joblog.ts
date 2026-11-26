@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { freeOfSecrets } from './checks.ts';
+import { freeOfSecrets, redact } from './checks.ts';
 import type { Kit } from './kit.ts';
 import { runnerSlot } from './runners.ts';
 import { DEADLINE, remoteWait } from './waits.ts';
@@ -51,7 +51,7 @@ export async function jobLog(kit: Kit, runRepo: string, runId: string, file: str
   mkdirSync(dir, { recursive: true });
   const secrets = kit.secrets();
   const secretFound = !freeOfSecrets(text, secrets);
-  const saved = secretFound ? secrets.reduce((t, s) => (s.length < 8 ? t : t.split(s).join('[secret value removed by nibfin-e2e]')), text) : text;
+  const saved = secretFound ? redact(text, secrets) : text;
   writeFileSync(join(dir, `${file}.log`), saved);
   return { job, text, secretFound };
 }

@@ -62,7 +62,7 @@ export function configRejections(kitFor: KitFor): Scenario {
     async run(ctx) {
       const kit = kitFor(ctx);
       const repo = kit.sandbox.execution;
-      const c = new Checks();
+      const c = new Checks(kit.secrets());
       for (const k of CASES) {
         let n: number | undefined;
         try {

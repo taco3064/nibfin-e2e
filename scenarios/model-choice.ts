@@ -45,7 +45,7 @@ export function modelChoice(kitFor: KitFor): Scenario {
       const kit = kitFor(ctx);
       const { execution, peer } = kit.sandbox;
       const opened: [string, number][] = [];
-      const c = new Checks();
+      const c = new Checks(kit.secrets());
       const body = async (): Promise<Outcome> => {
         await prepareFixture(kit, execution, {
           files: [
