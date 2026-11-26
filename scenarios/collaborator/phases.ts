@@ -52,10 +52,35 @@ export interface PrivateResult {
   reg: Registered;
   visibility: string;
   mainSha: string;
+  /** The dedicated deploy key on the host, read after `runner add` and before `runner remove`. */
+  keyOnHost: KeyOnHost;
   probe: ProbeResult;
   remove: ExecResult;
   afterRemove: { runners: Registration[]; keys: DeployKey[] };
   local: LocalState;
+}
+
+export interface KeyOnHost {
+  /** Content of `id_ed25519.pub`, or the read error. */
+  pub: { text: string } | { error: string };
+  file: PeerStat | undefined;
+  dir: PeerStat | undefined;
+  /** Key files `find` lists under the Runner directories. */
+  inRunners: string;
+}
+
+/** The dedicated deploy key's files on the collaborator's host (Proposal R5.61). */
+export async function keyOnHost(ctx: RunContext, deployKeyDir: string): Promise<KeyOnHost> {
+  const peer = ctx.peer();
+  const keyFile = join(deployKeyDir, 'id_ed25519');
+  let pub: KeyOnHost['pub'];
+  try {
+    pub = { text: await peer.readPublic(`${keyFile}.pub`) };
+  } catch (error) {
+    pub = { error: message(error) };
+  }
+  const inRunners = await peer.run(['find', join(peer.dataHome, 'nibfin', 'runners'), '-name', 'id_ed25519*']);
+  return { pub, file: await peer.stat(keyFile), dir: await peer.stat(deployKeyDir), inRunners: inRunners.stdout.trim() };
 }
 
 interface Memo {
@@ -90,11 +115,13 @@ export async function register(ctx: RunContext, clock: Clock = realClock): Promi
   const perm = await gh.rest<{ permission?: string }>('GET', `/repos/${repo}/collaborators/${encodeURIComponent(peer.login)}/permission`);
   const before = await registrations(gh, repo);
   const startedAt = clock.now();
+  // Request Issues already there (an earlier phase's) are not this command's.
+  const earlier = new Set((await requestIssues(gh, repo, peer.login, startedAt - 24 * 3600_000)).map((i) => i.number));
   const command = await peer.ghNibfin(['runner', 'add', 'claude', '--count', '1', '--yes']);
   const exitedAt = clock.now();
   ctx.log(`collaborator runner add exited ${command.code}`);
 
-  const issues = await requestIssues(gh, repo, peer.login, startedAt);
+  const issues = (await requestIssues(gh, repo, peer.login, startedAt)).filter((i) => !earlier.has(i.number));
   const issue = issues[0];
   const all = issue ? await comments(gh, repo, issue.number) : [];
   let answer: Registered['answer'];
@@ -215,10 +242,11 @@ export function privatePhase(ctx: RunContext): Promise<PrivateResult> {
       try {
         const { data } = await gh.rest<{ visibility?: string }>('GET', `/repos/${repo}`);
         const mainSha = (await prober.main()).sha;
+        const key = await keyOnHost(ctx, reg.deployKeyDir);
         const probe = await prober.probe('main');
         const remove = await peer.ghNibfin(['runner', 'remove', 'claude', '--yes']);
         const afterRemove = { runners: await registrations(gh, repo), keys: await deployKeys(gh, repo) };
-        return { reg, visibility: String(data.visibility), mainSha, probe, remove, afterRemove, local: await localState(ctx) };
+        return { reg, visibility: String(data.visibility), mainSha, keyOnHost: key, probe, remove, afterRemove, local: await localState(ctx) };
       } finally {
         await prober.cancelActive();
       }
