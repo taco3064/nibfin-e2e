@@ -29,7 +29,11 @@ jobs:
             BASE=$(git hash-object -t tree /dev/null)
           fi
           git diff --check "$BASE" HEAD
-      - name: Install locked dependencies
-        run: npm ci --ignore-scripts
-      - name: Verify the local E2E framework
-        run: npm --ignore-scripts run verify
+      - name: Verify the scenario harness
+        run: |
+          if [[ ! -f package.json ]]; then
+            echo "No package.json yet; nothing to verify."
+            exit 0
+          fi
+          npm ci --ignore-scripts
+          npm --ignore-scripts run verify
