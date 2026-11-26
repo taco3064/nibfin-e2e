@@ -78,6 +78,34 @@ and pull request settings and the visibility. Collaborators are not touched.
 legs one after another (`strategy.max-parallel: 1`). The online-runner check
 catches only some overlaps; it does not make concurrent hosts safe.
 
+## Dashboard and site scenarios
+
+`scenarios/dashboard/` starts `gh nibfin dashboard --no-browser` on the provisioned
+host and drives it in headless Google Chrome through `playwright-core` (no browser
+is downloaded; the host needs Google Chrome, which GitHub-hosted `ubuntu-24.04`
+has). `scenarios/site/` checks the public site's Live page and the site's deploy
+workflows in gh-nibfin. Elements are found by accessible role, name and visible
+text only, and the Dashboard's responses are never mocked or intercepted.
+
+- Browser profiles and temporary files live under `.e2e-work/browser/`. The
+  browser gets the host environment without any `E2E_*` variable or `GH_TOKEN`.
+  Session proofs and sessions stay in memory and are redacted from every reason.
+- Children (`ctx.start`, `ctx.startGhNibfin`) and browsers a scenario starts are
+  stopped when that scenario ends, also when it throws: each registers its stop
+  with `ctx.defer`, and the runner runs those cleanups after every scenario,
+  bounded in time.
+- The scenarios create fixture Issues titled `[e2e #298] Dashboard fixture …`
+  with `pause` or `pending` in the create call, so none of them is dispatched;
+  only fixture E (created by `dashboard-updates`) starts one local Job.
+- `dashboard-operations` and `dashboard-updates` require earlier work in the
+  sandboxes to have settled: no running Nibfin container, no unpaused `scope` or
+  `request` Issue other than the fixtures, and no open pull request or queued or
+  in-progress run in the execution sandbox. Otherwise they fail with a
+  precondition reason naming what is still active, and assert nothing about the
+  product.
+- `dashboard-operations` removes and re-adds the claude Runners through the
+  Dashboard, leaving two online Runners as provisioning did.
+
 ## Coverage map
 
 `coverage-map.json` lists every Proposal rule, in Proposal order, by its `R` id:
@@ -98,9 +126,14 @@ rules, change 不測 marks, and keep ids as they are (they are never reused).
    `gh nibfin` in the execution clone), `github`, `sandbox` names,
    `facts('nibfin')` (the command results, init PR numbers and digest) and
    `withExecutionVisibility('private', fn)` for scenarios that need a private
-   execution repository; it restores public afterwards.
+   execution repository; it restores public afterwards. `start`/`startGhNibfin`
+   run long-lived children, `exec` runs one without secrets, `workDir()` and
+   `browserEnv()` place and configure a browser, and `defer(fn)` registers a
+   cleanup for the end of the scenario.
 2. Import it in `scenarios/index.ts` and add it to the list `createScenarios`
    returns (a scenario that needs the host's processes takes the `HostServices`).
+   The Dashboard and site scenarios are listed after that list in
+   `src/registry.ts`, so the Dashboard scenarios run last.
 3. List its id under each of its rules in `coverage-map.json`.
 
 Scenarios that run fixture Issues use the shared library in `scenarios/lib/`:
