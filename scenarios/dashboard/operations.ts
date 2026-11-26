@@ -1,7 +1,7 @@
 // Proposal R9.12, R9.13, R9.18, R9.20–R9.22 and R9.6: operations through the Dashboard.
 import type { Locator, Page } from 'playwright-core';
 import type { RunContext } from '../../src/types.ts';
-import { check, commandInputs, fail, fieldProblems, fieldsFromAriaSnapshot, pauseResumePreconditions, startsInWindow } from './checks.ts';
+import { check, commandInputs, fail, fieldProblems, pauseResumePreconditions, startsInWindow } from './checks.ts';
 import type { SchemaInput } from './checks.ts';
 import { assertQuietSandboxes, blockedBy, ensureFixtures, readIssue, sleep, until } from './github.ts';
 import type { Fixtures } from './github.ts';
@@ -12,6 +12,7 @@ import {
   closeDialog,
   defineScenario,
   dialog,
+  dialogFields,
   gotoView,
   issueElement,
   mustButton,
@@ -89,7 +90,7 @@ async function commandSchema(ctx: RunContext, secrets: Secrets): Promise<Map<str
 }
 
 /** Opens each operation's dialog and compares its fields with the schema (R9.12, R9.13). */
-async function dialogFields(page: Page, ctx: RunContext, schema: Map<string, SchemaInput[]>, notes: string[]) {
+async function commandDialogs(page: Page, ctx: RunContext, schema: Map<string, SchemaInput[]>, notes: string[]) {
   const problems: string[] = [];
   const open = async (view: 'runner' | 'repo', name: RegExp, command: string) => {
     await gotoView(page, view);
@@ -98,7 +99,7 @@ async function dialogFields(page: Page, ctx: RunContext, schema: Map<string, Sch
     const d = await dialog(page);
     const inputs = schema.get(command);
     if (!inputs) problems.push(`${command}: not in /api/commands`);
-    else problems.push(...fieldProblems(command, inputs, fieldsFromAriaSnapshot(await d.ariaSnapshot())));
+    else problems.push(...fieldProblems(command, inputs, await dialogFields(d)));
     await closeDialog(page);
   };
   await open('runner', /^(runner )?add\b/i, 'runner add');
@@ -299,7 +300,7 @@ export const dashboardOperations = defineScenario({
     try {
       const { page } = await openPage(ctx);
       await openDashboard(page, dash);
-      await dialogFields(page, ctx, schema, notes);
+      await commandDialogs(page, ctx, schema, notes);
       await planningProgress(page, ctx, notes);
       await failedPlan(page, ctx, notes);
     } finally {

@@ -220,6 +220,8 @@ export function fieldProblems(command: string, inputs: SchemaInput[], fields: Fo
       continue;
     }
     if (input.required && f.required === false) out.push(`${command}: field ${f.name} is not marked required`);
+    if (!input.required && f.required === true) out.push(`${command}: field ${f.name} is marked required, the schema says optional`);
+    if (input.values.length && !f.options) out.push(`${command}: field ${f.name} offers no choice of ${input.values.join(', ')}`);
     if (input.values.length && f.options) {
       const opts = f.options.map(normalizeName);
       for (const v of input.values) if (!opts.some((o) => o.includes(normalizeName(v)))) out.push(`${command}: field ${f.name} does not offer ${v}`);
@@ -231,13 +233,28 @@ export function fieldProblems(command: string, inputs: SchemaInput[], fields: Fo
 
 const FIELD_ROLES = ['textbox', 'combobox', 'checkbox', 'spinbutton', 'switch', 'radiogroup', 'listbox', 'searchbox'];
 
-/** Form fields from a Playwright aria snapshot (`- textbox "Repository"`). */
+/**
+ * Form fields from a Playwright aria snapshot (`- textbox "Repository"`), with the
+ * `option` and `radio` lines nested under a field as its options. The required flag
+ * is not in a snapshot; the caller reads it from the element.
+ */
 export function fieldsFromAriaSnapshot(snapshot: string): FormField[] {
   const out: FormField[] = [];
+  let current: { field: FormField; indent: number } | undefined;
   for (const line of snapshot.split('\n')) {
-    const m = /^\s*-\s+([a-z]+)\s+"([^"]*)"/.exec(line);
-    if (!m || !FIELD_ROLES.includes(m[1] as string)) continue;
-    out.push({ role: m[1] as string, name: m[2] as string });
+    const indent = /^\s*/.exec(line)?.[0].length ?? 0;
+    const m = /^\s*-\s+([a-z]+)(?:\s+"([^"]*)")?/.exec(line);
+    if (!m) continue;
+    const role = m[1] as string;
+    if (current && indent > current.indent && (role === 'option' || role === 'radio') && m[2] !== undefined) {
+      (current.field.options ??= []).push(m[2]);
+      continue;
+    }
+    if (current && indent <= current.indent) current = undefined;
+    if (!FIELD_ROLES.includes(role) || m[2] === undefined) continue;
+    const field: FormField = { role, name: m[2] };
+    out.push(field);
+    current = { field, indent };
   }
   return out;
 }
