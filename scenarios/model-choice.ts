@@ -59,8 +59,12 @@ export function modelChoice(host: HostServices): Scenario {
         await restart(kit, SLOT);
 
         const run = (repo: string) =>
-          runFirstJob(kit, repo, { title: 'e2e model choice: add double(n)', file: `model-choice-${repo.split('/')[1]}`, deadlineMs: DEADLINE.shape, stage: 'Shape', pause: true }).then((j) => (opened.push([repo, j.issue]), j));
-        const [ex, pe] = await Promise.all([run(execution), run(peer)]);
+          runFirstJob(kit, repo, { title: 'e2e model choice: add double(n)', file: `model-choice-${repo.split('/')[1]}`, deadlineMs: DEADLINE.shape, stage: 'Shape', pause: true, onOpen: (n) => opened.push([repo, n]) });
+        // Both Jobs are awaited, also when one fails, so neither runs on while the Runner is restored.
+        const settled = await Promise.allSettled([run(execution), run(peer)]);
+        const failedRuns = settled.flatMap((s) => (s.status === 'rejected' ? [message(s.reason)] : []));
+        if (failedRuns.length) throw new Error(failedRuns.join('; '));
+        const [ex, pe] = settled.map((s) => (s as PromiseFulfilledResult<FirstJob>).value) as [FirstJob, FirstJob];
         const slots = { ex: await slotOf(kit, ex), pe: await slotOf(kit, pe) };
         if (slots.ex === slots.pe) return { status: 'failed', reason: `both Jobs landed on one Runner (${slots.ex}), so the per-Runner model cannot be told apart` };
         const model = (j: FirstJob) => initEvents(j.log?.text ?? '')[0]?.model;

@@ -85,11 +85,12 @@ test('the stage Job is the one on a local Runner; its runner_name maps to a slot
   ];
   const original = h.fake.fetch;
   let logAuth: string | null = 'unset';
+  let logBody = 'the log\n';
   h.kit.github = (await import('../../src/host/github.ts')).createGitHub(() => 'tok', async (input, init) => {
     const url = new URL(String(input));
     if (url.pathname.endsWith('/runs/42/jobs')) return new Response(JSON.stringify({ total_count: jobs.length, jobs }), { status: 200 });
     if (url.pathname.endsWith('/jobs/2/logs')) return new Response(null, { status: 302, headers: { Location: 'https://logs.example/x' } });
-    if (url.host === 'logs.example') return ((logAuth = new Headers(init?.headers).get('authorization')), new Response('the log\n'));
+    if (url.host === 'logs.example') return ((logAuth = new Headers(init?.headers).get('authorization')), new Response(logBody));
     return original(input, init);
   });
   deepEqual(await stageJob(h.kit, EXEC, '42'), { id: 2, name: 'stage', runnerName: 'myhost-1a2b3c4d-claude-2', slot: 'claude-2', status: 'completed' });
@@ -98,6 +99,12 @@ test('the stage Job is the one on a local Runner; its runner_name maps to a slot
   equal(got.text, 'the log\n');
   equal(logAuth, null);
   equal(readFileSync(join(work, 'logs', 'case-1.log'), 'utf8'), 'the log\n');
+  equal(got.secretFound, false);
+  // A secret in the log is reported and never saved.
+  logBody = 'leaked claude-token-value here\n';
+  const leaked = await jobLog({ ...h.kit, workDir: work }, EXEC, '42', 'case-2');
+  equal(leaked.secretFound, true);
+  equal(readFileSync(join(work, 'logs', 'case-2.log'), 'utf8').includes('claude-token-value'), false);
   jobs[1] = { ...jobs[1], runner_name: 'otherhost-claude' } as (typeof jobs)[number];
   const err = await stageJob(h.kit, EXEC, '42').catch((e: Error) => e.message);
   match(String(err), /expected one Job on a local Runner .*saw route on GitHub Actions 12, stage on otherhost-claude/);

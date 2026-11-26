@@ -22,7 +22,7 @@ export function hostMemoryCheck(host: HostServices): Scenario {
       await prepareFixture(kit, repo, { files: [], variables: { NIBFIN_CONTAINER_LIMITS: 'off', NIBFIN_MEMORY: '1024g' } });
       let n: number | undefined;
       try {
-        const job = await runFirstJob(kit, repo, { title: 'e2e host memory check: add double(n)', file: 'host-memory-check', deadlineMs: DEADLINE.rejected, stage: 'memory-checked' });
+        const job = await runFirstJob(kit, repo, { title: 'e2e host memory check: add double(n)', file: 'host-memory-check', deadlineMs: DEADLINE.rejected, stage: 'memory-checked', onOpen: (i) => (n = i) });
         n = job.issue;
         const p = job.projection;
         c.hold('R6.1', 'a labelled Podman container ran the Job', true, p ? `image ${p.imageName}` : 'started and ended before it could be inspected');

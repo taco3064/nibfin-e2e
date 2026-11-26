@@ -7,7 +7,7 @@ import { agentSetup } from '../../scenarios/agent-setup.ts';
 import { codexJobs } from '../../scenarios/codex-jobs.ts';
 import { jobContainer } from '../../scenarios/job-container.ts';
 import { EXTEND_MARKER } from '../../scenarios/lib/files.ts';
-import { runObservedJob } from '../../scenarios/lib/observed.ts';
+import { missingApprovalLine, runObservedJob } from '../../scenarios/lib/observed.ts';
 import type { ObservedFacts } from '../../scenarios/lib/observed.ts';
 import { projectTools } from '../../scenarios/project-tools.ts';
 import { roleSkills } from '../../scenarios/role-skills.ts';
@@ -91,7 +91,7 @@ async function simulate() {
   repo.commits.set('b1', { tree: 'branch-tree', parents: ['c0'] });
   repo.branches.set(branch, 'b1');
   repo.pulls.push({ number: 77, state: 'open', head: { sha: 'b1', ref: branch } });
-  repo.issues.push({ number: 77, node_id: 'PR77', state: 'open', comments: ['Waiting for an approving review from a collaborator before merging.'] });
+  repo.issues.push({ number: 77, node_id: 'PR77', state: 'open', comments: ['Shape review: the change matches the approved Shape.', 'Waiting for an approving review from a collaborator before merging.'] });
   h.events.emit('{"ID":"c2","Status":"start"}');
   h.events.emit('{"ID":"c2","Status":"died"}');
   h.events.emit('{"ID":"c3","Status":"start"}');
@@ -152,6 +152,12 @@ test('the fact-reading scenarios fail listing each check that did not hold, per 
   const tools = await projectTools.run(ctxWith(f));
   match(tools.reason, /R7\.3: node is the requested v22\.15\.0.*observed: v20\.0\.0.*no Repository Dockerfile or script ran \(observed: nibfin-tools:e2e-decoy-dockerfile\)/);
   match((await roleSkills.run(ctxWith(f))).reason, /R7\.6: extend keeps the built-in text first/);
+});
+
+test('only a Nibfin comment saying an approving review is missing counts', () => {
+  const by = (login: string, body: string) => ({ body, user: { login } });
+  equal(missingApprovalLine([by('o', 'Review: looks good, merging next.'), by('someone', 'Waiting for approval')], 'o'), undefined);
+  equal(missingApprovalLine([by('o', 'Shape review passed.\nMerge is blocked: waiting for 1 approving review.')], 'o'), 'Merge is blocked: waiting for 1 approving review.');
 });
 
 test('codex-jobs waits for Phase 5', async () => {

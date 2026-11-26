@@ -26,7 +26,7 @@ export function failureLogs(host: HostServices): Scenario {
       await prepareFixture(kit, repo, { files: [{ path: '.nibfin.json', content: json({ tools: { python: '3.99.99' } }) }] });
       let n: number | undefined;
       try {
-        const job = await runFirstJob(kit, repo, { title: 'e2e failure logs: add double(n)', file: 'failure-logs', deadlineMs: DEADLINE.rejected, stage: 'rejected' });
+        const job = await runFirstJob(kit, repo, { title: 'e2e failure logs: add double(n)', file: 'failure-logs', deadlineMs: DEADLINE.rejected, stage: 'rejected', onOpen: (i) => (n = i) });
         n = job.issue;
         const comment = (await comments(kit, repo, n)).map((x) => x.body).join('\n');
         const log = job.log?.text ?? '';
@@ -35,7 +35,7 @@ export function failureLogs(host: HostServices): Scenario {
         const toolCode = shared.find((code) => /TOOL|INSTALL|PYTHON/.test(code));
         c.hold('R1.14', 'the comment and the log carry the same tool cause code', toolCode !== undefined, `comment codes ${causeCodes(comment).join(', ') || 'none'}; shared ${shared.join(', ') || 'none'}`);
         c.hold('R1.14', "uv's own output is kept in the Job log", UV_OUTPUT.test(log), UV_OUTPUT.exec(log)?.[0] ?? 'not found');
-        const clean = freeOfSecrets(log + '\n' + comment, kit.secrets());
+        const clean = freeOfSecrets(log + '\n' + comment, kit.secrets()) && job.log?.secretFound !== true;
         c.hold('R1.14', 'no credential appears in the log or the comment', clean, clean ? 'not found' : 'found');
         const digest = imageDigest(ctx);
         const clear = [repo, digest].filter((s) => !log.includes(s));
