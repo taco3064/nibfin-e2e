@@ -178,10 +178,13 @@ export class Observer {
     return this.memo(`comments ${repo} ${n}`, () => this.gh.list<Comment>(`/repos/${repo}/issues/${n}/comments`));
   }
 
-  /** Repository activity (push, force_push, branch_creation, branch_deletion…), optionally for one ref. */
+  /**
+   * Repository activity of the last day (push, force_push, branch_creation,
+   * branch_deletion…), optionally for one ref or type. It pages by `Link` cursors.
+   */
   activity(repo: string, filter: { ref?: string; type?: string } = {}): Promise<Activity[]> {
-    const q = [filter.ref && `ref=${encodeURIComponent(filter.ref)}`, filter.type && `activity_type=${filter.type}`].filter(Boolean).join('&');
-    return this.memo(`activity ${repo} ${q}`, () => this.gh.list<Activity>(`/repos/${repo}/activity${q ? `?${q}` : ''}`));
+    const q = ['time_period=day', filter.ref && `ref=${encodeURIComponent(filter.ref)}`, filter.type && `activity_type=${filter.type}`].filter(Boolean).join('&');
+    return this.memo(`activity ${repo} ${q}`, () => this.gh.listByLink<Activity>(`/repos/${repo}/activity?${q}`));
   }
 
   blockedBy(repo: string, n: number): Promise<Issue[]> {

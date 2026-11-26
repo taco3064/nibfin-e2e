@@ -226,9 +226,12 @@ export function markWindow(lines: LogLine[], start: RegExp, end: RegExp): { star
   return s === undefined || e === undefined ? undefined : { start: s, end: e };
 }
 
-/** Push and force-push activities whose timestamp lies inside the window. */
+/** Activity types that write a branch: a push, a force push, or the push that creates it. */
+export const BRANCH_WRITES = new Set(['push', 'force_push', 'branch_creation']);
+
+/** Branch writes whose timestamp lies inside the window. */
 export function pushesWithin(acts: Activity[], w: { start: number; end: number }): Activity[] {
-  return acts.filter((a) => (a.activity_type === 'push' || a.activity_type === 'force_push') && time(a.timestamp) >= w.start && time(a.timestamp) <= w.end);
+  return acts.filter((a) => BRANCH_WRITES.has(a.activity_type) && time(a.timestamp) >= w.start && time(a.timestamp) <= w.end);
 }
 
 /** Whether a branch ref (`refs/heads/…` or bare) is derived from the Issue number: `nibfin/issue-<n>` and its suffixed variants. */

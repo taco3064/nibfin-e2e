@@ -2,6 +2,7 @@
 import type { Scenario } from '../../src/types.ts';
 import {
   AGENT_STAGES,
+  BRANCH_WRITES,
   Checks,
   concurrentPair,
   firstMark,
@@ -21,7 +22,6 @@ import { ACCEPT_END, ACCEPT_START, BLOCKER_REPORT, NO_ASSIGNEE_REPORT, SHAPE_MAR
 import type { Snapshot } from './observe.ts';
 import { closingProblems } from './phase1.ts';
 
-const WRITES = new Set(['push', 'force_push', 'branch_creation']);
 const iso = (ms: number) => new Date(ms).toISOString();
 
 /** R3.13 / R3.40: the shape job's log shows a Validator verdict before the Shape comment and `shaped`. */
@@ -67,7 +67,7 @@ export const deliveryLifecycle: Scenario = lifecycle({
 
     // R3.15, R6.5: only the Writer writes the branch; the Validator and the Acceptor never push.
     const windows = await k.windows(s, exec, n, true);
-    const acts = (await k.obs.activity(exec, { ref: `refs/heads/${branch}` })).filter((a) => WRITES.has(a.activity_type));
+    const acts = (await k.obs.activity(exec, { ref: `refs/heads/${branch}` })).filter((a) => BRANCH_WRITES.has(a.activity_type));
     const inside = (a: Activity, w: Window) => time(a.timestamp) >= w.start && time(a.timestamp) <= w.end;
     for (const a of acts) {
       const ws = windows.filter((w) => inside(a, w));
@@ -187,7 +187,8 @@ async function reported(k: Kit, s: Snapshot, n: number, pattern: RegExp, before 
     if (job.status !== 'completed' || time(job.completed_at) > before) continue;
     if ((await k.obs.log(k.exec, job.id)).some((l) => pattern.test(l.text))) return true;
   }
-  return (await k.obs.comments(k.exec, n)).some((x) => markerOf(x.body) && pattern.test(x.body ?? ''));
+  // Only comments written by then: a later Shape or closing comment may name the dependency too.
+  return (await k.obs.comments(k.exec, n)).some((x) => markerOf(x.body) && pattern.test(x.body ?? '') && time(x.created_at) <= before);
 }
 
 export const blockedByChain: Scenario = lifecycle({
