@@ -1,0 +1,351 @@
+// What every lifecycle scenario shares: one observer, fixture Issues, hook rules, the
+// execution baseline and the shared journeys. All writes go through public GitHub APIs.
+import { randomBytes } from 'node:crypto';
+import type { GitHub } from '../../src/host/github.ts';
+import type { Outcome, RunContext, Scenario } from '../../src/types.ts';
+import { AGENT_STAGES, issueKey, jobWindow, markerOf, selfHosted, stageRuns, time } from './analysis.ts';
+import type { Issue, Job, Run, Stage, Window } from './analysis.ts';
+import { Observer } from './observe.ts';
+import type { Snapshot } from './observe.ts';
+
+const MIN = 60_000;
+
+/** How long each kind of wait may take. Phase 2 shares two Runners among many fixtures. */
+export const DEADLINE = {
+  /** A wake or route run, a label or a comment after an event. */
+  event: 30 * MIN,
+  /** One agent stage, including its queue time behind other Issues. */
+  stage: 150 * MIN,
+  /** A whole delivery from `scope` to closure. */
+  delivery: 300 * MIN,
+  /** How long "nothing happens" is watched before it is accepted. */
+  quiet: 5 * MIN,
+} as const;
+
+export interface Hook {
+  when: string;
+  event?: 'push' | 'pull_request';
+  attempt?: number;
+  require?: { file: string; contains: string };
+  holdTag?: string;
+}
+
+export interface FixtureSpec {
+  scenario: string;
+  title: string;
+  body: string;
+  labels?: string[];
+  assignees?: string[];
+}
+
+export const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** A request for a few-line change with its own test, in files only this fixture touches. */
+export function changeRequest(slug: string, fn: string, behaviour: string, extra = ''): string {
+  return [
+    `Add \`src/${slug}.js\` exporting a function \`${fn}\` that ${behaviour}, and a \`node:test\` test for it in \`test/${slug}.test.js\`.`,
+    'Keep the change to these two files.',
+    extra,
+    '_This Issue is an automated nibfin-e2e fixture._',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+/** Replaces every secret value in a text. */
+export function redact(text: string, secrets: string[]): string {
+  let out = text;
+  for (const s of secrets) if (s) out = out.split(s).join('***');
+  return out;
+}
+
+export interface KitOptions {
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+  intervalMs?: number;
+  tag?: string;
+}
+
+export class Kit {
+  readonly ctx: RunContext;
+  readonly gh: GitHub;
+  readonly obs: Observer;
+  readonly exec: string;
+  readonly peer: string;
+  /** Unique per run: fixture titles, files and tags carry it. */
+  readonly tag: string;
+  readonly start: number;
+  private lock: Promise<unknown> = Promise.resolve();
+  private readonly memos = new Map<string, Promise<unknown>>();
+
+  constructor(ctx: RunContext, opts: KitOptions = {}) {
+    this.ctx = ctx;
+    this.gh = ctx.github;
+    this.exec = ctx.sandbox.execution;
+    this.peer = ctx.sandbox.peer;
+    const now = opts.now ?? (() => Date.now());
+    // Runs created a minute before the start still count, so a clock skew loses nothing.
+    this.start = now() - MIN;
+    this.tag = opts.tag ?? `r${randomBytes(3).toString('hex')}`;
+    this.obs = new Observer(this.gh, [this.exec, this.peer], { since: this.start, now, sleep: opts.sleep, intervalMs: opts.intervalMs, log: ctx.log });
+  }
+
+  now(): number {
+    return this.obs.now();
+  }
+
+  /** Runs `fn` once per kit; later callers share its promise. */
+  once<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    let p = this.memos.get(key) as Promise<T> | undefined;
+    if (!p) this.memos.set(key, (p = fn()));
+    return p;
+  }
+
+  async owner(): Promise<{ login: string; id: number }> {
+    return { login: await this.ctx.ownerLogin(), id: await this.ctx.ownerId() };
+  }
+
+  /** The routing label of the Owner's Runners (Proposal R4.18). */
+  async ownerLabel(): Promise<string> {
+    return `nibfin-${await this.ctx.ownerId()}`;
+  }
+
+  slug(kind: string): string {
+    return `e2e-${kind}-${this.tag}`;
+  }
+
+  async file(repo: string, spec: FixtureSpec): Promise<Issue> {
+    const { data } = await this.gh.rest<Issue>('POST', `/repos/${repo}/issues`, {
+      title: `[e2e ${spec.scenario}] ${spec.title} (${this.tag})`,
+      body: spec.body,
+      labels: spec.labels ?? [],
+      assignees: spec.assignees ?? [],
+    });
+    this.ctx.log(`${spec.scenario}: filed ${repo}#${data.number} ${spec.title}`);
+    return data;
+  }
+
+  async addLabels(repo: string, n: number, labels: string[]): Promise<void> {
+    await this.gh.rest('POST', `/repos/${repo}/issues/${n}/labels`, { labels });
+  }
+
+  async removeLabel(repo: string, n: number, label: string): Promise<void> {
+    await this.gh.rest('DELETE', `/repos/${repo}/issues/${n}/labels/${encodeURIComponent(label)}`, undefined, [404]);
+  }
+
+  /** Adds `pause` to the given Issues that are still open; used in `finally`, so it never throws. */
+  async pauseOpen(repo: string, numbers: (number | undefined)[]): Promise<void> {
+    for (const n of numbers) {
+      if (n === undefined) continue;
+      try {
+        const { data } = await this.gh.rest<Issue>('GET', `/repos/${repo}/issues/${n}`);
+        if (data.state === 'open' && !data.labels.some((l) => l.name === 'pause')) await this.addLabels(repo, n, ['pause']);
+      } catch (error) {
+        this.ctx.log(`could not pause ${repo}#${n}: ${message(error)}`);
+      }
+    }
+  }
+
+  /** Adds native `Blocked by` edges and reads them back. */
+  async blockBy(repo: string, n: number, blockers: Issue[]): Promise<void> {
+    for (const b of blockers) await this.gh.rest('POST', `/repos/${repo}/issues/${n}/dependencies/blocked_by`, { issue_id: b.id });
+    const got = (await this.gh.list<Issue>(`/repos/${repo}/issues/${n}/dependencies/blocked_by`)).map((i) => i.number).sort();
+    const want = blockers.map((b) => b.number).sort();
+    if (JSON.stringify(got) !== JSON.stringify(want)) throw new Error(`${repo}#${n} is blocked by ${got.join(', ') || 'nothing'}, expected ${want.join(', ')}`);
+  }
+
+  /** Appends rules to `E2E_CI_RULES` or `E2E_CD_RULES` of the execution sandbox (serialized read-modify-write) and reads them back. */
+  hookRules(kind: 'ci' | 'cd', rules: Hook[]): Promise<void> {
+    const run = async () => {
+      const name = kind === 'ci' ? 'E2E_CI_RULES' : 'E2E_CD_RULES';
+      const path = `/repos/${this.exec}/actions/variables`;
+      const cur = await this.gh.rest<{ value: string }>('GET', `${path}/${name}`, undefined, [404]);
+      const list = cur.status === 404 ? [] : (JSON.parse(cur.data.value || '[]') as Hook[]);
+      const value = JSON.stringify([...list, ...rules]);
+      if (cur.status === 404) await this.gh.rest('POST', path, { name, value });
+      else await this.gh.rest('PATCH', `${path}/${name}`, { name, value });
+      const { data } = await this.gh.rest<{ value: string }>('GET', `${path}/${name}`);
+      if (data.value !== value) throw new Error(`${this.exec} variable ${name} reads back ${data.value}, expected ${value}`);
+    };
+    const next = this.lock.then(run, run);
+    this.lock = next.catch(() => undefined);
+    return next;
+  }
+
+  /** A fast-forward commit on the branch adding or replacing files (Git Data API). */
+  async commitFiles(repo: string, branch: string, files: Record<string, string>, msg: string): Promise<string> {
+    const r = `/repos/${repo}`;
+    const { data: head } = await this.gh.rest<{ object: { sha: string } }>('GET', `${r}/git/ref/heads/${branch.split('/').map(encodeURIComponent).join('/')}`);
+    const { data: parent } = await this.gh.rest<{ tree: { sha: string } }>('GET', `${r}/git/commits/${head.object.sha}`);
+    const { data: tree } = await this.gh.rest<{ sha: string }>('POST', `${r}/git/trees`, {
+      base_tree: parent.tree.sha,
+      tree: Object.entries(files).map(([path, content]) => ({ path, mode: '100644', type: 'blob', content })),
+    });
+    const { data: commit } = await this.gh.rest<{ sha: string }>('POST', `${r}/git/commits`, { message: msg, tree: tree.sha, parents: [head.object.sha] });
+    await this.gh.rest('PATCH', `${r}/git/refs/heads/${branch.split('/').map(encodeURIComponent).join('/')}`, { sha: commit.sha, force: false });
+    return commit.sha;
+  }
+
+  async fileOn(repo: string, ref: string, path: string): Promise<string | undefined> {
+    const got = await this.gh.rest<{ content: string }>('GET', `/repos/${repo}/contents/${path}?ref=${encodeURIComponent(ref)}`, undefined, [404]);
+    return got.status === 404 ? undefined : Buffer.from(got.data.content, 'base64').toString('utf8');
+  }
+
+  /** Creates a ruleset on the default branch unless one of that name exists; returns its id. */
+  async ruleset(name: string, rules: unknown[]): Promise<number> {
+    const r = `/repos/${this.exec}/rulesets`;
+    const existing = (await this.gh.rest<{ id: number; name: string }[]>('GET', `${r}?per_page=100`)).data.find((x) => x.name === name);
+    if (existing) return existing.id;
+    const { data } = await this.gh.rest<{ id: number }>('POST', r, {
+      name,
+      target: 'branch',
+      enforcement: 'active',
+      conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } },
+      rules,
+    });
+    return data.id;
+  }
+
+  async deleteRuleset(name: string): Promise<void> {
+    const r = `/repos/${this.exec}/rulesets`;
+    for (const x of (await this.gh.rest<{ id: number; name: string }[]>('GET', `${r}?per_page=100`)).data) {
+      if (x.name === name) await this.gh.rest('DELETE', `${r}/${x.id}`, undefined, [404]);
+    }
+  }
+
+  /**
+   * The phase-2 execution baseline, once: a deliver Skill extension (so a role Skill
+   * file outside the protected directories exists), then the `e2e-ci` ruleset requiring
+   * `test`, then `NIBFIN_PROVIDER=codex` for R4.17. The commit comes first because the
+   * ruleset refuses direct pushes to main.
+   */
+  baseline(): Promise<void> {
+    return this.once('baseline', async () => {
+      const config = JSON.stringify({ skills: { deliver: { mode: 'extend', path: 'docs/agent/deliver.md' } } }, null, 2) + '\n';
+      const skill = 'Keep each change as small as the Issue allows.\n';
+      if ((await this.fileOn(this.exec, 'main', '.nibfin.json')) !== config || (await this.fileOn(this.exec, 'main', 'docs/agent/deliver.md')) !== skill) {
+        await this.commitFiles(this.exec, 'main', { '.nibfin.json': config, 'docs/agent/deliver.md': skill }, 'Extend the deliver Skill for the e2e baseline');
+      }
+      await this.ruleset('e2e-ci', [{ type: 'required_status_checks', parameters: { strict_required_status_checks_policy: false, required_status_checks: [{ context: 'test' }] } }]);
+      const v = `/repos/${this.exec}/actions/variables`;
+      const cur = await this.gh.rest<{ value: string }>('GET', `${v}/NIBFIN_PROVIDER`, undefined, [404]);
+      if (cur.status === 404) await this.gh.rest('POST', v, { name: 'NIBFIN_PROVIDER', value: 'codex' });
+      else if (cur.data.value !== 'codex') await this.gh.rest('PATCH', `${v}/NIBFIN_PROVIDER`, { name: 'NIBFIN_PROVIDER', value: 'codex' });
+      const back = await this.gh.rest<{ value: string }>('GET', `${v}/NIBFIN_PROVIDER`);
+      if (back.data.value !== 'codex') throw new Error(`${this.exec} variable NIBFIN_PROVIDER reads back ${back.data.value}`);
+    });
+  }
+
+  // ---- readings over a snapshot ----
+
+  issue(s: Snapshot, repo: string, n: number): Issue | undefined {
+    return s.issues.get(repo)?.find((i) => i.number === n);
+  }
+
+  labels(s: Snapshot, repo: string, n: number): string[] {
+    return this.issue(s, repo, n)?.labels.map((l) => l.name) ?? [];
+  }
+
+  delivered(s: Snapshot, repo: string, n: number): Issue | undefined {
+    const i = this.issue(s, repo, n);
+    return i && i.state === 'closed' && i.labels.some((l) => l.name === 'delivered') ? i : undefined;
+  }
+
+  stages(s: Snapshot, repo: string, n: number, stages?: readonly Stage[]): (Run & { stage: Stage })[] {
+    return stageRuns(s.runs, this.exec, repo, n, stages);
+  }
+
+  /** Jobs of the Issue's runs of these stages, each with its stage. */
+  async stageJobs(s: Snapshot, repo: string, n: number, stages: readonly Stage[] = AGENT_STAGES): Promise<(Job & { stage: Stage; run: Run })[]> {
+    const out: (Job & { stage: Stage; run: Run })[] = [];
+    for (const run of this.stages(s, repo, n, stages)) for (const j of await this.obs.jobs(this.exec, run.id)) out.push({ ...j, stage: run.stage, run });
+    return out;
+  }
+
+  /** The agent job (self-hosted) of the Issue's runs of these stages. */
+  async agentJobs(s: Snapshot, repo: string, n: number, stages: readonly Stage[] = AGENT_STAGES): Promise<(Job & { stage: Stage; run: Run })[]> {
+    return (await this.stageJobs(s, repo, n, stages)).filter((j) => AGENT_STAGES.includes(j.stage) && selfHosted(j));
+  }
+
+  /** Windows of the Issue's jobs; `all` includes route and finish jobs. */
+  async windows(s: Snapshot, repo: string, n: number, all = false): Promise<Window[]> {
+    const jobs = all ? await this.stageJobs(s, repo, n) : await this.agentJobs(s, repo, n);
+    return jobs.flatMap((j) => jobWindow(j, issueKey(repo, n), j.stage) ?? []);
+  }
+
+  /** Whether every execution run created after `after` (except those `ignore` matches) has completed. */
+  quietAfter(s: Snapshot, after: number, ignore: (r: Run) => boolean = () => false): boolean {
+    return s.runs.every((r) => time(r.created_at) < after || r.status === 'completed' || ignore(r));
+  }
+
+  /** Waits until runs woken after `after` have completed and one more snapshot shows nothing new running. */
+  async settle(desc: string, after: number, ignore?: (r: Run) => boolean): Promise<Snapshot> {
+    let calm = 0;
+    return this.obs.until(
+      `${desc}: the runs it woke to complete`,
+      (s) => {
+        calm = this.quietAfter(s, after, ignore) ? calm + 1 : 0;
+        return calm >= 2 && s.at - after >= DEADLINE.quiet ? s : undefined;
+      },
+      DEADLINE.stage,
+    );
+  }
+
+  /** A one-line state of an Issue for failure messages: labels, state and its runs. */
+  async summary(s: Snapshot, repo: string, n: number): Promise<string> {
+    const i = this.issue(s, repo, n);
+    if (!i) return `${repo}#${n} not found`;
+    const runs = this.stages(s, repo, n)
+      .slice(-8)
+      .map((r) => `${r.stage} ${r.status}${r.conclusion ? `/${r.conclusion}` : ''}`);
+    let last = '';
+    try {
+      const marked = (await this.obs.comments(repo, n)).filter((c) => markerOf(c.body));
+      const c = marked.at(-1);
+      if (c) last = `; last Nibfin comment: ${(c.body ?? '').replace(/<!--[\s\S]*?-->/g, '').replace(/\s+/g, ' ').trim().slice(0, 200)}`;
+    } catch {
+      // Comments are only context.
+    }
+    return redact(`${repo}#${n} ${i.state}${i.state_reason ? ` (${i.state_reason})` : ''} [${i.labels.map((l) => l.name).join(', ')}] runs: ${runs.join(', ') || 'none'}${last}`, this.ctx.secretValues());
+  }
+
+  show(repo: string, ...numbers: number[]): (s: Snapshot) => Promise<string> {
+    return async (s) => (await Promise.all(numbers.map((n) => this.summary(s, repo, n)))).join(' | ');
+  }
+}
+
+const kits = new WeakMap<object, Kit>();
+
+/** The kit of this run: one per context, so scenarios of one run share the observer and journeys. */
+export function kitFor(ctx: RunContext): Kit {
+  let k = kits.get(ctx.github);
+  if (!k) kits.set(ctx.github, (k = new Kit(ctx)));
+  return k;
+}
+
+export interface LifecycleDef {
+  id: string;
+  rules: string[];
+  concurrent?: boolean;
+  run(k: Kit): Promise<Outcome>;
+}
+
+/** A Linux scenario on the provisioned host; its reason never carries a secret value. */
+export function lifecycle(def: LifecycleDef, makeKit: (ctx: RunContext) => Kit = kitFor): Scenario {
+  return {
+    id: def.id,
+    rules: def.rules,
+    platforms: ['linux'],
+    requires: ['nibfin'],
+    concurrent: def.concurrent,
+    async run(ctx) {
+      let out: Outcome;
+      try {
+        out = await def.run(makeKit(ctx));
+      } catch (error) {
+        out = { status: 'failed', reason: message(error) };
+      }
+      return { status: out.status, reason: redact(out.reason, ctx.secretValues()) };
+    },
+  };
+}

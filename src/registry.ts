@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { createScenarios } from '../scenarios/index.ts';
+import { lifecycleScenarios } from '../scenarios/lifecycle/index.ts';
 import { createHostContext } from './host/context.ts';
 import { createServices } from './host/services.ts';
 import { createProvisioning } from './provisioning.ts';
@@ -16,10 +17,13 @@ import { livePage } from '../scenarios/site/live-page.ts';
 // reset only when a step first needs them.
 const services = createServices(fileURLToPath(new URL('..', import.meta.url)), (m) => process.stderr.write(m + '\n'));
 
-// Explicit lists. Scenario modules live under `scenarios/`; `scenarios/index.ts` imports and lists each one,
+// Explicit lists, in run order (consecutive `concurrent` scenarios start together, see
+// `Scenario.concurrent`). The delivery-lifecycle scenarios run first, on the freshly reset
+// sandboxes; `scenarios/index.ts` imports and lists the Issue #299 ones,
 // and the Dashboard and site scenarios are listed here after them. The Dashboard scenarios run
 // last: they need earlier work in the sandboxes to have settled.
 export const scenarios: Scenario[] = [
+  ...lifecycleScenarios,
   ...createScenarios(services),
   livePage,
   siteDeployOnPush,
