@@ -1,6 +1,7 @@
 import type { Visibility } from './host/config.ts';
 import type { Env, ExecResult, Running } from './host/exec.ts';
 import type { GitHub } from './host/github.ts';
+import type { HostOperations } from './host/operations.ts';
 
 /** Proposal rule id, `R<section>.<n>`, for example `R5.12`. */
 export type RuleId = string;
@@ -26,8 +27,8 @@ export interface RunTarget {
   platform: Platform;
 }
 
-/** The host and sandboxes as scenarios see them. */
-export interface HostContext {
+/** The host and sandboxes as scenarios see them; the host operations are Linux only. */
+export interface HostContext extends HostOperations {
   /** The two fixed sandboxes (Proposal R8.19). */
   sandbox: { execution: string; peer: string };
   /** The clone of the execution sandbox where `runner add` ran. */

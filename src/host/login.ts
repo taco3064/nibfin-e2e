@@ -79,9 +79,17 @@ export async function updateClaudeSettings(
  * to the helper container on stdin only and is never printed.
  */
 export async function writeClaudeLogin(host: HostServices, platform: Platform): Promise<string> {
-  const token = requireEnv(host.env, 'E2E_CLAUDE_TOKEN');
+  return writeClaudeToken(host, requireEnv(host.env, 'E2E_CLAUDE_TOKEN'), { manageMachine: platform === 'windows' });
+}
+
+/**
+ * Writes `token` as the login volume's Claude token, as `writeClaudeLogin` does, and
+ * reads it back. `manageMachine` starts the podman machine first and stops it after
+ * (Windows provisioning only; never while Runners run).
+ */
+export async function writeClaudeToken(host: HostServices, token: string, options: { manageMachine: boolean }): Promise<string> {
   const { exec } = host;
-  if (platform === 'windows') await podman(exec, ['machine', 'start']);
+  if (options.manageMachine) await podman(exec, ['machine', 'start']);
   try {
     const after = await updateClaudeSettings(
       exec,
@@ -93,6 +101,6 @@ export async function writeClaudeLogin(host: HostServices, platform: Platform): 
     );
     return `${CLAUDE_VOLUME}/settings.json has the token in env (owner and mode ${after.file})`;
   } finally {
-    if (platform === 'windows') await exec(['podman', 'machine', 'stop']);
+    if (options.manageMachine) await exec(['podman', 'machine', 'stop']);
   }
 }

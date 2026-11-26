@@ -302,4 +302,10 @@ export const fakeHostContext: HostContext = {
   exec: async () => ({ code: 0, stdout: '', stderr: '' }),
   workDir: () => '/tmp/none',
   browserEnv: () => ({}),
+  claudeLogin: async () => 'no host in this test',
+  runnerServices: async () => [],
+  stopJobContainers: async () => 0,
+  secretValues: () => [],
+  ownerLogin: async () => 'owner',
+  ownerId: async () => 1,
 };
