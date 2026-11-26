@@ -72,7 +72,7 @@ async function driveJourney(k: Kit, filed: number[]): Promise<Journey> {
 
   // R4.7: A without `scope` gets no stage and no comment once its opened wake completed.
   await k.obs.until('A\'s opened wake run to complete', (s) => (wakeRuns(s.runs, exec, a.number).some((r) => r.status === 'completed') ? true : undefined), DEADLINE.event, k.show(exec, a.number));
-  const calm = await k.settle('A opened', k.now());
+  const calm = await k.settle('A opened', k.now(), k.runsOf(exec, a.number));
   const aBeforeScope = { stageRuns: k.stages(calm, exec, a.number).length, comments: (await k.obs.comments(exec, a.number)).length };
   await k.addLabels(exec, a.number, ['scope']);
   const aScopedAt = k.now();
@@ -102,8 +102,11 @@ async function driveJourney(k: Kit, filed: number[]): Promise<Journey> {
     const r = pushRun(s, 'CI');
     return r && r.status === 'completed' && (r.run_attempt ?? 1) === 1 ? r : undefined;
   }, DEADLINE.event);
+  // What a CI or CD completion of the merge wakes: A's own runs and Nibfin's runs for the merge commit.
+  const ofA = k.runsOf(exec, a.number);
+  const forMerge = (r: Run) => r.display_title.startsWith('Nibfin ·') && r.display_title.includes(`@${mergeSha.slice(0, 7)}`);
   const heldCd = (r: Run) => r.name === 'CD' && r.head_sha === mergeSha;
-  const afterCi = await k.settle('CI of A\'s merge', time(ciRun.updated_at), heldCd);
+  const afterCi = await k.settle('CI of A\'s merge', time(ciRun.updated_at), (r) => (ofA(r) || forMerge(r)) && !heldCd(r));
   const openWhileCdHeld = isOpen(k, afterCi, a.number) && pushRun(afterCi, 'CD')?.status !== 'completed';
 
   // R3.36: a re-run attempt of CI that starts before CD completes, still running when it does.
@@ -118,7 +121,7 @@ async function driveJourney(k: Kit, filed: number[]): Promise<Journey> {
     return r?.status === 'completed' ? r : undefined;
   }, DEADLINE.event);
   const heldCi = (r: Run) => r.name === 'CI' && r.head_sha === mergeSha;
-  const afterCd = await k.settle('CD of A\'s merge', time(cdRun.updated_at), heldCi);
+  const afterCd = await k.settle('CD of A\'s merge', time(cdRun.updated_at), (r) => (ofA(r) || forMerge(r)) && !heldCi(r));
   const openAfterCd = isOpen(k, afterCd, a.number);
   await k.gh.rest('POST', `/repos/${exec}/git/refs`, { ref: `refs/tags/${t}-a-ci2`, sha: mergeSha });
 
@@ -194,7 +197,8 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
   await k.addLabels(exec, n, ['pause']);
   const pausedAt = k.now();
   const shaped = await k.obs.until('P\'s Shape to be published', (s) => (hasLabel(k, s, n, 'shaped') ? s : undefined), DEADLINE.stage, show);
-  const calm = await k.settle('P shaped', shaped.at);
+  const ofP = k.runsOf(exec, n);
+  const calm = await k.settle('P shaped', shaped.at, ofP);
   const deliverWhilePaused = k.stages(calm, exec, n, ['deliver']).length;
   const shapedWhilePaused = hasLabel(k, calm, n, 'shaped');
 
@@ -216,8 +220,10 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
   );
   let reshapedAt: number | undefined;
   if (next === 'sent back') {
-    const s = await k.obs.until('P to be shaped again', (x) => (hasLabel(k, x, n, 'shaped') ? x : undefined), DEADLINE.stage, show);
-    reshapedAt = s.at;
+    await k.obs.until('P to be shaped again', (x) => (hasLabel(k, x, n, 'shaped') ? x : undefined), DEADLINE.stage, show);
+    // The label's own time, not the snapshot's: a Deliver may start before the next snapshot.
+    reshapedAt = await k.labeledAt(exec, n, 'shaped', editedAt);
+    if (reshapedAt === undefined) throw new Error(`#${n} shows \`shaped\` again but its timeline has no labeled event after the edit`);
   }
   // After a send-back the next Deliver is the one to hold; otherwise Deliver already opened the PR.
   if (reshapedAt !== undefined) await k.obs.until('P\'s next deliver job to run', running('deliver', reshapedAt), DEADLINE.stage, show);
@@ -235,7 +241,7 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
     DEADLINE.stage,
     show,
   );
-  const quiet = await k.settle('P\'s PR test', testDone);
+  const quiet = await k.settle('P\'s PR test', testDone, ofP);
   const reviewWhilePending = k.stages(quiet, exec, n, ['review']).filter((r) => time(r.created_at) >= pendingAt).length;
   await k.removeLabel(exec, n, 'pending');
   const unpendedAt = k.now();

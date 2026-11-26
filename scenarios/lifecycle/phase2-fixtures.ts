@@ -28,7 +28,7 @@ export const assigneeRouting: Scenario = lifecycle({
       filed.push(m1.number);
       const m1At = k.now();
       await k.obs.until('M1\'s wake and route runs to complete', (s) => (k.stages(s, exec, m1.number, ['route']).some((r) => r.status === 'completed') ? true : undefined), DEADLINE.event, k.show(exec, m1.number));
-      const s1 = await k.settle('M1 routed', m1At);
+      const s1 = await k.settle('M1 routed', m1At, k.runsOf(exec, m1.number));
       c.check('R4.22', k.stages(s1, exec, m1.number, AGENT_STAGES).length === 0, 'M1, assigned only to a member without Runners, got an agent stage');
       c.check('R4.22', (await k.obs.comments(exec, m1.number)).length === 0, 'Nibfin commented on M1');
       c.check('R4.22', !k.labels(s1, exec, m1.number).includes('pause'), 'M1 got pause');

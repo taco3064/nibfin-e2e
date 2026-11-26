@@ -24,18 +24,12 @@ import { closingProblems } from './phase1.ts';
 const WRITES = new Set(['push', 'force_push', 'branch_creation']);
 const iso = (ms: number) => new Date(ms).toISOString();
 
-/** When a label was first added, from the timeline. */
-async function labeledAt(k: Kit, repo: string, n: number, label: string, after = 0): Promise<number | undefined> {
-  const ev = (await k.obs.timeline(repo, n)).find((e) => e.event === 'labeled' && e.label?.name === label && time(e.created_at) >= after);
-  return ev ? time(ev.created_at) : undefined;
-}
-
 /** R3.13 / R3.40: the shape job's log shows a Validator verdict before the Shape comment and `shaped`. */
 async function validatorProblems(k: Kit, s: Snapshot, repo: string, n: number, after: number): Promise<string[]> {
   const comment = (await k.obs.comments(repo, n)).find((x) => SHAPE_MARKER.test(markerOf(x.body) ?? ''));
   if (!comment) return [`#${n} has no marked Shape comment`];
   const published = Math.max(time(comment.created_at), time(comment.updated_at));
-  const shapedAt = await labeledAt(k, repo, n, 'shaped', after);
+  const shapedAt = await k.labeledAt(repo, n, 'shaped', after);
   const jobs = (await k.agentJobs(s, repo, n, ['shape'])).filter((j) => j.status === 'completed' && j.conclusion === 'success' && time(j.started_at) >= after);
   const job = jobs.at(-1);
   if (!job) return [`#${n} has no successful shape job after ${iso(after)}`];
@@ -67,7 +61,7 @@ export const deliveryLifecycle: Scenario = lifecycle({
 
     // R4.9, R4.10: Shape before Deliver, Deliver only once `shaped`.
     const firstDeliver = k.stages(s, exec, n, ['deliver'])[0];
-    const shapedAt = await labeledAt(k, exec, n, 'shaped');
+    const shapedAt = await k.labeledAt(exec, n, 'shaped');
     c.check('R4.9', k.stages(s, exec, n, ['shape']).length > 0, 'A was never shaped');
     c.check('R4.10', !!firstDeliver && shapedAt !== undefined && time(firstDeliver.created_at) >= shapedAt, `A's first deliver run (${String(firstDeliver?.created_at)}) is not after \`shaped\``);
 
