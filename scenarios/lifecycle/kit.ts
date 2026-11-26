@@ -3,7 +3,7 @@
 import { randomBytes } from 'node:crypto';
 import type { GitHub } from '../../src/host/github.ts';
 import type { Outcome, RunContext, Scenario } from '../../src/types.ts';
-import { AGENT_STAGES, issueKey, jobWindow, markerOf, parseStageTitle, parseWakeTitle, selfHosted, stageRuns, time } from './analysis.ts';
+import { AGENT_STAGES, STAGES, issueKey, jobWindow, markerOf, parseStageTitle, parseWakeTitle, selfHosted, stageRuns, time } from './analysis.ts';
 import type { Issue, Job, Run, Stage, Window } from './analysis.ts';
 import { Observer } from './observe.ts';
 import type { Snapshot } from './observe.ts';
@@ -267,9 +267,9 @@ export class Kit {
     return (await this.stageJobs(s, repo, n, stages)).filter((j) => AGENT_STAGES.includes(j.stage) && selfHosted(j));
   }
 
-  /** Windows of the Issue's jobs; `all` includes route and finish jobs. */
+  /** Windows of the Issue's agent jobs; `all` gives every job of every stage run, route and finish included. */
   async windows(s: Snapshot, repo: string, n: number, all = false): Promise<Window[]> {
-    const jobs = all ? await this.stageJobs(s, repo, n) : await this.agentJobs(s, repo, n);
+    const jobs = all ? await this.stageJobs(s, repo, n, STAGES) : await this.agentJobs(s, repo, n);
     return jobs.flatMap((j) => jobWindow(j, issueKey(repo, n), j.stage) ?? []);
   }
 
