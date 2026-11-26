@@ -9,6 +9,8 @@ import { preparePodman } from './host/podman.ts';
 import { mainHead, onlineRunners, readTemplate, resetSandbox } from './host/sandbox.ts';
 import type { HostServices } from './host/services.ts';
 import type { ProvisioningStep, RunContext, StepOutcome } from './types.ts';
+import { createKit } from '../scenarios/lib/kit.ts';
+import { runObservedJob } from '../scenarios/lib/observed.ts';
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const tail = (r: ExecResult) => (r.stderr.trim() || r.stdout.trim()).slice(-4000);
@@ -150,6 +152,13 @@ export function createProvisioning(host: HostServices): ProvisioningStep[] {
         if (r.code !== 0) return { status: 'failed', reason: `gh nibfin runner remove claude --yes exited ${r.code}: ${tail(r)}` };
         return { status: 'passed', reason: 'local Runners removed' };
       },
+    },
+    {
+      // One agent fixture through Shape → Deliver → Review, observed once per run for
+      // several scenarios (Issue #299). The sandbox reset removes what it leaves.
+      id: 'observed-job',
+      requires: ['nibfin'],
+      run: (ctx) => runObservedJob(createKit(host, ctx)),
     },
   ];
 }

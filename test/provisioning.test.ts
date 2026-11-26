@@ -62,6 +62,7 @@ test('the steps are registered in order with their prerequisites', () => {
     ['claude-login', ['podman']],
     ['sandboxes', []],
     ['nibfin', ['gh-nibfin', 'podman', 'claude-login', 'sandboxes']],
+    ['observed-job', ['nibfin']],
   ]);
 });
 
