@@ -2,7 +2,7 @@
 import type { Locator, Page } from 'playwright-core';
 import type { RunContext } from '../../src/types.ts';
 import { check, dateTexts, fail, lightProblem, localeProblems, shiftedBy, stageOf, stateOf, statusValue } from './checks.ts';
-import { blockedBy, ensureFixtures, me, readIssue, sleep, until } from './github.ts';
+import { blockedBy, ensureFixtures, me, openIssues, readIssue, sleep, until } from './github.ts';
 import type { Fixtures, Issue } from './github.ts';
 import {
   bodyText,
@@ -22,7 +22,7 @@ import {
   startDashboard,
   statusJson,
 } from './support.ts';
-import type { Dashboard, View } from './support.ts';
+import type { Dashboard, Secrets, View } from './support.ts';
 
 const num = (i: Issue) => `#${i.number}`;
 const hasNumber = (text: string, i: Issue) => new RegExp(`#${i.number}\\b`).test(text);
@@ -324,14 +324,13 @@ async function phoneGraph(ctx: RunContext, dash2: Dashboard, f: Fixtures, notes:
     return { scrollWidth: d.scrollWidth, clientWidth: d.clientWidth };
   });
   check(scroll.scrollWidth <= scroll.clientWidth, 'R9.3', 'no horizontal scroll at 390 px', JSON.stringify(scroll));
-  const boxes: Record<string, { x: number; y: number; width: number; height: number } | null> = {};
-  for (const k of ['A', 'B', 'D', 'F', 'N'] as const) {
-    const b = await page.getByText(new RegExp(`#${f[k].number}\\b`)).first().boundingBox();
-    boxes[k] = b;
-    check(b && b.x >= 0 && b.x + b.width <= 390, 'R9.3', `node ${k} within the 390 px width`, JSON.stringify(b));
+  // Every open Issue of the repository, not only the fixtures.
+  for (const i of await openIssues(ctx.github, ctx.sandbox.execution)) {
+    const box = await page.getByText(new RegExp(`#${i.number}\\b`)).first().boundingBox();
+    check(box && box.x >= 0 && box.x + box.width <= 390, 'R9.3', `the node of open Issue #${i.number} within the 390 px width`, JSON.stringify(box));
   }
-  const a = boxes.A;
-  const b = boxes.B;
+  const a = await page.getByText(new RegExp(`#${f.A.number}\\b`)).first().boundingBox();
+  const b = await page.getByText(new RegExp(`#${f.B.number}\\b`)).first().boundingBox();
   check(a && b && Math.abs(a.y - b.y) > Math.abs(a.x - b.x), 'R9.3', 'B and its blocker A arranged top-down at 390 px', JSON.stringify({ a, b }));
   notes.push('390 px: top-down, no horizontal scroll');
 }
@@ -354,21 +353,35 @@ async function runnerView(page: Page, ctx: RunContext, notes: string[]) {
   notes.push(`Runner view: ${regs.length} Runners, gauge, timeline area, add/remove/login`);
 }
 
-/** Date and time texts in the person and Runner views of one browser context. */
-async function datesIn(ctx: RunContext, dash: Dashboard, locale: string, timezoneId: string): Promise<string[]> {
-  const { page, close } = await openPage(ctx, { locale, timezoneId });
+/** Date and time texts in one view of a page. */
+async function datesOn(page: Page): Promise<string[]> {
+  const times = await page.locator('time').allInnerTexts();
+  const titles = await page.locator('[title]').evaluateAll((els) => els.map((e) => e.getAttribute('title') ?? ''));
+  return dateTexts([...times, ...titles, ...(await page.locator('body').innerText()).split('\n')]);
+}
+
+/** Opens one page per context, each on its own server, then reads each view on all pages at the same moment. */
+async function datesAtOnce(ctx: RunContext, secrets: Secrets, contexts: { locale: string; timezoneId: string }[]): Promise<string[][]> {
+  const pages: Page[] = [];
+  const servers: Dashboard[] = [];
   try {
-    await openDashboard(page, dash);
-    const out: string[] = [];
+    for (const c of contexts) {
+      const d = await startDashboard(ctx, secrets);
+      servers.push(d);
+      const { page } = await openPage(ctx, c);
+      await openDashboard(page, d);
+      pages.push(page);
+    }
+    const out: string[][] = pages.map(() => []);
     for (const v of ['person', 'runner'] as View[]) {
-      await gotoView(page, v);
-      const times = await page.locator('time').allInnerTexts();
-      const titles = await page.locator('[title]').evaluateAll((els) => els.map((e) => e.getAttribute('title') ?? ''));
-      out.push(...dateTexts([...times, ...titles, ...(await page.locator('body').innerText()).split('\n')]));
+      await Promise.all(pages.map((p) => gotoView(p, v)));
+      await sleep(2000);
+      const read = await Promise.all(pages.map(datesOn));
+      read.forEach((r, i) => (out[i] as string[]).push(...r));
     }
     return out;
   } finally {
-    await close();
+    for (const d of servers) await d.stop();
   }
 }
 
@@ -414,15 +427,11 @@ export const dashboardViews = defineScenario({
     }
 
     // R9.7: same format under two locales; shifted by the zone difference in a third context.
-    const texts: string[][] = [];
-    for (const [locale, tz] of [['zh-TW', 'UTC'], ['de-DE', 'UTC'], ['en-US', 'Asia/Taipei']] as const) {
-      const d = await startDashboard(ctx, secrets);
-      try {
-        texts.push(await datesIn(ctx, d, locale, tz));
-      } finally {
-        await d.stop();
-      }
-    }
+    const texts = await datesAtOnce(ctx, secrets, [
+      { locale: 'zh-TW', timezoneId: 'UTC' },
+      { locale: 'de-DE', timezoneId: 'UTC' },
+      { locale: 'en-US', timezoneId: 'Asia/Taipei' },
+    ]);
     const [zh = [], de = [], tpe = []] = texts;
     const problems = localeProblems(zh, de);
     check(!problems.length, 'R9.7', 'one English date and time format whatever the browser locale', problems.join('; '));

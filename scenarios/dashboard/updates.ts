@@ -114,8 +114,10 @@ async function localJob(ctx: RunContext, secrets: Secrets, markers: Record<strin
   const gh = ctx.github;
   const exec = ctx.sandbox.execution;
   const regs = await gh.list<{ name: string; status: string }>(`/repos/${exec}/actions/runners`, 'runners');
-  check(regs.filter((r) => r.status === 'online').length >= 2, 'R9.23', 'two online claude Runners before dispatch', regs.map((r) => `${r.name} ${r.status}`).join(', '));
-  check(!(await findByTitle(gh, exec, fixtureTitle('E'))), 'R9.23', 'fixture E not yet created in this run', 'it exists already');
+  if (regs.filter((r) => r.status === 'online').length < 2) {
+    throw new Error(`precondition: two online claude Runners are needed before dispatch, found ${regs.map((r) => `${r.name} ${r.status}`).join(', ') || 'none'}; nothing was created and nothing is asserted about the product`);
+  }
+  if (await findByTitle(gh, exec, fixtureTitle('E'))) throw new Error('precondition: fixture E already exists in this run; nothing was created and nothing is asserted about the product');
   await assertQuietSandboxes({ github: gh, sandboxes: ctx.sandbox, podmanPs: () => podmanPs(ctx), log: ctx.log });
 
   const watcher = await watchLocalJobStarts(ctx);
@@ -124,9 +126,12 @@ async function localJob(ctx: RunContext, secrets: Secrets, markers: Record<strin
   let E: Issue | undefined;
   let settled = false;
   try {
+    // The run strip is read in the execution repo view, which lists every open Issue
+    // without native search (R5.49), so E can appear there without the search index lag.
     const person = (await openPage(ctx)).page;
     await openDashboard(person, dashP);
-    await gotoView(person, 'person');
+    await gotoView(person, 'repo');
+    await selectRepo(person, exec);
     const runner = (await openPage(ctx)).page;
     await openDashboard(runner, dashR);
     await gotoView(runner, 'runner');
@@ -136,14 +141,22 @@ async function localJob(ctx: RunContext, secrets: Secrets, markers: Record<strin
     E = await createIssue(gh, exec, fixtureTitle('E'), FIXTURE_E.labels, await me(gh));
     const first = await until(async () => watcher.starts().filter((s) => s.at >= from - 5000), (s) => s.length > 0, 20 * 60_000, 2000);
     check(first.length, 'R9.23', 'a local Nibfin Job container to start for fixture E', 'no Job container start was seen in 20 min');
-    const startedAt = Math.min(Date.now(), (first[0] as { at: number }).at);
+    const jobStart = Math.min(Date.now(), (first[0] as { at: number }).at);
     const issue = E;
+    // The 20 s count from the later of the Job start and E's first appearance on the page.
+    const listed = await seenWithin(person, async () => (await issueElement(person, issue.title).count()) > 0, POLL_MS + TOLERANCE_MS);
+    check(listed !== undefined, 'R9.24', `E listed in the repo view within ${(POLL_MS + TOLERANCE_MS) / 1000} s`, 'not listed');
+    const startedAt = Math.max(jobStart, Date.now() - (listed as number));
     const inProgress = async () => /in progress|running|queued/i.test(`${await issueElement(person, issue.title).innerText().catch(() => '')} ${await issueElement(person, issue.title).locator('[aria-label]').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')).join(' ')).catch(() => '')}`);
     const stripMs = await seenWithin(person, inProgress, Math.max(0, 20_000 - (Date.now() - startedAt)));
-    check(stripMs !== undefined && (await sameDocument(person)), 'R9.23', "E's run strip to show an in-progress run within 20 s of the Job start, without navigation", 'not shown');
+    check(stripMs !== undefined && (await sameDocument(person)), 'R9.23', "E's run strip to show an in-progress run within 20 s of the Job start (or of E's first appearance, if later), without navigation", 'not shown');
+    // Only a Runner row that holds #E: other rows, legends and E's own track may say "busy" or "Shape".
     const busyWithE = async (p: Page = runner) => {
-      const t = await bodyText(p);
-      return /\bbusy\b/i.test(t) && new RegExp(`#${issue.number}\\b`).test(t) && /\bshape\b/i.test(t) && /\b\d{1,2}:\d{2}\b|\b\d+\s?(s|m|min)\b/.test(t);
+      const row = p.locator('li, [role="row"], [role="listitem"], article').filter({ hasText: new RegExp(`#${issue.number}\\b`) }).filter({ hasText: /\bbusy\b/i }).last();
+      if (!(await row.count())) return false;
+      const t = (await row.innerText()).replace(/\s+/g, ' ');
+      const stage = (await row.locator('[aria-current="step"], [aria-current="true"]').first().innerText().catch(() => '')) || t;
+      return /\bshape\b/i.test(stage) && /\b\d{1,2}:\d{2}\b|\b\d+\s?(s|m|min)\b/.test(t);
     };
     // The page the Runner view is read on: the live page, or a manually refreshed one.
     let runnerPage = runner;
@@ -160,7 +173,7 @@ async function localJob(ctx: RunContext, secrets: Secrets, markers: Record<strin
     check(await inRunner.count(), 'R9.2', `E's Issue element in the Runner view while busy`, 'only other text');
     const runnerFeatures = await issueFeatures(inRunner, issue);
     const personFeatures = await issueFeatures(issueElement(person, issue.title), issue);
-    check(JSON.stringify(runnerFeatures) === JSON.stringify(personFeatures), 'R9.2', 'the same Issue element in the person and Runner views', JSON.stringify({ personFeatures, runnerFeatures }));
+    check(JSON.stringify(runnerFeatures) === JSON.stringify(personFeatures), 'R9.2', 'the same Issue element in the repo and Runner views', JSON.stringify({ repoFeatures: personFeatures, runnerFeatures }));
 
     // Back to idle: find E's run with a self-hosted job, pause E (no redispatch) and cancel that one run.
     const runs = await gh.list<{ id: number; display_title: string; status: string }>(`/repos/${exec}/actions/runs?status=in_progress`, 'workflow_runs');
@@ -273,12 +286,16 @@ async function failures(ctx: RunContext, secrets: Secrets, markers: Record<strin
     }
     const after = await bodyText(page);
     check(/outdated|stale|offline|disconnected|stopped|reconnect|not updating|lost/i.test(after), 'R9.34', 'the page to say its data may be outdated once updates stopped', after.slice(0, 300));
-    const toggle = issueElement(page, f.D.title).getByRole('button', { name: /^(pause|resume)\b/i }).first();
-    if ((await toggle.count()) && (await toggle.isEnabled())) {
-      await toggle.click();
+    const pause = issueElement(page, f.D.title).getByRole('button', { name: /^pause\b/i }).first();
+    check(await pause.count(), 'R9.34', 'a Pause control on D (no pause label) to try without a server', 'none');
+    if (await pause.isEnabled()) {
+      await pause.click();
       await sleep(5000);
       const r = await bodyText(page);
       check(/fail|error|could not|unable|not sent/i.test(r), 'R9.34', 'a pause click without a server shown as a failure', r.slice(0, 300));
+      check(!/\b(paused|success|succeeded|sent)\b/i.test((await issueElement(page, f.D.title).innerText()).replace(/not sent/gi, '')), 'R9.34', 'no success shown on D', 'D shows success');
+    } else {
+      notes.push('without a server, Pause on D is disabled (not success)');
     }
     const D = await readIssue(gh, exec, f.D.number);
     check(!D.labels.includes('pause') && D.labels.includes('pending'), 'R9.34', 'D unchanged on GitHub (no pause, still pending)', `[${D.labels.join(', ')}]`);
