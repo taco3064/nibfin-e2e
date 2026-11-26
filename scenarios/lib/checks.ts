@@ -47,3 +47,14 @@ export function redact(text: string, secrets: string[]): string {
 export function excerpt(text: string, max: number, secrets: string[]): string {
   return redact(text, secrets).slice(0, max);
 }
+
+/** A copy of `value` with every string (keys and values, at any depth) passed through `redact`. */
+export function redactDeep<T>(value: T, secrets: string[]): T {
+  const walk = (v: unknown): unknown => {
+    if (typeof v === 'string') return redact(v, secrets);
+    if (Array.isArray(v)) return v.map(walk);
+    if (v !== null && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [redact(k, secrets), walk(x)]));
+    return v;
+  };
+  return walk(value) as T;
+}

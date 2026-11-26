@@ -3,7 +3,7 @@ import { watchJobContainers } from './containers.ts';
 import type { Projection, Watch } from './containers.ts';
 import { DECOY_FILES, DECOY_PATTERN, EXTEND_TEXT, PROBE_FILE, RULESYNC_FILES, TASK_BODY, TOOLS, json } from './files.ts';
 import type { Comment } from './fixture.ts';
-import { excerpt } from './checks.ts';
+import { excerpt, redact, redactDeep } from './checks.ts';
 import { approvalRuleset, close, comments, deleteE2eRulesets, issueState, labels, openFixture, prepareFixture } from './fixture.ts';
 import { buildOutput, imageLine, initEvents, jobLog } from './joblog.ts';
 import type { InitEvent } from './joblog.ts';
@@ -87,7 +87,9 @@ export function missingApprovalLine(list: Comment[], owner: string, secrets: str
 export async function runObservedJob(kit: Kit): Promise<StepOutcome> {
   const repo = kit.sandbox.execution;
   const facts: ObservedFacts = { repo };
-  const out = () => facts as unknown as Record<string, unknown>;
+  // Facts hold agent-written text (the probe block, branch paths, log lines), which GitHub
+  // does not mask; every string is redacted before it leaves the step (Proposal R3.49).
+  const out = () => redactDeep(facts, kit.secrets()) as unknown as Record<string, unknown>;
   let watch: Watch | undefined;
   try {
     await prepareFixture(kit, repo, {
@@ -147,11 +149,11 @@ export async function runObservedJob(kit: Kit): Promise<StepOutcome> {
       const line = missingApprovalLine(await comments(kit, repo, pr), owner, kit.secrets());
       return line ? { merged: false, approvalComment: line } : undefined;
     });
-    return { status: 'passed', reason: `fixture ${repo}#${n} ran Shape, Deliver and Review; PR #${pr} ${facts.finish.merged ? 'merged' : 'waits for an approving review'}`, facts: out() };
+    return { status: 'passed', reason: redact(`fixture ${repo}#${n} ran Shape, Deliver and Review; PR #${pr} ${facts.finish.merged ? 'merged' : 'waits for an approving review'}`, kit.secrets()), facts: out() };
   } catch (error) {
     // Every failure after the Issue exists names its labels and latest comment.
     const state = facts.issue !== undefined && !message(error).includes(`#${facts.issue} labels`) ? `; ${await issueState(kit, repo, facts.issue)}` : '';
-    return { status: 'failed', reason: message(error) + state, facts: out() };
+    return { status: 'failed', reason: redact(message(error) + state, kit.secrets()), facts: out() };
   } finally {
     watch?.stop();
     if (facts.issue !== undefined) await close(kit, repo, facts.issue).catch(() => {});

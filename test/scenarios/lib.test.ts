@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { indexPlatforms, predicateTypes } from '../../scenarios/image-provenance.ts';
-import { Checks, excerpt, freeOfSecrets, redact } from '../../scenarios/lib/checks.ts';
+import { Checks, excerpt, freeOfSecrets, redact, redactDeep } from '../../scenarios/lib/checks.ts';
 import { parseEvent, project, watchJobContainers } from '../../scenarios/lib/containers.ts';
 import { buildOutput, causeCodes, imageLine, initEvents, jobLog, stageJob } from '../../scenarios/lib/joblog.ts';
 import { PROBE_SCRIPT, parseProbe } from '../../scenarios/lib/probe.ts';
@@ -173,4 +173,10 @@ test('redact, excerpt and Checks remove secret values from every printed detail'
   equal(failed.status, 'failed');
   equal(failed.reason.includes(secret), false);
   equal(c.failed.join('').includes(secret), false);
+});
+
+test('redactDeep redacts every string, key and nested value, and leaves other values', () => {
+  const secret = 'deep-secret-value';
+  const out = redactDeep({ a: [`x${secret}`, 1, null], [secret]: { b: secret, c: true } }, [secret]);
+  deepEqual(out, { a: ['x[secret value removed by nibfin-e2e]', 1, null], '[secret value removed by nibfin-e2e]': { b: '[secret value removed by nibfin-e2e]', c: true } });
 });
