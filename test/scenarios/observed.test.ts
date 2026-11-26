@@ -43,7 +43,7 @@ async function until(cond: () => boolean) {
 }
 
 /** Simulates Nibfin around runObservedJob: three stage containers, a branch, a PR and a review comment. */
-async function simulate() {
+async function simulate(probe = PROBE) {
   let settings: Record<string, unknown> = { env: { CLAUDE_CODE_OAUTH_TOKEN: TOKEN }, enableAllProjectMcpServers: true, theme: 'dark' };
   const h = setup({
     respond: (argv, o) => {
@@ -80,7 +80,7 @@ async function simulate() {
   equal(settings.enableAllProjectMcpServers, undefined);
   h.events.emit('{"ID":"c1","Status":"start"}');
   await tick();
-  issue.comments = [`## Shape\n\n${PROBE}\n`];
+  issue.comments = [`## Shape\n\n${probe}\n`];
   settings = { ...settings, enableAllProjectMcpServers: true };
   issue.labels = ['scope', 'shaped'];
   h.events.emit('{"ID":"c1","Status":"died"}');
@@ -169,6 +169,23 @@ test('the fact-reading scenarios fail listing each check that did not hold, per 
   const tools = await projectTools.run(ctxWith(f));
   match(tools.reason, /R7\.3: node is the requested v22\.15\.0.*observed: v20\.0\.0.*no Repository install script ran \(observed: nibfin-tools:e2e-decoy-install, container:\/home\/nibfin\/e2e-decoy-setup\).*no Repository Dockerfile was built \(observed: STEP 1\/2\)/);
   match((await roleSkills.run(ctxWith(f))).reason, /R7\.6: extend keeps the built-in text first/);
+});
+
+test('agent-written probe values reach the facts and the scenario reasons only redacted', async () => {
+  const SANDBOX = 'sandbox-token-value';
+  const leaky = PROBE.replace('workspace_settings=absent', `workspace_settings={"env":{"T":"${SANDBOX}"}}`).replace('first_instruction_line=# Shape', `first_instruction_line=# Shape ${TOKEN}`).replace('uid=1000', `uid=1000\n${TOKEN}=x`);
+  const { out } = await simulate(leaky);
+  equal(out.status, 'passed', out.reason);
+  const stored = JSON.stringify(out.facts);
+  ok(!stored.includes(SANDBOX) && !stored.includes(TOKEN), 'a secret value reached the observed-job facts');
+  const f = out.facts as unknown as ObservedFacts;
+  equal(f.probe?.workspace_settings?.[0], '{"env":{"T":"[secret value removed by nibfin-e2e]"}}');
+  equal(f.probe?.first_instruction_line?.[0], '# Shape [secret value removed by nibfin-e2e]');
+  for (const s of [jobContainer, agentSetup, projectTools, roleSkills]) {
+    const r = await s.run(ctxWith(f));
+    ok(!r.reason.includes(SANDBOX) && !r.reason.includes(TOKEN), `${s.id} printed a secret value`);
+  }
+  match((await agentSetup.run(ctxWith(f))).reason, /secret value removed by nibfin-e2e/);
 });
 
 test('only a Nibfin comment saying an approving review is missing counts', () => {
