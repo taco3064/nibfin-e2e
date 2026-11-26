@@ -1,8 +1,8 @@
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { requireEnv } from './config.ts';
-import { createExec } from './exec.ts';
-import type { Env, Exec } from './exec.ts';
+import { createExec, createStart } from './exec.ts';
+import type { Env, Exec, Start } from './exec.ts';
 import { createGitHub } from './github.ts';
 import type { GitHub } from './github.ts';
 
@@ -11,6 +11,8 @@ export interface HostServices {
   /** The host environment children inherit (minus `E2E_*`); steps may extend `PATH`. */
   env: Env;
   exec: Exec;
+  /** Starts a long-lived child with the same environment rules as `exec`. */
+  start: Start;
   fetch: typeof fetch;
   github: GitHub;
   repoRoot: string;
@@ -25,6 +27,7 @@ export function createServices(repoRoot: string, log: (message: string) => void,
   return {
     env,
     exec: createExec(env, log),
+    start: createStart(env, log),
     fetch,
     github: createGitHub(sandboxToken),
     repoRoot,

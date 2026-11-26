@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { treeSha } from '../../src/host/sandbox.ts';
-import type { Exec, ExecOptions, ExecResult } from '../../src/host/exec.ts';
+import type { Exec, ExecOptions, ExecResult, Running, Start, StartOptions } from '../../src/host/exec.ts';
 import type { HostContext } from '../../src/types.ts';
 
 export interface FakeRepo {
@@ -251,6 +251,35 @@ export function fakeExec(respond: (argv: string[], options: ExecOptions) => Part
   return { exec, calls };
 }
 
+/** A started child that prints `output` at once and records when it is stopped. */
+export function fakeRunning(output = ''): Running & { stops: number } {
+  const r = {
+    stops: 0,
+    output: () => output,
+    waitFor: async (pattern: RegExp) => {
+      const m = new RegExp(pattern.source, pattern.flags.replace('g', '')).exec(output);
+      if (!m) throw new Error(`fake child printed no ${pattern}`);
+      return m;
+    },
+    stop: async () => {
+      r.stops++;
+      return { code: 0, stdout: output, stderr: '' };
+    },
+  };
+  return r;
+}
+
+/** Records every start; `respond` gives the output of each child. */
+export function fakeStart(respond: (argv: string[], options: StartOptions) => string = () => '') {
+  const started: { argv: string[]; options: StartOptions; child: ReturnType<typeof fakeRunning> }[] = [];
+  const start: Start = (argv, options = {}) => {
+    const child = fakeRunning(respond(argv, options));
+    started.push({ argv, options, child });
+    return child;
+  };
+  return { start, started };
+}
+
 export const fakeHostContext: HostContext = {
   sandbox: { execution: 'o/exec', peer: 'o/peer' },
   executionDir: '/tmp/none',
@@ -268,4 +297,9 @@ export const fakeHostContext: HostContext = {
     },
   },
   withExecutionVisibility: async (_v, fn) => fn(),
+  startGhNibfin: () => fakeRunning(),
+  start: () => fakeRunning(),
+  exec: async () => ({ code: 0, stdout: '', stderr: '' }),
+  workDir: () => '/tmp/none',
+  browserEnv: () => ({}),
 };
