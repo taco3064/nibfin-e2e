@@ -130,6 +130,21 @@ test('observed-job runs one fixture through Shape, Deliver and Review and record
   }
 });
 
+test('a Shape container that never starts fails the step naming the Issue state', async () => {
+  const h = setup({ respond: (argv) => (argv.at(-1)?.startsWith('stat') ? { stdout: '0 755\n0 600\n{}' } : undefined) });
+  const original = h.fake.fetch;
+  // The wait fails at once: the events stream ends.
+  h.kit.stream = (argv, onLine) => {
+    const s = h.events.stream(argv, onLine);
+    s.stop();
+    return s;
+  };
+  h.kit.github = createGitHub(() => 'tok', original);
+  const out = await runObservedJob(h.kit);
+  equal(out.status, 'failed');
+  match(out.reason, /waiting for the Shape Job container of o\/exec#\d+ to start; o\/exec#\d+ labels \[scope\]; latest comment: none/);
+});
+
 test('the fact-reading scenarios fail listing each check that did not hold, per rule', async () => {
   const { out } = await simulate();
   const f = structuredClone(out.facts) as unknown as ObservedFacts;
@@ -156,7 +171,8 @@ test('the fact-reading scenarios fail listing each check that did not hold, per 
 
 test('only a Nibfin comment saying an approving review is missing counts', () => {
   const by = (login: string, body: string) => ({ body, user: { login } });
-  equal(missingApprovalLine([by('o', 'Review: looks good, merging next.'), by('someone', 'Waiting for approval')], 'o'), undefined);
+  equal(missingApprovalLine([by('o', 'Review: looks good, merging next.'), by('someone', 'Waiting for approval before merging')], 'o'), undefined);
+  equal(missingApprovalLine([by('o', 'Deviation from the approved Shape: a test is required before merging.')], 'o'), undefined);
   equal(missingApprovalLine([by('o', 'Shape review passed.\nMerge is blocked: waiting for 1 approving review.')], 'o'), 'Merge is blocked: waiting for 1 approving review.');
 });
 

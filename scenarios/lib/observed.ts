@@ -72,11 +72,16 @@ async function stageDied(kit: Kit, watch: Watch, repo: string, n: number, count:
 /**
  * The line of a Nibfin PR comment saying the merge waits for an approving review
  * (Proposal R3.26). Nibfin writes with the Owner's credential, so its comments are the
- * Owner's; the harness never comments on a PR. Other review comments do not count.
+ * Owner's; the harness never comments on a PR. The line must be about the merge and an
+ * approving review (or approval) still missing; a Shape review comment mentioning the
+ * "approved Shape" does not count.
  */
 export function missingApprovalLine(list: Comment[], owner: string): string | undefined {
   const lines = list.filter((c) => c.user?.login === owner).flatMap((c) => c.body.split('\n'));
-  return lines.find((l) => /approv/i.test(l) && /wait|missing|requir|need|until|before|pending|blocked/i.test(l))?.trim().slice(0, 300);
+  return lines
+    .find((l) => /approving review|approvals?\b/i.test(l) && /merg/i.test(l) && /wait|missing|requir|need|block/i.test(l))
+    ?.trim()
+    .slice(0, 300);
 }
 
 /** Runs one fixture through Shape → Deliver → Review and records what its Jobs ran with (Issue #299). */
@@ -145,7 +150,9 @@ export async function runObservedJob(kit: Kit): Promise<StepOutcome> {
     });
     return { status: 'passed', reason: `fixture ${repo}#${n} ran Shape, Deliver and Review; PR #${pr} ${facts.finish.merged ? 'merged' : 'waits for an approving review'}`, facts: out() };
   } catch (error) {
-    return { status: 'failed', reason: message(error), facts: out() };
+    // Every failure after the Issue exists names its labels and latest comment.
+    const state = facts.issue !== undefined && !message(error).includes(`#${facts.issue} labels`) ? `; ${await issueState(kit, repo, facts.issue)}` : '';
+    return { status: 'failed', reason: message(error) + state, facts: out() };
   } finally {
     watch?.stop();
     if (facts.issue !== undefined) await close(kit, repo, facts.issue).catch(() => {});
