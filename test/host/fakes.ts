@@ -313,4 +313,7 @@ export const fakeHostContext: HostContext = {
   secretValues: () => [],
   ownerLogin: async () => 'owner',
   ownerId: async () => 1,
+  peer: () => {
+    throw new Error('no collaborator in this test');
+  },
 };

@@ -5,6 +5,8 @@ import type { ExecResult } from './host/exec.ts';
 import { installGhNibfin } from './host/ghnibfin.ts';
 import type { GitHub } from './host/github.ts';
 import { writeClaudeLogin } from './host/login.ts';
+import { preparePeer, teardownPeer } from './host/peer.ts';
+import type { PeerFacts } from './host/peer.ts';
 import { preparePodman } from './host/podman.ts';
 import { mainHead, onlineRunners, readTemplate, resetSandbox } from './host/sandbox.ts';
 import type { HostServices } from './host/services.ts';
@@ -159,6 +161,25 @@ export function createProvisioning(host: HostServices): ProvisioningStep[] {
       id: 'observed-job',
       requires: ['nibfin'],
       run: (ctx) => runObservedJob(createKit(host, ctx)),
+    },
+    {
+      // The collaborator's side (Issue #300): its teardown runs before nibfin's and the sandbox reset.
+      id: 'collaborator',
+      requires: ['gh-nibfin', 'podman', 'nibfin'],
+      async run(ctx): Promise<StepOutcome> {
+        const facts: PeerFacts = {};
+        try {
+          const reason = await preparePeer(host, ctx.target.platform, facts);
+          return { status: 'passed', reason, facts: { ...facts } };
+        } catch (error) {
+          return { status: 'failed', reason: message(error), facts: { ...facts } };
+        }
+      },
+      async teardown(ctx) {
+        const problems = await teardownPeer(host, ctx.facts('collaborator') as PeerFacts | undefined);
+        if (problems.length) return { status: 'failed', reason: problems.join('; ') };
+        return { status: 'passed', reason: "the collaborator's local Runners and this run's SSH key are removed" };
+      },
     },
   ];
 }

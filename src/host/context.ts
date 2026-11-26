@@ -22,6 +22,10 @@ export function createHostContext(host: HostServices, platform: string = process
     exec: (argv) => host.exec(argv),
     workDir: () => host.workDir(),
     browserEnv: () => childEnv(host.env),
+    peer() {
+      if (!host.peer) throw new Error('the collaborator is not prepared: the collaborator provisioning step did not pass');
+      return host.peer;
+    },
     async withExecutionVisibility(visibility, fn) {
       await setVisibility(host.github, SANDBOX.execution, visibility);
       let failure: { error: unknown } | undefined;

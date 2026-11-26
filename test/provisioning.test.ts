@@ -37,6 +37,8 @@ function harness(opts: { exec?: Exec; env?: Record<string, string>; fetch?: type
     repoRoot,
     workDir: () => work,
     sandboxToken,
+    peerGithub: createGitHub(() => requireEnv(env, 'E2E_PEER_GITHUB_TOKEN'), fake.fetch),
+    peerToken: () => requireEnv(env, 'E2E_PEER_GITHUB_TOKEN'),
   };
   const steps = new Map(createProvisioning(services).map((s) => [s.id, s]));
   const facts = new Map<string, Record<string, unknown> | undefined>();
@@ -65,6 +67,7 @@ test('the steps are registered in order with their prerequisites', () => {
     ['sandboxes', []],
     ['nibfin', ['gh-nibfin', 'podman', 'claude-login', 'sandboxes']],
     ['observed-job', ['nibfin']],
+    ['collaborator', ['gh-nibfin', 'podman', 'nibfin']],
   ]);
 });
 

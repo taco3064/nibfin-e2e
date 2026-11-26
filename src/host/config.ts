@@ -27,8 +27,23 @@ export const HELPER_IMAGE = 'docker.io/library/busybox:1.37.0@sha256:a7dbc319b14
 /** The CLI's login volume for Claude (Proposal R6.12, R6.21). */
 export const CLAUDE_VOLUME = 'nibfin-home-claude';
 
+/** The OS user that holds the collaborator's Runners, apart from the Owner's (Issue #300). */
+export const PEER_USER = 'e2epeer';
+
+/** Title prefix of the per-run SSH key on the second account; cleanup deletes only keys with it. */
+export const PEER_KEY_TITLE_PREFIX = 'nibfin-e2e-peer-';
+
+/** The title `runner add` gives its request Issue (Proposal R5.58). */
+export const RUNNER_REQUEST_TITLE = 'Nibfin runner request';
+
+/** The job-started hook's lines in a Job's **Set up runner** log (Proposal R6.7). */
+export const HOOK_ACCEPTED = /Nibfin hook: accepted ([\w.-]+\/[\w.-]+)@([0-9a-f]{40}), image (sha256:[0-9a-f]{64})/;
+export const HOOK_REFUSED = /Nibfin hook: refused: ([^\r\n]*)/;
+
+export type SecretName = 'E2E_SANDBOX_TOKEN' | 'E2E_CLAUDE_TOKEN' | 'NIBFIN_GITHUB_TOKEN' | 'E2E_PEER_GITHUB_TOKEN';
+
 /** Reads a required variable; the error names the variable, never a value. */
-export function requireEnv(env: Env, name: 'E2E_SANDBOX_TOKEN' | 'E2E_CLAUDE_TOKEN' | 'NIBFIN_GITHUB_TOKEN'): string {
+export function requireEnv(env: Env, name: SecretName): string {
   const value = env[name];
   if (value === undefined || value.trim() === '') throw new Error(`missing environment variable ${name}`);
   return value.trim();

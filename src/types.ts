@@ -2,6 +2,7 @@ import type { Visibility } from './host/config.ts';
 import type { Env, ExecResult, Running } from './host/exec.ts';
 import type { GitHub } from './host/github.ts';
 import type { HostOperations } from './host/operations.ts';
+import type { PeerHandle } from './host/peer.ts';
 
 /** Proposal rule id, `R<section>.<n>`, for example `R5.12`. */
 export type RuleId = string;
@@ -49,6 +50,8 @@ export interface HostContext extends HostOperations {
   workDir(): string;
   /** The environment a browser gets: the host's, without any `E2E_*` variable and without `GH_TOKEN`. */
   browserEnv(): Env;
+  /** The collaborator (a second account, a write Collaborator on the execution sandbox) and its OS user; throws unless the `collaborator` step passed. */
+  peer(): PeerHandle;
 }
 
 /** Context handed to provisioning steps and scenarios. */
