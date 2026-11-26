@@ -1,3 +1,7 @@
+import type { Visibility } from './host/config.ts';
+import type { ExecResult } from './host/exec.ts';
+import type { GitHub } from './host/github.ts';
+
 /** Proposal rule id, `R<section>.<n>`, for example `R5.12`. */
 export type RuleId = string;
 
@@ -13,24 +17,45 @@ export interface Outcome {
   reason: string;
 }
 
-/** What a run is pinned to. Values are recorded as given on the command line. */
+/** A provisioning step's outcome, with facts later steps, scenarios and the result read. */
+export type StepOutcome = Outcome & { facts?: Record<string, unknown> };
+
+/** What a run is pinned to, as given on the command line. */
 export interface RunTarget {
   ghNibfinCommit: string;
-  image: string;
-  imageDigest: string;
   platform: Platform;
 }
 
-/** Context handed to provisioning steps and scenarios. It carries no GitHub client or credentials. */
-export interface RunContext {
+/** The host and sandboxes as scenarios see them. */
+export interface HostContext {
+  /** The two fixed sandboxes (Proposal R8.19). */
+  sandbox: { execution: string; peer: string };
+  /** The clone of the execution sandbox where `runner add` ran. */
+  executionDir: string;
+  /** Runs `gh nibfin …` in the execution clone, logged in with the sandbox token. */
+  ghNibfin(args: string[]): Promise<ExecResult>;
+  /** GitHub REST and GraphQL with the sandbox token. */
+  github: GitHub;
+  /** Sets the execution sandbox's visibility, runs `fn`, then restores public; each change is read back. */
+  withExecutionVisibility<T>(visibility: Visibility, fn: () => Promise<T>): Promise<T>;
+}
+
+/** Context handed to provisioning steps and scenarios. */
+export interface RunContext extends HostContext {
   target: RunTarget;
   /** Writes a log line to stderr; stdout holds only the JSON result. */
   log(message: string): void;
+  /** Facts a provisioning step of this run returned, if it ran. */
+  facts(stepId: string): Record<string, unknown> | undefined;
 }
 
 export interface ProvisioningStep {
   id: string;
-  run(ctx: RunContext): Promise<Outcome>;
+  /** Ids of earlier steps that must pass first. */
+  requires?: string[];
+  run(ctx: RunContext): Promise<StepOutcome>;
+  /** Runs after the scenarios when `run` ran, whatever its outcome, in reverse step order. */
+  teardown?(ctx: RunContext): Promise<Outcome>;
 }
 
 export interface Scenario {

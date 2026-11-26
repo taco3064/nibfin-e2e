@@ -2,10 +2,10 @@ import { deepEqual, equal } from 'node:assert/strict';
 import { test } from 'node:test';
 import { detectPlatform, run } from '../src/run.ts';
 import { select } from '../src/select.ts';
-import type { MapEntry, ProvisioningStep, RunTarget, Scenario } from '../src/types.ts';
-import { passed, scenario, step } from './fixtures.ts';
+import type { MapEntry, Outcome, ProvisioningStep, RunContext, RunTarget, Scenario } from '../src/types.ts';
+import { fakeHostContext as host, passed, scenario, step } from './fixtures.ts';
 
-const target: RunTarget = { ghNibfinCommit: 'a'.repeat(40), image: 'img@sha256:' + 'b'.repeat(64), imageDigest: 'sha256:' + 'b'.repeat(64), platform: 'linux' };
+const target: RunTarget = { ghNibfinCommit: 'a'.repeat(40), platform: 'linux' };
 
 function entriesFor(list: Scenario[]): MapEntry[] {
   const rules = [...new Set(list.flatMap((s) => s.rules))].sort();
@@ -14,7 +14,7 @@ function entriesFor(list: Scenario[]): MapEntry[] {
 
 async function runAll(list: Scenario[], steps: ProvisioningStep[] = [], entries = entriesFor(list)) {
   const { selected } = select(entries, list, { all: true });
-  return run({ selection: { all: true }, selected, steps, target, log: () => {}, now: () => new Date(0) });
+  return run({ selection: { all: true }, selected, steps, target, host, log: () => {}, now: () => new Date(0) });
 }
 
 test('detectPlatform maps node platforms', () => {
@@ -39,6 +39,8 @@ test('scenario outcomes passed, failed, waiting and thrown are reported with rea
   equal(r.meta.mode, 'all');
   equal(r.meta.ghNibfinCommit, target.ghNibfinCommit);
   equal(r.meta.startedAt, new Date(0).toISOString());
+  equal(r.meta.imageDigest, null);
+  deepEqual(r.teardown, []);
 });
 
 test('a malformed outcome is failed', async () => {
@@ -99,7 +101,59 @@ test('a selection run has no gate', async () => {
   const entries = entriesFor(list);
   const selection = { all: false as const, rules: ['R1.1'], sections: [] };
   const { selected } = select(entries, list, selection);
-  const r = await run({ selection, selected, steps: [], target, log: () => {} });
+  const r = await run({ selection, selected, steps: [], target, host, log: () => {} });
   equal(r.gate, undefined);
   equal(r.meta.mode, 'select');
+});
+
+test('requires is transitive; a step behind a failed or waiting prerequisite does not run and reports it', async () => {
+  const calls: string[] = [];
+  const steps = [
+    step('base', new Error('no podman'), calls),
+    step('pending', { status: 'waiting', reason: 'not released' }, calls),
+    step('login', passed, calls, { requires: ['base'] }),
+    step('top', passed, calls, { requires: ['login', 'pending'] }),
+  ];
+  const r = await runAll([scenario('a', ['R1.1'], ['linux'], passed, ['top'])], steps);
+  deepEqual(calls, ['base', 'pending']);
+  deepEqual(r.provisioning.map((p) => [p.id, p.status, p.reason]), [
+    ['base', 'failed', 'no podman'],
+    ['pending', 'waiting', 'not released'],
+    ['login', 'failed', 'provisioning step base failed: no podman'],
+    ['top', 'failed', 'provisioning step login failed: provisioning step base failed: no podman'],
+  ]);
+  deepEqual(r.scenarios.map((s) => [s.id, s.status]), [['a', 'failed']]);
+});
+
+test('teardowns of the steps that ran run in reverse order after the scenarios, also after failures', async () => {
+  const calls: string[] = [];
+  const down = (id: string, outcome: Outcome | Error) => async () => {
+    calls.push(`down:${id}`);
+    if (outcome instanceof Error) throw outcome;
+    return outcome;
+  };
+  const steps = [
+    step('one', passed, calls, { teardown: down('one', passed) }),
+    step('two', { status: 'failed', reason: 'half done', facts: { imageDigest: 'sha256:' + 'f'.repeat(64) } }, calls, { teardown: down('two', new Error('left a runner')) }),
+    step('three', passed, calls, { requires: ['two'], teardown: down('three', passed) }),
+    step('unused', passed, calls, { teardown: down('unused', passed) }),
+  ];
+  const s = { ...scenario('a', ['R1.1'], ['linux'], passed, ['one', 'three']), run: async () => (calls.push('scenario'), passed) };
+  const r = await runAll([s], steps);
+  deepEqual(calls, ['one', 'two', 'down:two', 'down:one']);
+  deepEqual(r.teardown, [
+    { id: 'two', status: 'failed', reason: 'left a runner' },
+    { id: 'one', status: 'passed', reason: 'ok' },
+  ]);
+  equal(r.meta.imageDigest, 'sha256:' + 'f'.repeat(64));
+  deepEqual(r.provisioning[1]?.facts, { imageDigest: 'sha256:' + 'f'.repeat(64) });
+  equal(r.gate?.passed, false);
+  equal(r.gate?.reasons.some((x) => x === 'teardown two failed: left a runner'), true);
+});
+
+test('scenarios get the facts of the steps that ran', async () => {
+  let seen: unknown;
+  const s = { ...scenario('a', ['R1.1'], ['linux'], passed, ['one']), run: async (ctx: RunContext) => ((seen = ctx.facts('one')), passed) };
+  await runAll([s], [step('one', { ...passed, facts: { n: 1 } })]);
+  deepEqual(seen, { n: 1 });
 });

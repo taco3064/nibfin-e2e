@@ -74,7 +74,12 @@ export function validateRegistry(scenarios: Scenario[], steps: ProvisioningStep[
   for (const s of steps) {
     if (typeof s.id !== 'string' || s.id === '') errors.push('provisioning step: id must be a non-empty string');
     else if (stepIds.has(s.id)) errors.push(`provisioning step ${s.id}: duplicate id`);
-    else stepIds.add(s.id);
+    else {
+      for (const r of s.requires ?? []) {
+        if (!stepIds.has(r)) errors.push(`provisioning step ${s.id}: requires ${r}, which is not an earlier step`);
+      }
+      stepIds.add(s.id);
+    }
   }
   const scenarioIds = new Set<string>();
   for (const s of scenarios) {

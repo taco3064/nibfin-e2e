@@ -1,4 +1,5 @@
-import type { MapEntry, Outcome, Platform, ProvisioningStep, Scenario } from '../src/types.ts';
+import type { MapEntry, Outcome, Platform, ProvisioningStep, Scenario, StepOutcome } from '../src/types.ts';
+export { fakeHostContext } from './host/fakes.ts';
 
 export function scenario(id: string, rules: string[], platforms: Platform[], outcome: Outcome | Error, requires?: string[]): Scenario {
   return {
@@ -13,9 +14,10 @@ export function scenario(id: string, rules: string[], platforms: Platform[], out
   };
 }
 
-export function step(id: string, outcome: Outcome | Error, calls?: string[]): ProvisioningStep {
+export function step(id: string, outcome: StepOutcome | Error, calls?: string[], extra: Partial<ProvisioningStep> = {}): ProvisioningStep {
   return {
     id,
+    ...extra,
     run: async () => {
       calls?.push(id);
       if (outcome instanceof Error) throw outcome;
