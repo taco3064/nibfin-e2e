@@ -1,3 +1,5 @@
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createGitHub } from '../../src/host/github.ts';
 import type { ExecOptions, ExecResult, Stream } from '../../src/host/exec.ts';
 import type { Kit } from '../../scenarios/lib/kit.ts';
@@ -63,7 +65,7 @@ export function setup(opts: { respond?: (argv: string[], o: ExecOptions) => Part
     stream: events.stream,
     fetch: fake.fetch,
     sandbox: { execution: EXEC, peer: PEER },
-    workDir: '/tmp/nibfin-e2e-test-work',
+    workDir: join(tmpdir(), 'nibfin-e2e-test-work'),
     env: { HOME: '/tmp/none' },
     log: (m) => logs.push(m),
     facts: (id) => (id === 'nibfin' ? { executionBaseline: { commit: 'c0', tree: BASE_TREE }, peerBaseline: { commit: 'c0', tree: BASE_TREE }, imageDigest: 'sha256:' + 'd'.repeat(64) } : undefined),

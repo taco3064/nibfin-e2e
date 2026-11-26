@@ -156,7 +156,9 @@ test('the fact-reading scenarios fail listing each check that did not hold, per 
     f.probe.node = ['v20.0.0'];
     f.probe.first_instruction_line = [EXTEND_MARKER];
   }
-  f.decoys = { tools: ['e2e-decoy-dockerfile'], login: [] };
+  f.decoys = { tools: ['e2e-decoy-install'], login: [] };
+  if (f.probe) f.probe.decoy = ['/home/nibfin/e2e-decoy-setup'];
+  if (f.shapeLog) f.shapeLog.buildOutput = 'STEP 1/2';
   const job = await jobContainer.run(ctxWith(f));
   equal(job.status, 'failed');
   match(job.reason, /R6\.2: Podman runs rootless \(observed: rootless=false\)/);
@@ -165,7 +167,7 @@ test('the fact-reading scenarios fail listing each check that did not hold, per 
   match(agent.reason, /R6\.18: the pushed branch contains no generated agent file \(observed: CLAUDE\.md, \.claude\/settings\.json\)/);
   match(agent.reason, /R6\.10: the agent shell does not run under the CLI sandbox/);
   const tools = await projectTools.run(ctxWith(f));
-  match(tools.reason, /R7\.3: node is the requested v22\.15\.0.*observed: v20\.0\.0.*no Repository Dockerfile or script ran \(observed: nibfin-tools:e2e-decoy-dockerfile\)/);
+  match(tools.reason, /R7\.3: node is the requested v22\.15\.0.*observed: v20\.0\.0.*no Repository install script ran \(observed: nibfin-tools:e2e-decoy-install, container:\/home\/nibfin\/e2e-decoy-setup\).*no Repository Dockerfile was built \(observed: STEP 1\/2\)/);
   match((await roleSkills.run(ctxWith(f))).reason, /R7\.6: extend keeps the built-in text first/);
 });
 
