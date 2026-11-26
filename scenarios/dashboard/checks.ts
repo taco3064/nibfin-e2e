@@ -457,3 +457,41 @@ export function pauseResumePreconditions(F: IssueState, A: IssueState & { id: nu
   if (A.state !== 'open' || A.labels.includes('delivered') || !A.labels.includes('pause')) out.push(`A is ${A.state} with [${A.labels.join(', ')}]`);
   return out;
 }
+
+/** The first primitive value in a JSON document under a key matching `key`. */
+export function statusValue(json: unknown, key: RegExp): string | number | boolean | undefined {
+  let found: string | number | boolean | undefined;
+  walk(json, (k, v) => {
+    if (found !== undefined || !key.test(k.replace(/\[\]$/, ''))) return;
+    if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') found = v;
+    else if (v && typeof v === 'object' && !Array.isArray(v)) {
+      const o = v as Record<string, unknown>;
+      const inner = o.ok ?? o.state ?? o.status ?? o.healthy;
+      if (typeof inner === 'string' || typeof inner === 'boolean') found = inner;
+    }
+  });
+  return found;
+}
+
+const GOOD = /^(ok|true|yes|running|healthy|success|succeeded|passed|active|up[ _-]?to[ _-]?date|current|latest|green|good)$/i;
+const BAD = /^(false|no|fail(ed|ure)?|error|missing|stale|outdated|inactive|broken|never|red|bad|none|not[ _-].*|upgrade[ _-]available)$/i;
+
+/** `good`, `bad` or undefined for a status value. */
+export function stateOf(v: string | number | boolean | undefined): 'good' | 'bad' | undefined {
+  if (typeof v === 'boolean') return v ? 'good' : 'bad';
+  if (typeof v !== 'string') return undefined;
+  return GOOD.test(v.trim()) ? 'good' : BAD.test(v.trim()) ? 'bad' : undefined;
+}
+
+const LIGHT_GOOD = /\b(ok|running|healthy|success|succeeded|pass(ed|ing)?|active|up to date|current|latest|good|working)\b/i;
+const LIGHT_BAD = /\b(fail(ed|ing|ure)?|error|missing|not|stale|outdated|inactive|broken|never|warning|upgrade|unknown)\b/i;
+
+/** Problem when a light's text or label does not say the state the status reports (Proposal R9.4). */
+export function lightProblem(name: string, lightText: string, state: 'good' | 'bad' | undefined): string | undefined {
+  if (!state) return `${name}: status --json gives no readable state`;
+  const good = LIGHT_GOOD.test(lightText) && !LIGHT_BAD.test(lightText);
+  const bad = LIGHT_BAD.test(lightText);
+  if (state === 'good' && !good) return `${name}: status is good but the light says "${lightText.slice(0, 80)}"`;
+  if (state === 'bad' && !bad) return `${name}: status is not good but the light says "${lightText.slice(0, 80)}"`;
+  return undefined;
+}

@@ -1,7 +1,7 @@
 // Proposal R9.14–R9.17, R9.19, R9.1–R9.5, R9.7, R9.8: the three views and what each shows.
 import type { Locator, Page } from 'playwright-core';
 import type { RunContext } from '../../src/types.ts';
-import { check, dateTexts, fail, localeProblems, shiftedBy, stageOf } from './checks.ts';
+import { check, dateTexts, fail, lightProblem, localeProblems, shiftedBy, stageOf, stateOf, statusValue } from './checks.ts';
 import { blockedBy, ensureFixtures, me, sleep, until } from './github.ts';
 import type { Fixtures, Issue } from './github.ts';
 import {
@@ -93,8 +93,32 @@ function numberNear(text: string, word: RegExp): number | undefined {
   return m ? Number(m[1] ?? m[2]) : undefined;
 }
 
-async function personView(page: Page, ctx: RunContext, f: Fixtures, notes: string[]) {
+const CONCLUSIONS: [string, RegExp][] = [
+  ['success', /\b(success|succeeded|passed)\b/i],
+  ['failure', /\b(failure|failed)\b/i],
+  ['cancelled', /\b(cancelled|canceled)\b/i],
+  ['skipped', /\bskipped\b/i],
+  ['in progress', /\b(in progress|running|queued)\b/i],
+];
+
+/** Conclusions of the runs an Issue's run strip lists, read from each run row's text or label. */
+async function stripConclusions(page: Page, el: Locator): Promise<string[] | undefined> {
+  const strip = el.getByRole('button', { name: /run/i }).first();
+  if (!(await strip.count())) return undefined;
+  await strip.click();
+  await sleep(500);
+  const rows = await page
+    .locator('a[href*="/actions/runs/"]')
+    .filter({ visible: true })
+    .evaluateAll((els) => els.map((e) => `${e.closest('li, tr, [role="row"], [role="listitem"]')?.textContent ?? e.textContent ?? ''} ${e.getAttribute('aria-label') ?? ''} ${e.getAttribute('href') ?? ''}`));
+  await closeDialog(page);
+  await page.keyboard.press('Escape');
+  return rows.map((r) => CONCLUSIONS.find(([, re]) => re.test(r))?.[0] ?? `unknown:${r.slice(-80)}`);
+}
+
+async function personView(page: Page, ctx: RunContext, f: Fixtures, listed: Issue[], notes: string[]) {
   await gotoView(page, 'person');
+  for (const k of ['A', 'B', 'D', 'F', 'P'] as const) await issueElement(page, f[k].title).waitFor({ state: 'visible', timeout: 90_000 }).catch(() => {});
   // R9.14: grouped by repository; Proposal set included, N (no scope) and C (closed) absent.
   const text = await bodyText(page);
   for (const repo of [ctx.sandbox.execution, ctx.sandbox.peer]) check(text.includes(repo), 'R9.14', `a ${repo} group in the person view`, 'no such group heading');
@@ -102,7 +126,6 @@ async function personView(page: Page, ctx: RunContext, f: Fixtures, notes: strin
   for (const k of ['N', 'C'] as const) check(!text.includes(f[k].title), 'R9.14', `fixture ${k} not in the person view`, 'listed');
 
   // R9.1: tiles computed from the listed Issues.
-  const listed = (await personSet(ctx, f)).issues;
   const tiles = page.locator('section, [role="region"], [role="group"], dl, article').filter({ hasText: /open/i }).first();
   const tileText = (await tiles.innerText().catch(() => '')) || text;
   const open = numberNear(tileText, /open(?: issues?)?/);
@@ -123,8 +146,20 @@ async function personView(page: Page, ctx: RunContext, f: Fixtures, notes: strin
   for (const i of held) check(hrefs.has(i.html_url), 'R9.1', `${i.repo}${num(i)} in the needs-intervention filter`, 'missing');
   for (const i of listed.filter((x) => !held.includes(x))) check(!hrefs.has(i.html_url), 'R9.1', `${i.repo}${num(i)} (no pause or pending) filtered out`, 'still listed');
   await needs.click();
-  const runStats = /success|failure|failed|cancelled|succeeded/i.test(tileText) || /\b(runs?|conclusions?)\b/i.test(tileText);
-  check(runStats, 'R9.1', 'run-conclusion statistics among the tiles', tileText.slice(0, 200));
+  // Run-conclusion statistics equal the listed Issues' run strips.
+  const tally = new Map<string, number>();
+  for (const i of listed) {
+    const el = issueElement(page, i.title);
+    if (!(await el.count())) continue;
+    for (const c of (await stripConclusions(page, el)) ?? []) tally.set(c, (tally.get(c) ?? 0) + 1);
+  }
+  const unknown = [...tally.keys()].filter((c) => c.startsWith('unknown:'));
+  check(!unknown.length, 'R9.1', 'each listed run to show its conclusion', unknown.join(' | '));
+  for (const [name, re] of CONCLUSIONS) {
+    const want = tally.get(name) ?? 0;
+    const got = numberNear(tileText, new RegExp(re.source.replace(/\\b/g, '')));
+    if (want || got !== undefined) check((got ?? 0) === want, 'R9.1', `the run statistics to show ${want} ${name} (from the listed Issues' run strips)`, String(got));
+  }
   check(numberNear(tileText, /online/) !== undefined && numberNear(tileText, /busy/) !== undefined, 'R9.1', 'local Runner online and busy counts', tileText.slice(0, 200));
   check(/\d+(?:\.\d+)?\s*(?:[KMG]i?B|%)/i.test(tileText), 'R9.1', 'the podman machine memory use', tileText.slice(0, 200));
   notes.push(`person view: ${listed.length} open, ${held.length} need intervention, tiles agree`);
@@ -184,16 +219,25 @@ async function repoView(page: Page, ctx: RunContext, f: Fixtures, notes: string[
   const digest = String(ctx.facts('nibfin')?.imageDigest ?? '');
   const hex = digest.replace(/^sha256:/, '');
   check(hex && text.includes(hex.slice(0, 12)), 'R9.15', `the image ${digest.slice(0, 19)}… in the repo view`, 'not shown');
-  const status = JSON.stringify(await statusJson(ctx, exec));
-  check(status.includes(hex.slice(0, 12)), 'R9.15', 'status --json to report the same image', 'another image');
+  const statusDoc = await statusJson(ctx, exec);
+  check(JSON.stringify(statusDoc).includes(hex.slice(0, 12)), 'R9.15', 'status --json to report the same image', 'another image');
 
-  // R9.4: three lights with icon or text.
-  for (const name of [/nibfin (run|flow)/i, /image/i, /workflows?/i]) {
+  // R9.4: three lights with icon or text, each saying the state status --json reports; R9.15 Nibfin-run state.
+  const lights: [string, RegExp, RegExp][] = [
+    ['Nibfin run', /nibfin (run|flow)/i, /^(nibfin_?run\w*|nibfinRun\w*|flow\w*|running|ran|run_?(ok|state|status))$/i],
+    ['image', /image/i, /^(image_?(state|status|ok|current|latest|up_?to_?date)|imageState|imageStatus|imageCurrent|imageUpToDate)$/i],
+    ['Workflows', /workflows?/i, /^(workflows?_?(state|status|ok|current|up_?to_?date)?|workflowsState|workflowsStatus|workflowsOk)$/i],
+  ];
+  const lightProblems: string[] = [];
+  for (const [label, name, key] of lights) {
     const light = page.getByRole('status', { name }).or(page.getByRole('img', { name })).or(page.locator('li, [role="listitem"], div').filter({ hasText: name }).filter({ has: page.locator('svg, [role="img"]') }));
-    check(await light.count(), 'R9.4', `a ${name} health light with an icon or text`, 'none');
-    const t = `${await light.first().innerText().catch(() => '')} ${(await light.first().getAttribute('aria-label')) ?? ''}`.trim();
-    check(t.length > 0, 'R9.4', `the ${name} light to say its state in text or an icon label`, 'colour only');
+    check(await light.count(), 'R9.4', `a ${label} health light with an icon or text`, 'none');
+    const t = `${await light.last().innerText().catch(() => '')} ${(await light.last().getAttribute('aria-label')) ?? ''} ${(await light.last().locator('[aria-label]').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')).join(' ')).catch(() => ''))}`.trim();
+    check(t.length > 0, 'R9.4', `the ${label} light to say its state in text or an icon label`, 'colour only');
+    const p = lightProblem(label, t, stateOf(statusValue(statusDoc, key)));
+    if (p) lightProblems.push(p);
   }
+  check(!lightProblems.length, 'R9.4', 'each light to agree with the state status --json reports (R9.15 for the Nibfin run)', lightProblems.join('; '));
 
   // R9.3: the graph.
   for (const k of ['A', 'B', 'D', 'F', 'N'] as const) {
@@ -322,21 +366,22 @@ export const dashboardViews = defineScenario({
       const have = await blockedBy(ctx.github, f[k]);
       check(have.some((x) => x.id === b.id), 'R9.2', `fixture ${k} Blocked by A on GitHub`, 'missing');
     }
+    // The person view lists through native search, whose index lags behind new Issues.
+    const listed = (await personSet(ctx, f)).issues;
     // Every page needs its own server: a session proof is exchanged once (R9.26).
     const dash = await startDashboard(ctx, secrets);
     try {
       const { page } = await openPage(ctx);
       await openDashboard(page, dash);
       const markers: Record<string, string> = {};
-      const personFeatures = await personView(page, ctx, f, notes);
+      const personFeatures = await personView(page, ctx, f, listed, notes);
       markers.person = await readUpdateMarker(page);
       await repoView(page, ctx, f, notes);
       markers.repo = await readUpdateMarker(page);
-      const repoEl = issueElement(page, f.A.title);
-      if (await repoEl.count()) {
-        const repoFeatures = await issueFeatures(repoEl, f.A);
-        check(JSON.stringify(repoFeatures) === JSON.stringify(personFeatures), 'R9.2', 'the same Issue element in the person and repo views', JSON.stringify({ personFeatures, repoFeatures }));
-      }
+      // The Runner view shows an Issue only while a Runner is busy with it; dashboard-updates compares it there.
+      const repoEl = await mustIssue(page, f.A, 'R9.2', 'repo view');
+      const repoFeatures = await issueFeatures(repoEl, f.A);
+      check(JSON.stringify(repoFeatures) === JSON.stringify(personFeatures), 'R9.2', 'the same Issue element in the person and repo views', JSON.stringify({ personFeatures, repoFeatures }));
       await runnerView(page, ctx, notes);
       markers.runner = await readUpdateMarker(page);
       notes.push(`update markers: ${Object.entries(markers).map(([k, v]) => `${k} ${v}`).join(', ')}`);
