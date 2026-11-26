@@ -25,8 +25,13 @@ import {
 } from './support.ts';
 import type { Secrets } from './support.ts';
 
-/** A small public repository outside the sandboxes where the gate account has less than triage. */
-export const READ_ONLY_REPO = 'octocat/Hello-World';
+/**
+ * A small public repository outside the sandboxes where the gate account has less than
+ * triage. Small, because the repo view reads and draws every open Issue (R5.49, R9.15).
+ */
+export const READ_ONLY_REPO = 'octocat/git-consortium';
+/** Above this many open Issues and PRs the read-only repository is too large to draw. */
+const READ_ONLY_MAX_OPEN = 100;
 
 const PREVIEW = /^(preview|next|continue|plan|check)\b/i;
 
@@ -163,7 +168,11 @@ async function readOnlyPrecondition(ctx: RunContext, opts: { openIssue?: boolean
   const { data } = await ctx.github.rest<{ permissions?: Record<string, boolean>; open_issues_count: number }>('GET', `/repos/${READ_ONLY_REPO}`);
   const p = data.permissions;
   if (!p || p.admin || p.maintain || p.push || p.triage) throw new Error(`precondition: GitHub does not report the account below triage on ${READ_ONLY_REPO} (permissions ${JSON.stringify(p)}); nothing is asserted about the product`);
-  if (opts.openIssue && !(data.open_issues_count > 0)) throw new Error(`precondition: ${READ_ONLY_REPO} has no open Issue; nothing is asserted about the product`);
+  if (data.open_issues_count > READ_ONLY_MAX_OPEN) throw new Error(`precondition: ${READ_ONLY_REPO} has ${data.open_issues_count} open Issues and PRs, more than ${READ_ONLY_MAX_OPEN}; pick a smaller repository. Nothing is asserted about the product`);
+  if (opts.openIssue) {
+    const { data: open } = await ctx.github.rest<{ pull_request?: unknown }[]>('GET', `/repos/${READ_ONLY_REPO}/issues?state=open&per_page=100`);
+    if (!open.some((i) => i.pull_request === undefined)) throw new Error(`precondition: ${READ_ONLY_REPO} has no open Issue; nothing is asserted about the product`);
+  }
 }
 
 /** R9.21, R9.22 failure: a plan on a repository the account cannot administer shows a code and a next step. */
