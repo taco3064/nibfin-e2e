@@ -23,6 +23,7 @@ import {
   statusJson,
 } from './support.ts';
 import type { Dashboard, Secrets, View } from './support.ts';
+import { READ_ONLY_REPO } from './operations.ts';
 
 const num = (i: Issue) => `#${i.number}`;
 const hasNumber = (text: string, i: Issue) => new RegExp(`#${i.number}\\b`).test(text);
@@ -308,8 +309,8 @@ async function repoView(page: Page, ctx: RunContext, f: Fixtures, notes: string[
   }
 
   // R9.16: a not-imported repository typed as OWNER/REPO opens.
-  await selectRepo(page, 'octocat/Hello-World');
-  check((await bodyText(page)).includes('octocat/Hello-World'), 'R9.16', 'a typed OWNER/REPO to open', 'not shown');
+  await selectRepo(page, READ_ONLY_REPO);
+  check((await bodyText(page)).includes(READ_ONLY_REPO), 'R9.16', 'a typed OWNER/REPO to open', 'not shown');
   await selectRepo(page, exec);
   notes.push('repo view: list, image, lights, graph with edges, collapsed blocker, zoom and pan');
 }

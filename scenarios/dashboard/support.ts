@@ -128,6 +128,7 @@ export async function openPage(ctx: RunContext, opts: { width?: number; height?:
     locale: opts.locale ?? 'en-US',
     timezoneId: opts.timezoneId ?? 'UTC',
     downloadsPath: tmp,
+    artifactsDir: join(work, 'browser', 'artifacts'),
   };
   let context: BrowserContext;
   try {
