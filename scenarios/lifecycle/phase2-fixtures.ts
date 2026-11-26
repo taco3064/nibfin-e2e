@@ -53,7 +53,8 @@ export const assigneeRouting: Scenario = lifecycle({
         const j = await k.obs.job(exec, shapeJob.id);
         return j.status === 'completed' ? j : undefined;
       }, DEADLINE.stage, show);
-      c.check('R4.24', shape.conclusion === 'success', `the shape job running at the reassignment concluded ${String(shape.conclusion)}`);
+      if (time(shape.completed_at) <= reassignedAt) c.notExercised('R4.24', `shape job ${shape.id} completed before the reassignment`);
+      else c.check('R4.24', shape.conclusion === 'success', `the shape job running at the reassignment concluded ${String(shape.conclusion)}`);
       await k.obs.until('`shaped`', (s) => (k.labels(s, exec, n).includes('shaped') ? true : undefined), DEADLINE.event, show);
       await k.removeLabel(exec, n, 'pause');
       const removedAt = k.now();

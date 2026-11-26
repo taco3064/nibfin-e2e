@@ -289,9 +289,11 @@ export function fixPushProblems(input: {
   const out: string[] = [];
   const want = `refs/heads/${input.branch}`;
   for (const w of input.windows) {
-    for (const a of pushesWithin(input.activity, w)) {
+    const writes = pushesWithin(input.activity, w);
+    for (const a of writes) {
       if (a.ref !== want) out.push(`the ${w.reason} Deliver pushed to ${a.ref} at ${a.timestamp}, not ${want}`);
     }
+    if (!writes.some((a) => a.ref === want)) out.push(`not exercised: the ${w.reason} Deliver pushed nothing to ${want}`);
   }
   for (const h of input.headsAfter) {
     if (h.prHead !== h.branchHead) out.push(`after the ${h.reason} Deliver, PR #${input.prNumber}'s head is ${h.prHead} but ${input.branch} is at ${h.branchHead}`);
