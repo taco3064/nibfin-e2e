@@ -2,7 +2,7 @@
 import type { Locator, Page } from 'playwright-core';
 import type { RunContext } from '../../src/types.ts';
 import { check, dateTexts, fail, lightProblem, localeProblems, shiftedBy, stageOf, stateOf, statusValue } from './checks.ts';
-import { blockedBy, ensureFixtures, me, sleep, until } from './github.ts';
+import { blockedBy, ensureFixtures, me, readIssue, sleep, until } from './github.ts';
 import type { Fixtures, Issue } from './github.ts';
 import {
   bodyText,
@@ -116,7 +116,23 @@ async function stripConclusions(page: Page, el: Locator): Promise<string[] | und
   return rows.map((r) => CONCLUSIONS.find(([, re]) => re.test(r))?.[0] ?? `unknown:${r.slice(-80)}`);
 }
 
-async function personView(page: Page, ctx: RunContext, f: Fixtures, listed: Issue[], notes: string[]) {
+/**
+ * The Issues the person view lists: Issue links on the page whose Issue's title is shown
+ * as an Issue element there ("Waiting on" links show only numbers), read back from GitHub.
+ */
+async function renderedIssues(page: Page, ctx: RunContext): Promise<Issue[]> {
+  const hrefs = new Set(await page.locator('a[href^="https://github.com/"][href*="/issues/"]').evaluateAll((els) => els.map((e) => e.getAttribute('href') ?? '')));
+  const out: Issue[] = [];
+  for (const href of hrefs) {
+    const m = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/issues\/(\d+)$/.exec(href);
+    if (!m) continue;
+    const issue = await readIssue(ctx.github, m[1] as string, Number(m[2]));
+    if (await issueElement(page, issue.title).count()) out.push(issue);
+  }
+  return out;
+}
+
+async function personView(page: Page, ctx: RunContext, f: Fixtures, notes: string[]) {
   await gotoView(page, 'person');
   for (const k of ['A', 'B', 'D', 'F', 'P'] as const) await issueElement(page, f[k].title).waitFor({ state: 'visible', timeout: 90_000 }).catch(() => {});
   // R9.14: grouped by repository; Proposal set included, N (no scope) and C (closed) absent.
@@ -125,7 +141,8 @@ async function personView(page: Page, ctx: RunContext, f: Fixtures, listed: Issu
   for (const k of ['A', 'B', 'D', 'F', 'P'] as const) await mustIssue(page, f[k], 'R9.14', 'person view');
   for (const k of ['N', 'C'] as const) check(!text.includes(f[k].title), 'R9.14', `fixture ${k} not in the person view`, 'listed');
 
-  // R9.1: tiles computed from the listed Issues.
+  // R9.1: tiles computed from the Issues the page lists, read back from GitHub.
+  const listed = await renderedIssues(page, ctx);
   const tiles = page.locator('section, [role="region"], [role="group"], dl, article').filter({ hasText: /open/i }).first();
   const tileText = (await tiles.innerText().catch(() => '')) || text;
   const open = numberNear(tileText, /open(?: issues?)?/);
@@ -366,15 +383,15 @@ export const dashboardViews = defineScenario({
       const have = await blockedBy(ctx.github, f[k]);
       check(have.some((x) => x.id === b.id), 'R9.2', `fixture ${k} Blocked by A on GitHub`, 'missing');
     }
-    // The person view lists through native search, whose index lags behind new Issues.
-    const listed = (await personSet(ctx, f)).issues;
+    // The person view lists through native search (R5.48), whose index lags behind new Issues.
+    await personSet(ctx, f);
     // Every page needs its own server: a session proof is exchanged once (R9.26).
     const dash = await startDashboard(ctx, secrets);
     try {
       const { page } = await openPage(ctx);
       await openDashboard(page, dash);
       const markers: Record<string, string> = {};
-      const personFeatures = await personView(page, ctx, f, listed, notes);
+      const personFeatures = await personView(page, ctx, f, notes);
       markers.person = await readUpdateMarker(page);
       await repoView(page, ctx, f, notes);
       markers.repo = await readUpdateMarker(page);

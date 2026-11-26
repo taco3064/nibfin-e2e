@@ -98,9 +98,17 @@ test('command inputs keep only those with a param; dialog fields are compared by
     { name: 'count', required: false, values: [] },
     { name: 'provider', required: true, values: ['claude', 'codex'] },
   ]);
-  const fields = fieldsFromAriaSnapshot('- dialog "Runner add":\n  - combobox "Provider"\n  - spinbutton "Count"\n  - button "Preview"');
-  deepEqual(fields, [{ role: 'combobox', name: 'Provider' }, { role: 'spinbutton', name: 'Count' }]);
-  deepEqual(fieldProblems('runner add', schema.get('runner add') ?? [], fields), []);
+  const fields = fieldsFromAriaSnapshot('- dialog "Runner add":\n  - combobox "Provider":\n    - option "claude" [selected]\n    - option "codex"\n  - spinbutton "Count"\n  - button "Preview"');
+  deepEqual(fields, [{ role: 'combobox', name: 'Provider', options: ['claude', 'codex'] }, { role: 'spinbutton', name: 'Count' }]);
+  // The required flag comes from the element, as dialogFields reads it.
+  deepEqual(fieldProblems('runner add', schema.get('runner add') ?? [], fields.map((f) => ({ ...f, required: f.name === 'Provider' }))), []);
+  deepEqual(fieldProblems('runner add', schema.get('runner add') ?? [], fields.map((f) => ({ ...f, required: true }))), ['runner add: field Count is marked required, the schema says optional']);
+  const noChoice = fieldsFromAriaSnapshot('- combobox "Provider"\n- spinbutton "Count"').map((f) => ({ ...f, required: f.name === 'Provider' }));
+  deepEqual(fieldProblems('runner add', schema.get('runner add') ?? [], noChoice), ['runner add: field Provider offers no choice of claude, codex']);
+  deepEqual(fieldsFromAriaSnapshot('- radiogroup "Provider":\n  - radio "claude"\n  - radio "codex"\n- checkbox "Delete login"'), [
+    { role: 'radiogroup', name: 'Provider', options: ['claude', 'codex'] },
+    { role: 'checkbox', name: 'Delete login' },
+  ]);
   deepEqual(fieldProblems('runner add', schema.get('runner add') ?? [], [{ role: 'textbox', name: 'Count' }, { role: 'textbox', name: 'Model' }]), [
     'runner add: no field for input provider',
     'runner add: field Model is not in the parameter schema',

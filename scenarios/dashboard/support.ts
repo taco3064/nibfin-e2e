@@ -7,8 +7,8 @@ import { chromium } from 'playwright-core';
 import type { BrowserContext, Locator, Page, Response } from 'playwright-core';
 import type { Running } from '../../src/host/exec.ts';
 import type { Outcome, RunContext, RuleId, Scenario } from '../../src/types.ts';
-import { parseJobStarts, parseSessionUrl, redact } from './checks.ts';
-import type { ContainerStart, SessionUrl } from './checks.ts';
+import { fieldsFromAriaSnapshot, parseJobStarts, parseSessionUrl, redact } from './checks.ts';
+import type { ContainerStart, FormField, SessionUrl } from './checks.ts';
 import { sleep } from './github.ts';
 
 // ---- Scenario wrapper ---------------------------------------------------------
@@ -242,6 +242,33 @@ export async function closeDialog(page: Page): Promise<void> {
   if (await close.count()) await close.first().click();
   else await page.keyboard.press('Escape');
   await d.waitFor({ state: 'hidden', timeout: 10_000 }).catch(() => {});
+}
+
+/**
+ * A dialog's form fields by role and accessible name, each with its required flag
+ * (`required` or `aria-required`) and its options: a select's options, nested options
+ * or radios, or the listbox a combobox opens.
+ */
+export async function dialogFields(d: Locator): Promise<FormField[]> {
+  const fields = fieldsFromAriaSnapshot(await d.ariaSnapshot());
+  for (const f of fields) {
+    const el = d.getByRole(f.role as Parameters<Locator['getByRole']>[0], { name: f.name, exact: true }).first();
+    if (!(await el.count())) continue;
+    const info = await el.evaluate((e) => {
+      const x = e as unknown as { required?: boolean; tagName: string; getAttribute(n: string): string | null; querySelectorAll(s: string): ArrayLike<{ textContent: string | null }> };
+      const opts = x.tagName.toLowerCase() === 'select' ? Array.from(x.querySelectorAll('option'), (o) => (o.textContent ?? '').trim()) : [];
+      return { required: x.required === true || x.getAttribute('aria-required') === 'true', options: opts };
+    });
+    f.required = info.required;
+    if (info.options.length) f.options = info.options;
+    if (!f.options && f.role === 'combobox') {
+      await el.click();
+      const listed = await d.page().getByRole('option').allInnerTexts();
+      await d.page().keyboard.press('Escape');
+      if (listed.length) f.options = listed.map((t) => t.trim());
+    }
+  }
+  return fields;
 }
 
 /** First button in `scope` whose name matches, or undefined. */

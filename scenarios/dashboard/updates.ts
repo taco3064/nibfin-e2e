@@ -119,6 +119,7 @@ async function localJob(ctx: RunContext, secrets: Secrets, markers: Record<strin
   const dashP = await startDashboard(ctx, secrets);
   const dashR = await startDashboard(ctx, secrets);
   let E: Issue | undefined;
+  let settled = false;
   try {
     const person = (await openPage(ctx)).page;
     await openDashboard(person, dashP);
@@ -162,21 +163,31 @@ async function localJob(ctx: RunContext, secrets: Secrets, markers: Record<strin
     const runs = await gh.list<{ id: number; display_title: string; status: string }>(`/repos/${exec}/actions/runs?status=in_progress`, 'workflow_runs');
     const titled = runs.filter((r) => new RegExp(`#${issue.number}\\b`).test(r.display_title));
     const mine: typeof titled = [];
+    let busyRunner = '';
     for (const r of titled) {
-      const jobs = await gh.list<{ labels: string[] }>(`/repos/${exec}/actions/runs/${r.id}/jobs`, 'jobs');
-      if (jobs.some((j) => j.labels.includes('self-hosted'))) mine.push(r);
+      const jobs = await gh.list<{ labels: string[]; runner_name: string | null }>(`/repos/${exec}/actions/runs/${r.id}/jobs`, 'jobs');
+      const hosted = jobs.find((j) => j.labels.includes('self-hosted'));
+      if (!hosted) continue;
+      mine.push(r);
+      busyRunner ||= hosted.runner_name ?? '';
     }
     check(mine.length === 1, 'R9.23', `one in-progress run titled with #${issue.number} (R5.5) with a self-hosted job`, runs.map((r) => `${r.id} ${r.display_title}`).join(' | ') || 'none');
+    check(busyRunner, 'R9.23', `the self-hosted job of #${issue.number} to name its Runner`, 'no runner_name yet');
     await gh.rest('POST', `/repos/${exec}/issues/${issue.number}/labels`, { labels: ['pause'] });
     await gh.rest('POST', `/repos/${exec}/actions/runs/${(mine[0] as { id: number }).id}/cancel`, undefined, [409]);
-    const idle = async (p: Page = runner) => !/\bbusy\b/i.test(await bodyText(p));
+    settled = true;
+    // Only the row of the Runner that ran E: other rows, legends and the timeline may say "busy".
+    const idle = async (p: Page = runner) => {
+      const row = (await p.locator('li, [role="listitem"], [role="row"], article, section').filter({ hasText: busyRunner }).last().innerText().catch(() => '')).replace(/\s+/g, ' ');
+      return /\bidle\b/i.test(row) && !new RegExp(`#${issue.number}\\b`).test(row);
+    };
     if (markers.runner === 'live') {
       const ms = await seenWithin(runner, idle, POLL_MS + TOLERANCE_MS);
-      check(ms !== undefined && (await sameDocument(runner)), 'R9.23', 'the Runner back to idle without navigation after the Job ended', 'still busy');
+      check(ms !== undefined && (await sameDocument(runner)), 'R9.23', `Runner ${busyRunner} back to idle without navigation after the Job ended`, 'still busy or not shown');
     } else {
       await sleep(POLL_MS);
       const again = await refreshed(ctx, secrets, runner, 'runner');
-      check(await idle(again), 'R9.5', 'the Runner idle after a refresh once the Job ended', 'still busy');
+      check(await idle(again), 'R9.5', `Runner ${busyRunner} idle after a refresh once the Job ended`, 'still busy or not shown');
     }
     const starts = startsInWindow(watcher.starts(), from - 5000, Date.now());
     if (starts.length !== 1) {
@@ -209,7 +220,24 @@ async function localJob(ctx: RunContext, secrets: Secrets, markers: Record<strin
     await dashP.stop();
     await dashR.stop();
     await watcher.stop();
+    if (E && !settled) await settleE(ctx, E).catch((e: Error) => ctx.log(`settling fixture E failed: ${e.message}`));
   }
+}
+
+/** After a failure before E was paused: pause E and cancel its runs that hold a local Runner, so no Job outlives the scenario. */
+async function settleE(ctx: RunContext, E: Issue): Promise<void> {
+  const gh = ctx.github;
+  const exec = ctx.sandbox.execution;
+  const now = await readIssue(gh, exec, E.number);
+  if (!now.labels.includes('pause')) await gh.rest('POST', `/repos/${exec}/issues/${E.number}/labels`, { labels: ['pause'] });
+  for (const status of ['queued', 'in_progress']) {
+    const runs = await gh.list<{ id: number; display_title: string }>(`/repos/${exec}/actions/runs?status=${status}`, 'workflow_runs');
+    for (const r of runs.filter((x) => new RegExp(`#${E.number}\\b`).test(x.display_title))) {
+      const jobs = await gh.list<{ labels: string[] }>(`/repos/${exec}/actions/runs/${r.id}/jobs`, 'jobs');
+      if (jobs.some((j) => j.labels.includes('self-hosted')) || status === 'queued') await gh.rest('POST', `/repos/${exec}/actions/runs/${r.id}/cancel`, undefined, [409]);
+    }
+  }
+  ctx.log(`fixture E (#${E.number}) paused and its runs cancelled after the scenario stopped early`);
 }
 
 async function failures(ctx: RunContext, secrets: Secrets, markers: Record<string, string>, notes: string[]) {
