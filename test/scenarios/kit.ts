@@ -9,13 +9,13 @@ export const BASE_TREE = 'base-tree';
 
 /** A `podman events` stand-in: `emit` sends a line to every open stream. */
 export function fakeStream() {
-  const open = new Set<{ onLine: (l: string) => void; close: () => void }>();
+  const open = new Set<{ argv: string[]; onLine: (l: string) => void; close: () => void }>();
   const argvs: string[][] = [];
   const stream: Stream = (argv, onLine) => {
     argvs.push(argv);
     let close = () => {};
     const closed = new Promise<number>((r) => (close = () => r(0)));
-    const entry = { onLine, close };
+    const entry = { argv, onLine, close };
     open.add(entry);
     return {
       stop: () => {
@@ -25,7 +25,19 @@ export function fakeStream() {
       closed,
     };
   };
-  return { stream, argvs, emit: (line: string) => [...open].forEach((e) => e.onLine(line)), get open() { return open.size; } };
+  /** Streams whose filters select this repository and Issue. */
+  const watching = (repo: string, issue: number) =>
+    [...open].filter((e) => e.argv.includes(`label=io.github.taco3064.nibfin.repo=${repo}`) && e.argv.includes(`label=io.github.taco3064.nibfin.issue=${issue}`));
+  return {
+    stream,
+    argvs,
+    emit: (line: string) => [...open].forEach((e) => e.onLine(line)),
+    emitFor: (repo: string, issue: number, line: string) => watching(repo, issue).forEach((e) => e.onLine(line)),
+    watching,
+    get open() {
+      return open.size;
+    },
+  };
 }
 
 export const runner = (id: number, slot: string, extra: { status?: string; busy?: boolean } = {}) => ({ id, name: `myhost-1a2b3c4d-${slot}`, status: extra.status ?? 'online', busy: extra.busy ?? false });
@@ -56,6 +68,7 @@ export function setup(opts: { respond?: (argv: string[], o: ExecOptions) => Part
     log: (m) => logs.push(m),
     facts: (id) => (id === 'nibfin' ? { executionBaseline: { commit: 'c0', tree: BASE_TREE }, peerBaseline: { commit: 'c0', tree: BASE_TREE }, imageDigest: 'sha256:' + 'd'.repeat(64) } : undefined),
     secrets: () => ['sandbox-token-value', 'claude-token-value'],
+    ghToken: () => 'sandbox-token-value',
     now: () => clock,
     sleep: async (ms) => {
       clock += ms;

@@ -1,23 +1,22 @@
-import type { HostServices } from '../src/host/services.ts';
+import type { KitFor } from './lib/kit.ts';
 import { mainHead } from '../src/host/sandbox.ts';
 import type { Scenario } from '../src/types.ts';
 import { Checks } from './lib/checks.ts';
 import { WRITE_OVERRIDE_TEXT, json } from './lib/files.ts';
 import { close, labels, prepareFixture } from './lib/fixture.ts';
-import { createKit } from './lib/kit.ts';
 import { observedFacts } from './lib/observed-facts.ts';
 import { runFirstJob } from './lib/single.ts';
 import { DEADLINE } from './lib/waits.ts';
 
 /** Proposal R7.8: Skill text cannot change the permissions or merge gates Core controls. */
-export function skillLimits(host: HostServices): Scenario {
+export function skillLimits(kitFor: KitFor): Scenario {
   return {
     id: 'skill-limits',
     rules: ['R7.8'],
     platforms: ['linux'],
     requires: ['observed-job'],
     async run(ctx) {
-      const kit = createKit(host, ctx);
+      const kit = kitFor(ctx);
       const repo = kit.sandbox.execution;
       const c = new Checks();
       // Leg 1: a Shape override that tells the agent to write and push.
