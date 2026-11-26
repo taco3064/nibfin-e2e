@@ -30,3 +30,17 @@ test('mustRun reports the exit code and output, or only stderr when stdout may h
   const err = await mustRun(exec, [process.execPath, '-e', 'console.log("out-"+"secret");process.exit(3)'], { hideStdout: true }).catch((e: Error) => e.message);
   equal(String(err).includes('out-secret'), false);
 });
+
+test('the stream delivers lines, filters the environment and stops on request', async () => {
+  const { createStream } = await import('../../src/host/exec.ts');
+  const stream = createStream({ ...process.env, E2E_SANDBOX_TOKEN: 'secret' }, () => {});
+  const lines: string[] = [];
+  const script = 'console.log("a");console.log(Object.keys(process.env).filter(k=>/E2E_/.test(k)).length);setInterval(()=>{},1000)';
+  const s = stream([process.execPath, '-e', script], (l) => {
+    lines.push(l);
+    if (lines.length === 2) s.stop();
+  });
+  await s.closed;
+  deepEqual(lines, ['a', '0']);
+  s.stop();
+});

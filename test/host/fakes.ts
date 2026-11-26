@@ -118,6 +118,9 @@ export class FakeGitHub {
       if (!pr || body?.merge_method !== 'rebase' || body.sha !== pr.head.sha) return { status: 405, data: { message: 'not mergeable' } };
       pr.state = 'closed';
       for (const f of pr.files ?? []) repo.mainFiles.add(f.filename);
+      const merged = `merge${pr.number}`;
+      repo.commits.set(merged, { tree: `tree-${merged}`, parents: [repo.branches.get('main') ?? ''] });
+      repo.branches.set('main', merged);
       return ok({ merged: true });
     }
     if ((x = /^\/contents\/(.+)$/.exec(rest))) {
@@ -191,6 +194,9 @@ export const fakeHostContext: HostContext = {
     },
     list: async () => [],
     graphql: async () => {
+      throw new Error('no GitHub in this test');
+    },
+    download: async () => {
       throw new Error('no GitHub in this test');
     },
   },

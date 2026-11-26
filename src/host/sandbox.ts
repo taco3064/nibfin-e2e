@@ -72,13 +72,13 @@ export function knownSettings(visibility: Visibility): Record<string, string | b
   };
 }
 
-interface Ruleset {
+export interface Ruleset {
   id: number;
   name: string;
 }
 
 /** Rulesets of the repository; a private repository on a plan without rulesets has none (Proposal R3.55). */
-async function rulesets(gh: GitHub, repo: string): Promise<Ruleset[]> {
+export async function rulesets(gh: GitHub, repo: string): Promise<Ruleset[]> {
   const r = await gh.rest<Ruleset[] | { message?: string }>('GET', `/repos/${repo}/rulesets?per_page=100`, undefined, [403]);
   if (r.status === 403) {
     const message = (r.data as { message?: string }).message ?? '';
@@ -106,7 +106,7 @@ interface State {
 async function read(gh: GitHub, repo: string): Promise<State> {
   const r = `/repos/${repo}`;
   const { data: settings } = await gh.rest<Record<string, unknown>>('GET', r);
-  const main = await gh.rest<{ commit: { sha: string; commit: { tree: { sha: string } } } }>('GET', `${r}/branches/main`, undefined, [404]);
+  const main = await mainHead(gh, repo);
   const issues = await gh.list<{ number: number; node_id: string; pull_request?: unknown }>(`${r}/issues?state=all`);
   return {
     settings,
@@ -119,8 +119,8 @@ async function read(gh: GitHub, repo: string): Promise<State> {
     keys: await gh.list<{ id: number; title: string }>(`${r}/keys`),
     runners: await gh.list<{ id: number; name: string; status: string }>(`${r}/actions/runners`, 'runners'),
     rulesets: await rulesets(gh, repo),
-    mainCommit: main.status === 404 ? undefined : main.data.commit.sha,
-    mainTree: main.status === 404 ? undefined : main.data.commit.commit.tree.sha,
+    mainCommit: main?.commit,
+    mainTree: main?.tree,
   };
 }
 
@@ -148,6 +148,35 @@ export function differences(repo: string, state: State, visibility: Visibility, 
   for (const r of state.runners) out.push(`${repo}: runner registration ${r.name} (${r.status}) exists`);
   for (const r of state.rulesets) out.push(`${repo}: ruleset ${r.name} exists`);
   return out;
+}
+
+/** One file of a tree written through the Git Data API: a regular file, or a symlink whose content is its target. */
+export interface TreeEntry {
+  path: string;
+  mode: '100644' | '120000';
+  content: string;
+}
+
+/** Creates a tree from the entries, on top of `baseTree` when given, and returns its sha. */
+export async function createTree(gh: GitHub, repo: string, entries: TreeEntry[], baseTree?: string): Promise<string> {
+  const tree = entries.map((e) => ({ path: e.path, mode: e.mode, type: 'blob', content: e.content }));
+  const body = baseTree === undefined ? { tree } : { base_tree: baseTree, tree };
+  const { data } = await gh.rest<{ sha: string }>('POST', `/repos/${repo}/git/trees`, body);
+  return data.sha;
+}
+
+/** Commits the tree on `parent` and fast-forwards main to it (`force: false`, so a moved main is refused). */
+export async function commitOnMain(gh: GitHub, repo: string, tree: string, parent: string, message: string): Promise<string> {
+  const r = `/repos/${repo}`;
+  const { data: commit } = await gh.rest<{ sha: string }>('POST', `${r}/git/commits`, { message, tree, parents: [parent] });
+  await gh.rest('PATCH', `${r}/git/refs/heads/main`, { sha: commit.sha, force: false });
+  return commit.sha;
+}
+
+/** main's head commit and its tree, or undefined when main does not exist. */
+export async function mainHead(gh: GitHub, repo: string): Promise<{ commit: string; tree: string } | undefined> {
+  const main = await gh.rest<{ commit: { sha: string; commit: { tree: { sha: string } } } }>('GET', `/repos/${repo}/branches/main`, undefined, [404]);
+  return main.status === 404 ? undefined : { commit: main.data.commit.sha, tree: main.data.commit.commit.tree.sha };
 }
 
 export interface SandboxDeps {
@@ -187,19 +216,14 @@ export async function resetSandbox(deps: SandboxDeps, repo: string, visibility: 
 
   if (s.mainTree !== tree) {
     log(`${repo}: main's tree differs from the template; adding a commit`);
-    const entries = deps.template.map((f) => {
+    const entries = deps.template.map((f): TreeEntry => {
       const content = f.content.toString('utf8');
       if (!Buffer.from(content, 'utf8').equals(f.content)) throw new Error(`sandbox template: ${f.path} is not UTF-8 text`);
-      return { path: f.path, mode: '100644', type: 'blob', content };
+      return { path: f.path, mode: '100644', content };
     });
-    const { data: created } = await gh.rest<{ sha: string }>('POST', `${r}/git/trees`, { tree: entries });
-    if (created.sha !== tree) throw new Error(`${repo}: GitHub built tree ${created.sha}, expected ${tree}`);
-    const { data: commit } = await gh.rest<{ sha: string }>('POST', `${r}/git/commits`, {
-      message: 'Reset the sandbox to the nibfin-e2e template',
-      tree,
-      parents: [s.mainCommit],
-    });
-    await gh.rest('PATCH', `${r}/git/refs/heads/main`, { sha: commit.sha, force: false });
+    const created = await createTree(gh, repo, entries);
+    if (created !== tree) throw new Error(`${repo}: GitHub built tree ${created}, expected ${tree}`);
+    await commitOnMain(gh, repo, tree, s.mainCommit, 'Reset the sandbox to the nibfin-e2e template');
   }
 
   return differences(repo, await read(gh, repo), visibility, tree);

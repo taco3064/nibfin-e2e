@@ -12,6 +12,11 @@ export interface GitHub {
   /** Every page of a list endpoint; `key` picks the array out of wrapped responses (`runners`, `secrets`). */
   list<T = unknown>(path: string, key?: string): Promise<T[]>;
   graphql<T = unknown>(query: string, variables: Record<string, unknown>): Promise<T>;
+  /**
+   * A plain-text download such as a Job log. A redirect is followed without the
+   * Authorization header, and its URL is never put into an error or a log.
+   */
+  download(path: string, allow?: number[]): Promise<{ status: number; text: string }>;
 }
 
 /**
@@ -20,16 +25,17 @@ export interface GitHub {
  * No retries: every caller converges idempotently and the next run redoes it.
  */
 export function createGitHub(token: () => string, fetchFn: typeof fetch = fetch, api = 'https://api.github.com'): GitHub {
+  const headers = (extra: Record<string, string> = {}) => ({
+    Accept: 'application/vnd.github+json',
+    Authorization: `Bearer ${token()}`,
+    'X-GitHub-Api-Version': '2022-11-28',
+    'User-Agent': 'nibfin-e2e',
+    ...extra,
+  });
   async function call(method: string, path: string, body: unknown, allow: number[]) {
     const res = await fetchFn(api + path, {
       method,
-      headers: {
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${token()}`,
-        'X-GitHub-Api-Version': '2022-11-28',
-        'User-Agent': 'nibfin-e2e',
-        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-      },
+      headers: headers(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const text = await res.text();
@@ -67,6 +73,21 @@ export function createGitHub(token: () => string, fetchFn: typeof fetch = fetch,
       const d = data as { data?: T; errors?: { message: string }[] };
       if (d.errors?.length) throw new Error(`GitHub GraphQL: ${d.errors.map((e) => e.message).join('; ')}`);
       return d.data as T;
+    },
+    async download(path: string, allow: number[] = []) {
+      const res = await fetchFn(api + path, { method: 'GET', headers: headers(), redirect: 'manual' });
+      let final = res;
+      if (res.status >= 300 && res.status < 400) {
+        const location = res.headers.get('location');
+        await res.body?.cancel();
+        if (!location) throw new GitHubError('GET', path, res.status, 'redirect without a Location header');
+        final = await fetchFn(location, { method: 'GET', headers: { 'User-Agent': 'nibfin-e2e' } });
+      }
+      const text = await final.text();
+      if (!final.ok && !allow.includes(final.status)) {
+        throw new GitHubError('GET', path, final.status, final === res ? text.slice(0, 500) : 'the redirected download failed');
+      }
+      return { status: final.status, text };
     },
   };
   return gh;

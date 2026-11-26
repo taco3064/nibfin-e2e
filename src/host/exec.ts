@@ -87,3 +87,44 @@ export async function mustRun(exec: Exec, argv: string[], options?: ExecOptions 
   }
   return r;
 }
+
+/** A long-running child whose stdout arrives line by line. */
+export interface Streaming {
+  /** Kills the child; safe to call more than once. */
+  stop(): void;
+  /** Settles with the exit code once the child has ended (also after `stop`). */
+  closed: Promise<number>;
+}
+
+/** Starts a long-running child (for example `podman events`) from an argv array, never through a shell. */
+export type Stream = (argv: string[], onLine: (line: string) => void) => Streaming;
+
+/** The real streaming runner; the child gets the same filtered environment as `createExec`'s children. */
+export function createStream(env: Env, log: (message: string) => void): Stream {
+  return (argv, onLine) => {
+    const [cmd, ...args] = resolveArgv(argv, env);
+    if (cmd === undefined) throw new Error('stream: empty argv');
+    log(`$ ${argv.join(' ')} (streaming)`);
+    const child = spawn(cmd, args, { env: childEnv(env), shell: false, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    let rest = '';
+    child.stdout.setEncoding('utf8').on('data', (d: string) => {
+      const lines = (rest + d).split('\n');
+      rest = lines.pop() ?? '';
+      for (const line of lines) if (line.trim()) onLine(line);
+    });
+    child.stderr.resume();
+    const closed = new Promise<number>((resolve) => {
+      child.on('error', () => resolve(127));
+      child.on('close', (code, signal) => {
+        if (rest.trim()) onLine(rest);
+        resolve(code ?? (signal ? 128 : 1));
+      });
+    });
+    return {
+      stop: () => {
+        if (child.exitCode === null && child.signalCode === null) child.kill();
+      },
+      closed,
+    };
+  };
+}

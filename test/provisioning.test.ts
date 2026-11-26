@@ -123,6 +123,9 @@ test('nibfin: runner add, init on execution then peer, digest read from the init
   equal(clone?.options.ghToken, undefined);
   deepEqual([h.repo(EXEC).pulls[0]?.state, h.repo(PEER).pulls[0]?.state], ['closed', 'closed']);
   deepEqual(h.repo(EXEC).mainFiles, new Set(['.github/workflows/nibfin-issue.yml', '.github/workflows/nibfin-shared-runner.yml']));
+  // The baselines are main's head and tree read after the merges.
+  deepEqual(out.facts?.executionBaseline, { commit: 'merge5', tree: 'tree-merge5' });
+  deepEqual(out.facts?.peerBaseline, { commit: 'merge3', tree: 'tree-merge3' });
 
   equal((await h.teardown('nibfin'))?.status, 'passed');
   deepEqual(h.calls.at(-1)?.argv, ['gh', 'nibfin', 'runner', 'remove', 'claude', '--yes']);
