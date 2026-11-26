@@ -269,7 +269,10 @@ export const shapeRewrite: Scenario = lifecycle({
     const n = h.p.number;
     if (!c.check('R3.39', h.sentBack, 'Deliver did not send the contradicted Shape back (shaped was never removed)')) return c.outcome('');
     const comments = await k.obs.comments(k.exec, n);
-    const reason = comments.find((x) => markerOf(x.body) && !SHAPE_MARKER.test(markerOf(x.body) ?? '') && time(x.updated_at) >= h.editedAt);
+    // Written between the edit and the re-Shape, so the later closing comment cannot stand in for it.
+    const until = h.reshapedAt ?? Infinity;
+    const between = (t: string) => time(t) >= h.editedAt && time(t) <= until;
+    const reason = comments.find((x) => markerOf(x.body) && !SHAPE_MARKER.test(markerOf(x.body) ?? '') && (between(x.created_at) || between(x.updated_at)));
     c.check('R3.39', !!reason, 'no marked comment gives the reason the Shape was sent back');
     const removed = (await k.obs.timeline(k.exec, n)).some((e) => e.event === 'unlabeled' && e.label?.name === 'shaped' && time(e.created_at) >= h.editedAt);
     c.check('R3.39', removed, '`shaped` was not removed after the edit');

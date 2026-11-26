@@ -264,7 +264,11 @@ export const interruptedDeliver: Scenario = lifecycle({
       const waits = await k.obs.until(
         'a marked PR comment saying the merge waits for a review',
         async (s) => {
-          const cm = (await k.obs.comments(exec, pr.number)).find((x) => markerOf(x.body) && AWAITS_REVIEW.test(x.body ?? ''));
+          // Written once a review found the PR mergeable but the approval missing: after a review job started.
+          const reviewed = (await k.agentJobs(s, exec, n, ['review'])).map((j) => time(j.started_at)).filter((t) => !Number.isNaN(t));
+          if (!reviewed.length) return undefined;
+          const first = Math.min(...reviewed);
+          const cm = (await k.obs.comments(exec, pr.number)).find((x) => markerOf(x.body) && AWAITS_REVIEW.test(x.body ?? '') && time(x.updated_at) >= first);
           return cm ? s : undefined;
         },
         DEADLINE.stage,
