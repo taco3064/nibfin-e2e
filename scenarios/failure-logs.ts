@@ -1,6 +1,6 @@
 import type { KitFor } from './lib/kit.ts';
 import type { Scenario } from '../src/types.ts';
-import { Checks, freeOfSecrets } from './lib/checks.ts';
+import { Checks, excerpt, freeOfSecrets } from './lib/checks.ts';
 import { json } from './lib/files.ts';
 import { close, comments, prepareFixture } from './lib/fixture.ts';
 import { causeCodes } from './lib/joblog.ts';
@@ -21,7 +21,7 @@ export function failureLogs(kitFor: KitFor): Scenario {
     async run(ctx) {
       const kit = kitFor(ctx);
       const repo = kit.sandbox.execution;
-      const c = new Checks();
+      const c = new Checks(kit.secrets());
       await prepareFixture(kit, repo, { files: [{ path: '.nibfin.json', content: json({ tools: { python: '3.99.99' } }) }] });
       let n: number | undefined;
       try {
@@ -40,7 +40,7 @@ export function failureLogs(kitFor: KitFor): Scenario {
         const clear = [repo, digest].filter((s) => !log.includes(s));
         if (!new RegExp(`\\b${n}\\b`).test(log)) clear.push(`Issue number ${n}`);
         c.hold('R1.14', 'non-secret values are not masked in the log', job.log !== undefined && clear.length === 0, clear.length ? `missing ${clear.join(', ')}` : 'repository, Issue and digest in clear');
-        c.hold('R1.14', 'the comment names the next step', /remove[^\n]*pending|pending[^\n]*remov|gh nibfin \w+|resume/i.test(comment), comment.slice(0, 300) || 'no comment');
+        c.hold('R1.14', 'the comment names the next step', /remove[^\n]*pending|pending[^\n]*remov|gh nibfin \w+|resume/i.test(comment), excerpt(comment, 300, kit.secrets()) || 'no comment');
       } finally {
         if (n !== undefined) await close(kit, repo, n).catch(() => {});
       }

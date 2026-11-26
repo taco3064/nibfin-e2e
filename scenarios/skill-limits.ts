@@ -18,7 +18,7 @@ export function skillLimits(kitFor: KitFor): Scenario {
     async run(ctx) {
       const kit = kitFor(ctx);
       const repo = kit.sandbox.execution;
-      const c = new Checks();
+      const c = new Checks(kit.secrets());
       // Leg 1: a Shape override that tells the agent to write and push.
       await prepareFixture(kit, repo, {
         files: [

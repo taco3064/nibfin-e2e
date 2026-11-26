@@ -3,6 +3,7 @@ import { watchJobContainers } from './containers.ts';
 import type { Projection, Watch } from './containers.ts';
 import { DECOY_FILES, DECOY_PATTERN, EXTEND_TEXT, PROBE_FILE, RULESYNC_FILES, TASK_BODY, TOOLS, json } from './files.ts';
 import type { Comment } from './fixture.ts';
+import { excerpt } from './checks.ts';
 import { approvalRuleset, close, comments, deleteE2eRulesets, issueState, labels, openFixture, prepareFixture } from './fixture.ts';
 import { buildOutput, imageLine, initEvents, jobLog } from './joblog.ts';
 import type { InitEvent } from './joblog.ts';
@@ -74,14 +75,12 @@ async function stageDied(kit: Kit, watch: Watch, repo: string, n: number, count:
  * (Proposal R3.26). Nibfin writes with the Owner's credential, so its comments are the
  * Owner's; the harness never comments on a PR. The line must be about the merge and an
  * approving review (or approval) still missing; a Shape review comment mentioning the
- * "approved Shape" does not count.
+ * "approved Shape" does not count. `secrets` are removed before the line is cut.
  */
-export function missingApprovalLine(list: Comment[], owner: string): string | undefined {
+export function missingApprovalLine(list: Comment[], owner: string, secrets: string[] = []): string | undefined {
   const lines = list.filter((c) => c.user?.login === owner).flatMap((c) => c.body.split('\n'));
-  return lines
-    .find((l) => /approving review|approvals?\b/i.test(l) && /merg/i.test(l) && /wait|missing|requir|need|block/i.test(l))
-    ?.trim()
-    .slice(0, 300);
+  const line = lines.find((l) => /approving review|approvals?\b/i.test(l) && /merg/i.test(l) && /wait|missing|requir|need|block/i.test(l));
+  return line === undefined ? undefined : excerpt(line.trim(), 300, secrets);
 }
 
 /** Runs one fixture through Shape → Deliver → Review and records what its Jobs ran with (Issue #299). */
@@ -145,7 +144,7 @@ export async function runObservedJob(kit: Kit): Promise<StepOutcome> {
     facts.finish = await remoteWait(kit, `PR #${pr} to merge or get Nibfin's comment about the missing approving review`, DEADLINE.finish, 30_000, async () => {
       const { data } = await kit.github.rest<{ merged?: boolean }>('GET', `/repos/${repo}/pulls/${pr}`);
       if (data.merged) return { merged: true };
-      const line = missingApprovalLine(await comments(kit, repo, pr), owner);
+      const line = missingApprovalLine(await comments(kit, repo, pr), owner, kit.secrets());
       return line ? { merged: false, approvalComment: line } : undefined;
     });
     return { status: 'passed', reason: `fixture ${repo}#${n} ran Shape, Deliver and Review; PR #${pr} ${facts.finish.merged ? 'merged' : 'waits for an approving review'}`, facts: out() };

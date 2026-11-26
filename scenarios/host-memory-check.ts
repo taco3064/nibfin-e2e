@@ -1,6 +1,6 @@
 import type { KitFor } from './lib/kit.ts';
 import type { Scenario } from '../src/types.ts';
-import { Checks } from './lib/checks.ts';
+import { Checks, excerpt } from './lib/checks.ts';
 import { close, comments, labels, prepareFixture } from './lib/fixture.ts';
 import { causeCodes, initEvents } from './lib/joblog.ts';
 import { runFirstJob } from './lib/single.ts';
@@ -16,7 +16,7 @@ export function hostMemoryCheck(kitFor: KitFor): Scenario {
     async run(ctx) {
       const kit = kitFor(ctx);
       const repo = kit.sandbox.execution;
-      const c = new Checks();
+      const c = new Checks(kit.secrets());
       // No .nibfin.json, so no config or tool step can stop the Job first.
       await prepareFixture(kit, repo, { files: [], variables: { NIBFIN_CONTAINER_LIMITS: 'off', NIBFIN_MEMORY: '1024g' } });
       let n: number | undefined;
@@ -29,7 +29,7 @@ export function hostMemoryCheck(kitFor: KitFor): Scenario {
         const l = await labels(kit, repo, n);
         const comment = (await comments(kit, repo, n)).map((x) => x.body).join('\n');
         c.hold('R6.3', 'the Issue gets pending', l.includes('pending'), l.join(', '));
-        c.hold('R6.3', 'a comment explains the host memory shortage with a cause code', /memory/i.test(comment) && causeCodes(comment).length > 0, comment.slice(0, 300) || 'no comment');
+        c.hold('R6.3', 'a comment explains the host memory shortage with a cause code', /memory/i.test(comment) && causeCodes(comment).length > 0, excerpt(comment, 300, kit.secrets()) || 'no comment');
         c.hold('R6.3', 'no agent ran', job.log !== undefined && initEvents(job.log.text).length === 0 && !l.includes('shaped'), job.logError ?? 'checked the Job log');
       } finally {
         if (n !== undefined) await close(kit, repo, n).catch(() => {});

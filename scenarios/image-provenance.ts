@@ -40,7 +40,7 @@ export function imageProvenance(kitFor: KitFor): Scenario {
     async run(ctx) {
       const kit = kitFor(ctx);
       const digest = imageDigest(ctx);
-      const c = new Checks();
+      const c = new Checks(kit.secrets());
       const tokenRes = await kit.fetch('https://ghcr.io/token?scope=repository:taco3064/nibfin:pull&service=ghcr.io');
       if (!tokenRes.ok) return { status: 'failed', reason: `R8.1: GHCR gave no anonymous pull token (${tokenRes.status})` };
       const { token } = (await tokenRes.json()) as { token: string };

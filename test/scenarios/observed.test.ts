@@ -176,6 +176,7 @@ test('only a Nibfin comment saying an approving review is missing counts', () =>
   equal(missingApprovalLine([by('o', 'Review: looks good, merging next.'), by('someone', 'Waiting for approval before merging')], 'o'), undefined);
   equal(missingApprovalLine([by('o', 'Deviation from the approved Shape: a test is required before merging.')], 'o'), undefined);
   equal(missingApprovalLine([by('o', 'Shape review passed.\nMerge is blocked: waiting for 1 approving review.')], 'o'), 'Merge is blocked: waiting for 1 approving review.');
+  equal(missingApprovalLine([by('o', 'Merge is blocked: waiting for 1 approving review (sandbox-token-value).')], 'o', ['sandbox-token-value']), 'Merge is blocked: waiting for 1 approving review ([secret value removed by nibfin-e2e]).');
 });
 
 test('codex-jobs waits for Phase 5', async () => {

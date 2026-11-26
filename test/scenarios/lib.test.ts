@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { indexPlatforms, predicateTypes } from '../../scenarios/image-provenance.ts';
-import { freeOfSecrets } from '../../scenarios/lib/checks.ts';
+import { Checks, excerpt, freeOfSecrets, redact } from '../../scenarios/lib/checks.ts';
 import { parseEvent, project, watchJobContainers } from '../../scenarios/lib/containers.ts';
 import { buildOutput, causeCodes, imageLine, initEvents, jobLog, stageJob } from '../../scenarios/lib/joblog.ts';
 import { PROBE_SCRIPT, parseProbe } from '../../scenarios/lib/probe.ts';
@@ -154,4 +154,23 @@ test('index platforms ignore attestation entries; predicate types come from the 
 test('secret absence is checked in memory', () => {
   equal(freeOfSecrets('a log with *** only', [TOKEN]), true);
   equal(freeOfSecrets(`leaked ${TOKEN}`, [TOKEN]), false);
+});
+
+test('redact, excerpt and Checks remove secret values from every printed detail', () => {
+  const secret = 'abcdefgh-secret';
+  equal(redact(`x ${secret} y ${secret}`, [secret]), 'x [secret value removed by nibfin-e2e] y [secret value removed by nibfin-e2e]');
+  equal(redact('short abc kept', ['abc']), 'short abc kept');
+  // Redacted before cutting, so no prefix of the value survives a cut through it.
+  equal(excerpt(`0123 ${secret}`, 9, [secret]), '0123 [sec');
+  equal(excerpt(`0123 ${secret}`, 9, [secret]).includes('abcd'), false);
+  const c = new Checks([secret]);
+  c.hold('R1.14', 'held', true, `saw ${secret}`);
+  const passed = c.outcome(`prefix ${secret}: `);
+  equal(passed.status, 'passed');
+  equal(passed.reason.includes(secret), false);
+  c.hold('R1.14', 'failed', false, `saw ${secret}`);
+  const failed = c.outcome();
+  equal(failed.status, 'failed');
+  equal(failed.reason.includes(secret), false);
+  equal(c.failed.join('').includes(secret), false);
 });

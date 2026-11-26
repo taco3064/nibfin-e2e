@@ -9,6 +9,7 @@ import { failureLogs } from '../../scenarios/failure-logs.ts';
 import { hostMemoryCheck } from '../../scenarios/host-memory-check.ts';
 import { imageProvenance } from '../../scenarios/image-provenance.ts';
 import { OVERRIDE_MARKER } from '../../scenarios/lib/files.ts';
+import { issueState } from '../../scenarios/lib/fixture.ts';
 import { modelChoice } from '../../scenarios/model-choice.ts';
 import { skillLimits } from '../../scenarios/skill-limits.ts';
 import { createGitHub } from '../../src/host/github.ts';
@@ -81,6 +82,30 @@ test('failure-logs: a token in the log fails without being printed or saved', as
   equal(out.reason.includes('claude-token-value'), false);
   const dir = join(sim.kit.workDir, 'logs');
   for (const f of readdirSync(dir)) equal(readFileSync(join(dir, f), 'utf8').includes('claude-token-value'), false);
+});
+
+test('failure-logs: a token in the comment fails and is removed from every printed detail', async () => {
+  // No next step, so that check fails and prints the comment excerpt as its detail.
+  const comment = 'TOOL_INSTALL_FAILED: python 3.99.99 with token sandbox-token-value';
+  const sim = simulate((_r, n) => ({ labels: ['pending'], comments: [comment], log: failureLog(n, '') }));
+  sim.kit.workDir = mkdtempSync(join(tmpdir(), 'e2e-failure-logs-'));
+  const out = await failureLogs(() => sim.kit).run(ctxFor());
+  equal(out.status, 'failed');
+  match(out.reason, /R1\.14: no credential appears in the log or the comment \(observed: found\)/);
+  equal(out.reason.includes('sandbox-token-value'), false);
+  match(out.reason, /R1\.14: the comment names the next step \(observed: TOOL_INSTALL_FAILED: python 3\.99\.99 with token \[secret value removed by nibfin-e2e\]\)/);
+  const n = sim.repo(EXEC).issues[0]?.number as number;
+  const state = await issueState(sim.kit, EXEC, n);
+  match(state, /latest comment: TOOL_INSTALL_FAILED/);
+  equal(state.includes('sandbox-token-value'), false);
+});
+
+test('host-memory-check: a token in the comment is not printed in the passed result', async () => {
+  const sim = simulate(() => ({ memory: 0, labels: ['pending'], comments: ['HOST_MEMORY_INSUFFICIENT: 1024g memory needed; claude-token-value; remove pending.'], log: 'checking memory\n' }));
+  const out = await hostMemoryCheck(() => sim.kit).run(ctxFor());
+  equal(out.status, 'passed', out.reason);
+  equal(out.reason.includes('claude-token-value'), false);
+  match(out.reason, /HOST_MEMORY_INSUFFICIENT: 1024g memory needed; \[secret value removed by nibfin-e2e\]/);
 });
 
 test('host-memory-check: limits off, pending and a memory comment pass; an agent run fails', async () => {
