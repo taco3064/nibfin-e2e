@@ -209,3 +209,20 @@ test('runs once seen are kept; later listings cover only recent runs and unfinis
   match(lists[2] ?? '', /created=%3E%3D2026-11-26T10%3A20%3A00Z/, 'ten minutes before the previous listing');
   equal(f.calls.filter((x) => x === 'GET /repos/o/exec/actions/runs/1').length, 1, 'only the unfinished run missing from the listing is re-read');
 });
+
+test('windows: agent windows leave out route and finish; all windows include them', async () => {
+  const run = (id: number, stage: string) => ({ id, display_title: `Nibfin · o/exec#5 · ${stage}`, status: 'completed', created_at: '2026-11-26T10:01:00Z' });
+  const job = (id: number, labels: string[]) => ({ id, status: 'completed', labels, runner_name: labels.includes('self-hosted') ? 'claude-1' : 'GitHub Actions 1', started_at: '2026-11-26T10:02:00Z', completed_at: '2026-11-26T10:03:00Z' });
+  const f = routes({
+    ...empty,
+    'GET /repos/o/exec/actions/runs': { data: { workflow_runs: [run(1, 'route'), run(2, 'deliver'), run(3, 'finish')] } },
+    'GET /repos/o/exec/actions/runs/1/jobs': { jobs: [job(11, ['ubuntu-24.04'])] },
+    'GET /repos/o/exec/actions/runs/2/jobs': { jobs: [job(21, ['self-hosted', 'nibfin-42'])] },
+    'GET /repos/o/exec/actions/runs/3/jobs': { jobs: [job(31, ['ubuntu-24.04'])] },
+  });
+  const c = clock();
+  const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
+  const s = await k.obs.next();
+  deepEqual((await k.windows(s, 'o/exec', 5)).map((w) => [w.stage, w.jobId]), [['deliver', 21]]);
+  deepEqual((await k.windows(s, 'o/exec', 5, true)).map((w) => [w.stage, w.jobId]), [['route', 11], ['deliver', 21], ['finish', 31]]);
+});
