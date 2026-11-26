@@ -1,10 +1,10 @@
-import type { HostServices } from '../src/host/services.ts';
+import type { KitFor } from './lib/kit.ts';
 import type { Outcome, Scenario } from '../src/types.ts';
 import { Checks } from './lib/checks.ts';
 import { OVERRIDE_MARKER, OVERRIDE_TEXT, json } from './lib/files.ts';
 import { close, comments, labels, prepareFixture } from './lib/fixture.ts';
 import { initEvents, stageJob } from './lib/joblog.ts';
-import { createKit, message } from './lib/kit.ts';
+import { message } from './lib/kit.ts';
 import type { Kit } from './lib/kit.ts';
 import { parseProbe } from './lib/probe.ts';
 import { localRunners } from './lib/runners.ts';
@@ -35,14 +35,14 @@ async function slotOf(kit: Kit, job: FirstJob): Promise<string> {
 }
 
 /** Proposal R6.26, R6.27, R6.28, R7.2 (absent), R7.6 (override). */
-export function modelChoice(host: HostServices): Scenario {
+export function modelChoice(kitFor: KitFor): Scenario {
   return {
     id: 'model-choice',
     rules: ['R6.26', 'R6.27', 'R6.28', 'R7.2', 'R7.6'],
     platforms: ['linux'],
     requires: ['nibfin'],
     async run(ctx) {
-      const kit = createKit(host, ctx);
+      const kit = kitFor(ctx);
       const { execution, peer } = kit.sandbox;
       const opened: [string, number][] = [];
       const c = new Checks();

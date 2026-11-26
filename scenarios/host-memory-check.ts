@@ -1,21 +1,20 @@
-import type { HostServices } from '../src/host/services.ts';
+import type { KitFor } from './lib/kit.ts';
 import type { Scenario } from '../src/types.ts';
 import { Checks } from './lib/checks.ts';
 import { close, comments, labels, prepareFixture } from './lib/fixture.ts';
 import { causeCodes, initEvents } from './lib/joblog.ts';
-import { createKit } from './lib/kit.ts';
 import { runFirstJob } from './lib/single.ts';
 import { DEADLINE } from './lib/waits.ts';
 
 /** Proposal R6.3 (and R6.1 on Windows): with limits off, the host memory check sets pending when memory is short. */
-export function hostMemoryCheck(host: HostServices): Scenario {
+export function hostMemoryCheck(kitFor: KitFor): Scenario {
   return {
     id: 'host-memory-check',
     rules: ['R6.1', 'R6.3'],
     platforms: ['linux', 'windows'],
     requires: ['nibfin'],
     async run(ctx) {
-      const kit = createKit(host, ctx);
+      const kit = kitFor(ctx);
       const repo = kit.sandbox.execution;
       const c = new Checks();
       // No .nibfin.json, so no config or tool step can stop the Job first.

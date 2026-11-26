@@ -1,4 +1,5 @@
 import type { HostServices } from '../src/host/services.ts';
+import { createKit } from './lib/kit.ts';
 import type { Scenario } from '../src/types.ts';
 import { agentSetup } from './agent-setup.ts';
 import { codexJobs } from './codex-jobs.ts';
@@ -14,17 +15,18 @@ import { skillLimits } from './skill-limits.ts';
 
 /** Issue #299: Job isolation, Agent setup, model choice, `.nibfin.json`, logs and the image. */
 export function createScenarios(host: HostServices): Scenario[] {
+  const kitFor = (ctx: Parameters<typeof createKit>[1]) => createKit(host, ctx);
   return [
     jobContainer,
     agentSetup,
     projectTools,
     roleSkills,
-    modelChoice(host),
-    configRejections(host),
-    skillLimits(host),
-    failureLogs(host),
-    hostMemoryCheck(host),
-    imageProvenance(host),
+    modelChoice(kitFor),
+    configRejections(kitFor),
+    skillLimits(kitFor),
+    failureLogs(kitFor),
+    hostMemoryCheck(kitFor),
+    imageProvenance(kitFor),
     codexJobs,
   ];
 }

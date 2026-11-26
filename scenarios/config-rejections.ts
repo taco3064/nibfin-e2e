@@ -1,11 +1,11 @@
-import type { HostServices } from '../src/host/services.ts';
+import type { KitFor } from './lib/kit.ts';
 import type { RuleId, Scenario } from '../src/types.ts';
 import { Checks } from './lib/checks.ts';
 import { json } from './lib/files.ts';
 import type { FixtureFile } from './lib/fixture.ts';
 import { close, comments, labels, prepareFixture } from './lib/fixture.ts';
 import { initEvents } from './lib/joblog.ts';
-import { createKit, message } from './lib/kit.ts';
+import { message } from './lib/kit.ts';
 import { runFirstJob } from './lib/single.ts';
 import { DEADLINE } from './lib/waits.ts';
 
@@ -47,14 +47,14 @@ export const CASES: RejectionCase[] = [
 ];
 
 /** Proposal R7.1, R7.2, R7.4, R7.5, R7.7, R7.10: an invalid `.nibfin.json` rejects the Job with a readable diagnostic. */
-export function configRejections(host: HostServices): Scenario {
+export function configRejections(kitFor: KitFor): Scenario {
   return {
     id: 'config-rejections',
     rules: ['R7.1', 'R7.2', 'R7.4', 'R7.5', 'R7.7', 'R7.10'],
     platforms: ['linux'],
     requires: ['nibfin'],
     async run(ctx) {
-      const kit = createKit(host, ctx);
+      const kit = kitFor(ctx);
       const repo = kit.sandbox.execution;
       const c = new Checks();
       for (const k of CASES) {

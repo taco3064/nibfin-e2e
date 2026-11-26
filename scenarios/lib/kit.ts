@@ -25,6 +25,8 @@ export interface Kit {
   facts(stepId: string): Record<string, unknown> | undefined;
   /** Values that must never appear in a log or comment; compared in memory only. */
   secrets(): string[];
+  /** The sandbox token, only for `gh` as GH_TOKEN. */
+  ghToken(): string;
   now(): number;
   sleep(ms: number): Promise<void>;
 }
@@ -40,11 +42,15 @@ export function createKit(host: HostServices, ctx: RunContext): Kit {
     env: host.env,
     log: ctx.log,
     facts: ctx.facts,
+    ghToken: () => host.sandboxToken(),
     secrets: () => [host.env.E2E_SANDBOX_TOKEN, host.env.E2E_CLAUDE_TOKEN].map((s) => s?.trim()).filter((s): s is string => !!s),
     now: () => Date.now(),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   };
 }
+
+/** Builds the kit for a run; scenarios take one so tests can replace the host. */
+export type KitFor = (ctx: RunContext) => Kit;
 
 /** The baseline the `nibfin` step recorded for the sandbox. */
 export function baselineOf(kit: Kit, repo: string): Baseline {
