@@ -10,6 +10,17 @@ import { dashboardOperations } from '../scenarios/dashboard/operations.ts';
 import { dashboardServing } from '../scenarios/dashboard/serving.ts';
 import { dashboardUpdates } from '../scenarios/dashboard/updates.ts';
 import { dashboardViews } from '../scenarios/dashboard/views.ts';
+import { dashboard } from '../scenarios/management/dashboard.ts';
+import { failurePending } from '../scenarios/management/failure-pending.ts';
+import { extensionReleases, imageDigest } from '../scenarios/management/image-release.ts';
+import { initFiles } from '../scenarios/management/init-files.ts';
+import { initSettings } from '../scenarios/management/init-settings.ts';
+import { confirmPreview, pauseResume } from '../scenarios/management/labels.ts';
+import { runnerAddSetup } from '../scenarios/management/runner-add-setup.ts';
+import { runnerRemove } from '../scenarios/management/runner-remove.ts';
+import { statusViews } from '../scenarios/management/status-views.ts';
+import { upgrade } from '../scenarios/management/upgrade.ts';
+import { wording } from '../scenarios/management/wording.ts';
 import { siteDeployOnPush } from '../scenarios/site/deploy-on-push.ts';
 import { livePage } from '../scenarios/site/live-page.ts';
 
@@ -18,11 +29,28 @@ import { livePage } from '../scenarios/site/live-page.ts';
 const services = createServices(fileURLToPath(new URL('..', import.meta.url)), (m) => process.stderr.write(m + '\n'));
 
 // Explicit lists, in run order (consecutive `concurrent` scenarios start together, see
-// `Scenario.concurrent`). The delivery-lifecycle scenarios run first, on the freshly reset
-// sandboxes; `scenarios/index.ts` imports and lists the Issue #299 ones,
-// and the Dashboard and site scenarios are listed here after them. The Dashboard scenarios run
-// last: they need earlier work in the sandboxes to have settled.
+// `Scenario.concurrent`). Scenario modules live under `scenarios/`; `scenarios/index.ts`
+// imports and lists the Issue #299 ones, and the others are listed here. The installation and
+// management scenarios run first: they read the fresh host and the init PRs, and upgrade, which
+// changes main's workflow, runs before the long lifecycle scenarios so GHCR's main image has
+// little time to move after init. They leave their fixture Issues paused or without `scope`, and the
+// delivery-lifecycle scenarios judge only their own tagged fixtures and runs created since they
+// started. Then Issue #299's, the site and the Dashboard scenarios, which need earlier work in
+// the sandboxes to have settled. runner-remove, which removes every local Runner and the login
+// volume, runs last.
 export const scenarios: Scenario[] = [
+  runnerAddSetup,
+  initSettings,
+  initFiles,
+  imageDigest,
+  extensionReleases,
+  wording,
+  dashboard,
+  statusViews,
+  pauseResume,
+  confirmPreview,
+  failurePending,
+  upgrade,
   ...lifecycleScenarios,
   ...createScenarios(services),
   livePage,
@@ -32,6 +60,7 @@ export const scenarios: Scenario[] = [
   dashboardOperations,
   dashboardUpdates,
   dashboardLoginRelay,
+  runnerRemove,
 ];
 
 /** Provisioning steps, in the order they run. */
