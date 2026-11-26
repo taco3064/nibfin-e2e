@@ -6,7 +6,7 @@ import { installGhNibfin } from './host/ghnibfin.ts';
 import type { GitHub } from './host/github.ts';
 import { writeClaudeLogin } from './host/login.ts';
 import { preparePodman } from './host/podman.ts';
-import { onlineRunners, readTemplate, resetSandbox } from './host/sandbox.ts';
+import { mainHead, onlineRunners, readTemplate, resetSandbox } from './host/sandbox.ts';
 import type { HostServices } from './host/services.ts';
 import type { ProvisioningStep, RunContext, StepOutcome } from './types.ts';
 
@@ -56,6 +56,13 @@ async function mergeInitPr(gh: GitHub, repo: string, pr: InitPr): Promise<void> 
     const got = await gh.rest('GET', `${r}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=main`, undefined, [404]);
     if (got.status === 404) throw new Error(`${repo}: ${path} is not on main after merging #${pr.number}`);
   }
+}
+
+/** main's head commit and tree right after the init PR merged. */
+async function baseline(gh: GitHub, repo: string): Promise<{ commit: string; tree: string }> {
+  const head = await mainHead(gh, repo);
+  if (!head) throw new Error(`${repo}: branch main does not exist after merging the init PR`);
+  return head;
 }
 
 /** Host provisioning, in the order the steps run (Issue #283). */
@@ -128,6 +135,10 @@ export function createProvisioning(host: HostServices): ProvisioningStep[] {
           facts.imageDigest = digest;
           await mergeInitPr(host.github, SANDBOX.execution, execution);
           await mergeInitPr(host.github, SANDBOX.peer, peer);
+          // Nothing else writes main between the merges and this read: no Issue exists yet.
+          // Fixtures start from these trees (scenarios/lib/fixture.ts).
+          facts.executionBaseline = await baseline(host.github, SANDBOX.execution);
+          facts.peerBaseline = await baseline(host.github, SANDBOX.peer);
           return { status: 'passed', reason: `Runners added; init PRs #${execution.number} and #${peer.number} merged; image ${digest}`, facts };
         } catch (error) {
           return { status: 'failed', reason: message(error), facts };
