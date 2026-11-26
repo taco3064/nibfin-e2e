@@ -80,6 +80,7 @@ test('hook classification: accepted, refused, a step on a refused Job, no hook l
   match(String((classifyJob(job({ runner_name: 'owner-claude-1' }), ACCEPTED, mine, []) as { why: string }).why), /not on the collaborator's Runners/);
   match(String((classifyJob(job(), ACCEPTED.replace(/Nibfin image:.*\n/, ''), mine, []) as { why: string }).why), /no step printed "Nibfin image:"/);
   match(String((classifyJob(job({ status: 'in_progress' }), ACCEPTED, mine, []) as { why: string }).why), /in_progress/);
+  match(String((classifyJob(job({ head_sha: 'c'.repeat(40) }), ACCEPTED, mine, []) as { why: string }).why), /accepted for b+, not the run's head c+/);
 });
 
 test('the digest builder replaces exactly one IMAGE_REF digest and fails on zero or two', () => {

@@ -165,6 +165,7 @@ export interface PeerFacts {
   home?: string;
   userReady?: boolean;
   installed?: boolean;
+  cloned?: boolean;
 }
 
 /**
@@ -223,6 +224,7 @@ export async function preparePeer(host: HostServices, platform: Platform, facts:
   const dir = join(home, 'sandbox');
   await peerMust(exec, ['rm', '-rf', '--', dir]);
   await peerMust(exec, ['git', 'clone', '--quiet', `https://github.com/${SANDBOX.execution}.git`, dir]);
+  facts.cloned = true;
 
   // The Claude login volume of the peer's rootless Podman; the Runner reuses the Owner's token.
   const asPeer: Exec = (argv, options) => peerExec(exec, argv, { input: options?.input });
@@ -252,7 +254,7 @@ export async function preparePeer(host: HostServices, platform: Platform, facts:
 export async function teardownPeer(host: HostServices, facts: PeerFacts | undefined): Promise<string[]> {
   const problems: string[] = [];
   if (facts?.installed) {
-    const r = await peerExec(host.exec, ['gh', 'nibfin', 'runner', 'remove', 'claude', '--yes'], { cwd: facts.home && join(facts.home, 'sandbox'), token: host.peerToken() });
+    const r = await peerExec(host.exec, ['gh', 'nibfin', 'runner', 'remove', 'claude', '--yes'], { cwd: facts.cloned && facts.home ? join(facts.home, 'sandbox') : facts.home, token: host.peerToken() });
     if (r.code !== 0 && !/no_runners/.test(r.stdout + r.stderr)) problems.push(`as ${PEER_USER}: gh nibfin runner remove claude --yes exited ${r.code}: ${tail(r)}`);
   }
   if (facts?.login !== undefined) {

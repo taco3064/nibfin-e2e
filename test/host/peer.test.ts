@@ -166,7 +166,7 @@ test('preparePeer: user, ids, user manager, gh-nibfin, clone, login volume and a
   const facts: PeerFacts = {};
   const reason = await preparePeer(s.host, 'linux', facts, () => new Date('2026-11-26T10:00:00.000Z'));
   match(reason, /peer-login \(write\) has SSH key nibfin-e2e-peer-2026-11-26T10-00-00-000Z/);
-  deepEqual(facts, { login: 'peer-login', id: 4242, home: '/home/e2epeer', userReady: true, installed: true, keyId: 77 });
+  deepEqual(facts, { login: 'peer-login', id: 4242, home: '/home/e2epeer', userReady: true, installed: true, cloned: true, keyId: 77 });
   const lines = s.calls.map((c) => (inner(c.argv) ? `peer: ${(inner(c.argv) as string[]).join(' ')}` : c.argv.join(' ')));
   const order = [
     'sudo useradd -m -s /bin/bash e2epeer',
@@ -223,15 +223,17 @@ test('teardownPeer: no_runners counts as passed, keys are deleted and read back;
   const s = services(world);
   const { exec, calls } = fakeExec((argv) => (inner(argv)?.[0] === 'gh' ? { code: 1, stderr: 'no_runners: no claude Runner on this host' } : undefined));
   const host = { ...s.host, exec };
-  deepEqual(await teardownPeer(host, { login: 'peer-login', installed: true, home: '/home/e2epeer' }), []);
+  deepEqual(await teardownPeer(host, { login: 'peer-login', installed: true, cloned: true, home: '/home/e2epeer' }), []);
   deepEqual(inner(calls[0]?.argv ?? []), ['gh', 'nibfin', 'runner', 'remove', 'claude', '--yes']);
   equal(calls[0]?.argv[9], '/home/e2epeer/sandbox');
+  await teardownPeer(host, { login: 'peer-login', installed: true, home: '/home/e2epeer' });
+  equal(calls.at(-1)?.argv[9], '/home/e2epeer', 'without a clone the removal runs in the home directory');
   equal(world.keys.length, 0);
 
   const failing = fakeExec((argv) => (inner(argv)?.[0] === 'gh' ? { code: 1, stderr: 'runner_busy' } : undefined));
   world.keys.push({ id: 10, title: 'nibfin-e2e-peer-y', key: 'ssh-ed25519 Y' });
   const stuck = stubGitHub((method, path) => (method === 'GET' && path === '/user/keys' ? { status: 200, data: world.keys } : { status: 204 }));
-  const problems = await teardownPeer({ ...s.host, exec: failing.exec, peerGithub: stuck.gh }, { login: 'peer-login', installed: true, home: '/home/e2epeer' });
+  const problems = await teardownPeer({ ...s.host, exec: failing.exec, peerGithub: stuck.gh }, { login: 'peer-login', installed: true, cloned: true, home: '/home/e2epeer' });
   match(problems.join('; '), /runner remove claude --yes exited 1: runner_busy; SSH keys left on peer-login: nibfin-e2e-peer-y \(10\)/);
   deepEqual(await teardownPeer(s.host, undefined), []);
 });

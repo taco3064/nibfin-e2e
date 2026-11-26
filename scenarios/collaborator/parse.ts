@@ -71,6 +71,7 @@ export function classifyJob(job: Job, log: string, peerRunners: string[], stepMa
   if (accepted && refused) return { kind: 'invalid', why: `job ${job.id} log has both an accepted and a refused hook line` };
   if (accepted) {
     if (!log.includes('Nibfin image:')) return { kind: 'invalid', why: `job ${job.id} was accepted but no step printed "Nibfin image:"` };
+    if (accepted[2] !== job.head_sha) return { kind: 'invalid', why: `job ${job.id} was accepted for ${accepted[2]}, not the run's head ${job.head_sha}` };
     return { kind: 'accepted', repo: accepted[1] as string, sha: accepted[2] as string, digest: accepted[3] as string };
   }
   if (refused) {
