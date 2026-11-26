@@ -5,6 +5,7 @@ import type { Outcome, Scenario } from '../../src/types.ts';
 import { Checks, markerOf, time } from './analysis.ts';
 import type { Issue } from './analysis.ts';
 import { DEADLINE, lifecycle } from './kit.ts';
+import { PENDING_MARKER } from './marks.ts';
 import type { Kit } from './kit.ts';
 
 /** The Issues that deliver the Scope stage (the Proposal's R3.2–R3.11 record). */
@@ -66,7 +67,7 @@ export const requestInfeasible = requestScenario('request-infeasible', ['R3.2', 
   await k.removeLabel(exec, n, 'pause');
   await k.obs.until('the request to get pending and a comment', async (s) => {
     if (!k.labels(s, exec, n).includes('pending')) return undefined;
-    return (await k.obs.comments(exec, n)).some((x) => markerOf(x.body)) ? true : undefined;
+    return (await k.obs.comments(exec, n)).some((x) => PENDING_MARKER.test(markerOf(x.body) ?? '')) ? true : undefined;
   }, DEADLINE.stage, show);
   const s = await k.obs.fresh();
   c.check('R3.2', k.stages(s, exec, n, ['scope']).length > 0, 'the request never reached the Scope stage');

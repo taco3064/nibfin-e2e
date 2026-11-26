@@ -20,5 +20,8 @@ export const SHAPE_MARKER = /^shape\b/;
 /** The re-login command a failed-login comment names (Proposal R6.13). */
 export const RELOGIN = /gh nibfin login/;
 
-/** A PR comment saying the merge waits for an approving review (Proposal R3.26). */
-export const AWAITS_REVIEW = /\b(review|approv\w*)\b/i;
+/** A PR comment saying the merge waits for an approving review (Proposal R3.26), not just any review comment. */
+export const AWAITS_REVIEW = /\b(wait\w*|await\w*|requir\w*|need\w*)\b[\s\S]*\bapprov\w*|\bapprov\w*[\s\S]*\b(wait\w*|await\w*|requir\w*|need\w*|missing)\b/i;
+
+/** The `pending` comment (marker `<!-- nibfin:pending -->`). */
+export const PENDING_MARKER = /^pending\b/;

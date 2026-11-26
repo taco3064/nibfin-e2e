@@ -146,3 +146,11 @@ test('Checks: problems fail with their rule; not exercised is a failure; notes a
   c.none('R3.20', ['a', 'b']);
   deepEqual(c.outcome('ok'), { status: 'failed', reason: 'R4.23: not exercised: started early; R3.20: a; R3.20: b (first clause only)' });
 });
+
+test('the review-awaited pattern needs a wait for an approval, not any review comment', async () => {
+  const { AWAITS_REVIEW, PENDING_MARKER } = await import('../../scenarios/lifecycle/marks.ts');
+  for (const t of ['Waiting for an approving review before merging.', 'The merge requires 1 approving review.', 'Approval missing: needs a review by a collaborator.']) equal(AWAITS_REVIEW.test(t), true, t);
+  for (const t of ['Shape review: approved, merging.', 'Review found a problem: sum subtracts.', 'Reviewed head abc1234.']) equal(AWAITS_REVIEW.test(t), false, t);
+  equal(PENDING_MARKER.test(markerOf('<!-- nibfin:pending --> needs a person') ?? ''), true);
+  equal(PENDING_MARKER.test(markerOf('<!-- nibfin:shape -->') ?? ''), false);
+});

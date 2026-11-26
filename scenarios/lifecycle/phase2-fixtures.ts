@@ -4,6 +4,7 @@ import { AGENT_STAGES, Checks, fixPushProblems, isIssueBranch, markerOf, reasonO
 import type { Issue, Job, Pull, Run, Stage } from './analysis.ts';
 import { DEADLINE, changeRequest, lifecycle } from './kit.ts';
 import type { Kit } from './kit.ts';
+import { PENDING_MARKER } from './marks.ts';
 import type { Snapshot } from './observe.ts';
 import { closingProblems } from './phase1.ts';
 
@@ -40,12 +41,13 @@ export const assigneeRouting: Scenario = lifecycle({
       const show = k.show(exec, n);
       const shapeJob = await k.obs.until('M2\'s shape job to run', async (s) => (await k.agentJobs(s, exec, n, ['shape'])).find((j) => j.status === 'in_progress'), DEADLINE.stage, show);
       await k.gh.rest('PATCH', `/repos/${exec}/issues/${n}`, { assignees: [other.login, owner.login] });
+      const reassignedAt = k.now();
       const { data: back } = await k.gh.rest<Issue>('GET', `/repos/${exec}/issues/${n}`);
       const order = back.assignees.map((a) => a.login);
       k.ctx.log(`assignee-routing: GitHub returns the Assignees of #${n} as ${order.join(', ')}`);
       await k.obs.until('M2 to get pause and a comment naming the collaborator', async (s) => {
         if (!k.labels(s, exec, n).includes('pause')) return undefined;
-        return (await k.obs.comments(exec, n)).find((x) => markerOf(x.body) && x.body?.includes(other.login)) ? s : undefined;
+        return (await k.obs.comments(exec, n)).find((x) => markerOf(x.body) && x.body?.includes(other.login) && time(x.created_at) >= reassignedAt - 60_000) ? s : undefined;
       }, DEADLINE.stage, show);
       const shape = await k.obs.until('the running shape job to complete', async () => {
         const j = await k.obs.job(exec, shapeJob.id);
@@ -187,7 +189,7 @@ export const protectedPaths: Scenario = lifecycle({
       for (const f of filed) {
         await k.obs.until(`#${f.n} (${f.path}) to stop with pending and a comment`, async (s) => {
           if (!k.labels(s, exec, f.n).includes('pending')) return undefined;
-          return (await k.obs.comments(exec, f.n)).some((x) => markerOf(x.body)) ? true : undefined;
+          return (await k.obs.comments(exec, f.n)).some((x) => PENDING_MARKER.test(markerOf(x.body) ?? '')) ? true : undefined;
         }, DEADLINE.delivery, k.show(exec, f.n));
       }
       const branches = (await k.gh.list<{ name: string }>(`/repos/${exec}/branches`)).map((b) => b.name);
