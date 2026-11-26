@@ -120,7 +120,7 @@
   {"id": "R5.3", "platforms": ["linux"], "scenarios": []},
   {"id": "R5.4", "platforms": ["linux"], "scenarios": []},
   {"id": "R5.5", "platforms": ["linux"], "scenarios": []},
-  {"id": "R5.6", "platforms": ["linux"], "scenarios": []},
+  {"id": "R5.6", "notE2e": "Nibfin 自身設定"},
   {"id": "R5.7", "platforms": ["linux"], "scenarios": []},
   {"id": "R5.8", "platforms": ["linux"], "scenarios": []},
   {"id": "R5.9", "platforms": ["linux"], "scenarios": []},
