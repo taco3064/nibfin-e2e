@@ -1,0 +1,28 @@
+name: CD
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: e2e hook
+        env:
+          E2E_RULES: ${{ vars.E2E_CD_RULES }}
+          E2E_EVENT: ${{ github.event_name }}
+          E2E_BEFORE: ${{ github.event.before }}
+        run: node scripts/e2e-hook.js
