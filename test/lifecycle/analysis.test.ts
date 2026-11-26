@@ -68,6 +68,9 @@ test('stage and wake titles are parsed; stage runs are per Issue and in creation
 test('job windows: queued jobs have none, running ones are open-ended; hosted jobs are not agent jobs', () => {
   equal(jobWindow(job(1, { status: 'queued', started_at: null, completed_at: null }), 'i', 'shape'), undefined);
   equal(jobWindow(job(1, { status: 'in_progress', completed_at: null }), 'i', 'shape')?.end, Infinity);
+  equal(jobWindow(job(1, { conclusion: 'cancelled', runner_name: null }), 'i', 'route'), undefined, 'cancelled before any Runner took it');
+  equal(jobWindow(job(1, { conclusion: 'skipped', runner_name: '' }), 'i', 'finish'), undefined);
+  equal(jobWindow(job(1, { conclusion: 'cancelled' }), 'i', 'deliver')?.runner, 'claude-1', 'cancelled while running still counts');
   equal(selfHosted(job(1)), true);
   equal(selfHosted(job(1, { labels: ['ubuntu-24.04'] })), false);
 });
