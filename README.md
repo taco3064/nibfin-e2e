@@ -52,7 +52,8 @@ or through another step), in this order:
 | `podman` | Linux: checks Podman. Windows: installs the pinned Podman MSI (sha256 checked) and runs `podman machine init`; `runner add` starts the machine |
 | `claude-login` | Writes the Claude token into `env` of `settings.json` in the `nibfin-home-claude` volume, keeping every other key |
 | `sandboxes` | Refuses to start while a runner registration is online on the execution sandbox, then resets both sandboxes and reads them back |
-| `nibfin` | In a clone of the execution sandbox: `gh nibfin runner add claude --count 2`, `init` on execution then peer; reads the image digest from the init PR and rebase-merges both init PRs |
+| `nibfin` | In a clone of the execution sandbox: `gh nibfin runner add claude --count 2`, `init` on execution then peer; reads the image digest from the init PR, rebase-merges both init PRs and records each sandbox's `main` head and tree as its baseline |
+| `observed-job` | Runs one agent fixture on the execution sandbox through Shape, Deliver and Review and records what its Jobs ran with (container projection, probe output, log facts, login volume facts, the pushed branch, how the PR ended) for the scenarios that read it |
 
 After the scenarios, teardown runs for every step that ran, in reverse order:
 `runner remove`, then a second reset of both sandboxes, read back to show
@@ -98,7 +99,35 @@ rules, change 不測 marks, and keep ids as they are (they are never reused).
    `facts('nibfin')` (the command results, init PR numbers and digest) and
    `withExecutionVisibility('private', fn)` for scenarios that need a private
    execution repository; it restores public afterwards.
-2. Import it in `src/registry.ts` and add it to `scenarios`.
+2. Import it in `scenarios/index.ts` and add it to the list `createScenarios`
+   returns (a scenario that needs the host's processes takes the `HostServices`).
 3. List its id under each of its rules in `coverage-map.json`.
+
+Scenarios that run fixture Issues use the shared library in `scenarios/lib/`:
+
+- `prepareFixture(kit, repo, {files, variables, ruleset})` (`fixture.ts`) is the
+  first call of every fixture. It closes open Issues, waits on `podman events`
+  for running Job containers to end, and requires both Runners online and idle;
+  then it sets the library variables (`NIBFIN_MODEL`, `NIBFIN_CONTAINER_LIMITS`,
+  `NIBFIN_MEMORY`) and deletes every `e2e-` ruleset; then it makes `main`'s tree
+  the recorded baseline plus exactly `files` (fast-forward only); only then does
+  it create the fixture ruleset. A scenario's result so never depends on what ran
+  before it. The private peer has no rulesets (Proposal R3.55).
+- Runners are identified by slot (`claude-1`, `claude-2`) with
+  `runnerSlot(registrationName)` (`runners.ts`), never by a literal registration
+  name: gh-nibfin names registrations `<hostname>-<hostid>-<slot>`. Runner
+  checks always read the execution sandbox, where the Runners register.
+- `watchJobContainers` (`containers.ts`) follows the Job containers of an Issue
+  on `podman events` and keeps only an allowlisted projection of
+  `podman container inspect`: the container environment holds the Nibfin token.
+- `jobLog` (`joblog.ts`) downloads the stage Job's log to `.e2e-work/logs/`
+  without sending the token to the redirect; `initEvents` reads the Claude CLI's
+  `system`/`init` events from it.
+- `e2e/probe.sh` (`probe.ts`) is committed by fixtures whose Skill text asks the
+  agent to paste its output; it prints names, versions and booleans only.
+- Every local wait is event-driven; the deadlines are in `waits.ts`. The only
+  re-reads are for GitHub state no local event reports: the finish Job on a
+  GitHub-hosted runner, a Job's log becoming available after its container
+  ended, and a restarted Runner's registration showing online.
 
 `npm run verify` fails when the map and the registry disagree.
