@@ -3,6 +3,7 @@ import { createKit } from './lib/kit.ts';
 import type { Scenario } from '../src/types.ts';
 import { agentSetup } from './agent-setup.ts';
 import { codexJobs } from './codex-jobs.ts';
+import { collaboratorScenarios } from './collaborator/index.ts';
 import { configRejections } from './config-rejections.ts';
 import { failureLogs } from './failure-logs.ts';
 import { hostMemoryCheck } from './host-memory-check.ts';
@@ -13,7 +14,7 @@ import { projectTools } from './project-tools.ts';
 import { roleSkills } from './role-skills.ts';
 import { skillLimits } from './skill-limits.ts';
 
-/** Issue #299: Job isolation, Agent setup, model choice, `.nibfin.json`, logs and the image. */
+/** Issue #299: Job isolation, Agent setup, model choice, `.nibfin.json`, logs and the image; Issue #300: collaborator Runners. */
 export function createScenarios(host: HostServices): Scenario[] {
   const kitFor = (ctx: Parameters<typeof createKit>[1]) => createKit(host, ctx);
   return [
@@ -28,5 +29,7 @@ export function createScenarios(host: HostServices): Scenario[] {
     hostMemoryCheck(kitFor),
     imageProvenance(kitFor),
     codexJobs,
+    // Issue #300: collaborator Runners. Last, since they register the peer's Runners and change the execution sandbox's visibility.
+    ...collaboratorScenarios,
   ];
 }
