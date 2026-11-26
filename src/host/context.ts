@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { SANDBOX } from './config.ts';
+import { childEnv } from './exec.ts';
 import { setVisibility } from './sandbox.ts';
 import type { HostServices } from './services.ts';
 import type { HostContext } from '../types.ts';
@@ -14,6 +15,11 @@ export function createHostContext(host: HostServices): HostContext {
     executionDir,
     ghNibfin: (args) => host.exec(['gh', 'nibfin', ...args], { cwd: executionDir, ghToken: host.sandboxToken() }),
     github: host.github,
+    startGhNibfin: (args, options = {}) => host.start(['gh', 'nibfin', ...args], { cwd: executionDir, ghToken: host.sandboxToken(), path: options.path }),
+    start: (argv) => host.start(argv),
+    exec: (argv) => host.exec(argv),
+    workDir: () => host.workDir(),
+    browserEnv: () => childEnv(host.env),
     async withExecutionVisibility(visibility, fn) {
       await setVisibility(host.github, SANDBOX.execution, visibility);
       let failure: { error: unknown } | undefined;

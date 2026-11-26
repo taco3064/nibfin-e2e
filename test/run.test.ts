@@ -157,3 +157,46 @@ test('scenarios get the facts of the steps that ran', async () => {
   await runAll([s], [step('one', { ...passed, facts: { n: 1 } })]);
   deepEqual(seen, { n: 1 });
 });
+
+test('deferred cleanups run after each scenario in reverse order, also when it throws; a hanging or throwing one is bounded and logged', async () => {
+  const order: string[] = [];
+  const logs: string[] = [];
+  const mk = (id: string, body: (ctx: RunContext) => Promise<Outcome>): Scenario => ({ id, rules: ['R1.1'], platforms: ['linux'], run: body });
+  const list = [
+    mk('a', async (ctx) => {
+      ctx.defer(async () => order.push('a1'));
+      ctx.defer(async () => order.push('a2'));
+      throw new Error('scenario a broke');
+    }),
+    mk('b', async (ctx) => {
+      order.push('b-run');
+      ctx.defer(() => new Promise(() => {}));
+      ctx.defer(async () => {
+        throw new Error('cleanup broke');
+      });
+      return passed;
+    }),
+    mk('c', async () => (order.push('c-run'), passed)),
+  ];
+  const { selected } = select([{ id: 'R1.1', platforms: ['linux'], scenarios: ['a', 'b', 'c'] }], list, { all: true });
+  const r = await run({ selection: { all: true }, selected, steps: [], target, host, log: (m) => logs.push(m), cleanupTimeoutMs: 20 });
+  deepEqual(order, ['a2', 'a1', 'b-run', 'c-run']);
+  deepEqual(r.scenarios.map((s) => s.status), ['failed', 'passed', 'passed']);
+  deepEqual(logs.filter((l) => l.startsWith('cleanup')), ['cleanup of scenario b: cleanup broke', 'cleanup of scenario b: did not finish within 20 ms']);
+});
+
+test('children a scenario starts are stopped when it ends', async () => {
+  const started: { stops: number }[] = [];
+  const counting = {
+    ...host,
+    start: () => {
+      const c = { stops: 0, output: () => '', waitFor: async () => [] as unknown as RegExpExecArray, stop: async () => (c.stops++, { code: 0, stdout: '', stderr: '' }) };
+      started.push(c);
+      return c;
+    },
+  };
+  const s: Scenario = { id: 's', rules: ['R1.1'], platforms: ['linux'], run: async (ctx) => (ctx.start(['podman', 'events']), passed) };
+  const { selected } = select([{ id: 'R1.1', platforms: ['linux'], scenarios: ['s'] }], [s], { all: true });
+  await run({ selection: { all: true }, selected, steps: [], target, host: counting, log: () => {} });
+  deepEqual(started.map((c) => c.stops), [1]);
+});

@@ -1,5 +1,5 @@
 import type { Visibility } from './host/config.ts';
-import type { ExecResult } from './host/exec.ts';
+import type { Env, ExecResult, Running } from './host/exec.ts';
 import type { GitHub } from './host/github.ts';
 
 /** Proposal rule id, `R<section>.<n>`, for example `R5.12`. */
@@ -38,6 +38,16 @@ export interface HostContext {
   github: GitHub;
   /** Sets the execution sandbox's visibility, runs `fn`, then restores public; each change is read back. */
   withExecutionVisibility<T>(visibility: Visibility, fn: () => Promise<T>): Promise<T>;
+  /** Starts `gh nibfin …` alongside the caller in the execution clone, with `GH_TOKEN`; `path` replaces the child's `PATH`. */
+  startGhNibfin(args: string[], options?: { path?: string }): Running;
+  /** Starts another long-lived child (for example `podman events`); it gets no secret. */
+  start(argv: string[]): Running;
+  /** Runs one child to its end without any secret (for example `podman ps`). */
+  exec(argv: string[]): Promise<ExecResult>;
+  /** `<repo root>/.e2e-work/`. */
+  workDir(): string;
+  /** The environment a browser gets: the host's, without any `E2E_*` variable and without `GH_TOKEN`. */
+  browserEnv(): Env;
 }
 
 /** Context handed to provisioning steps and scenarios. */
@@ -47,6 +57,12 @@ export interface RunContext extends HostContext {
   log(message: string): void;
   /** Facts a provisioning step of this run returned, if it ran. */
   facts(stepId: string): Record<string, unknown> | undefined;
+  /**
+   * Registers a cleanup for the current scenario (or step). The runner runs them after it
+   * ends, whatever its outcome, in reverse order and each with a bounded timeout.
+   * `start` and `startGhNibfin` register their child's `stop()` themselves.
+   */
+  defer(cleanup: () => Promise<unknown>): void;
 }
 
 export interface ProvisioningStep {

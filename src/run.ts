@@ -48,6 +48,8 @@ export interface RunInput {
   host: HostContext;
   log(message: string): void;
   now?: () => Date;
+  /** Bound for each deferred cleanup (default 60 s). */
+  cleanupTimeoutMs?: number;
 }
 
 /** Runs one step, teardown or scenario; a throw or a malformed outcome becomes `failed`. */
@@ -62,6 +64,20 @@ async function attempt(fn: () => Promise<StepOutcome>): Promise<StepOutcome> {
     return { status: 'failed', reason: `invalid outcome: ${JSON.stringify(out)}` };
   } catch (error) {
     return { status: 'failed', reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** Runs and clears the deferred cleanups, newest first; a throw or a hang is logged and never changes an outcome. */
+async function runCleanups(cleanups: (() => Promise<unknown>)[], owner: string, timeoutMs: number, log: (m: string) => void): Promise<void> {
+  while (cleanups.length) {
+    const fn = cleanups.pop() as () => Promise<unknown>;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const bounded = new Promise<StepOutcome>((resolve) => {
+      timer = setTimeout(() => resolve({ status: 'failed', reason: `did not finish within ${timeoutMs} ms` }), timeoutMs);
+    });
+    const out = await Promise.race([attempt(async () => (await fn(), { status: 'passed', reason: '' })), bounded]);
+    clearTimeout(timer);
+    if (out.status !== 'passed') log(`cleanup of ${owner}: ${out.reason}`);
   }
 }
 
@@ -82,7 +98,26 @@ export async function run(input: RunInput): Promise<RunResult> {
   const startedAt = now().toISOString();
   const { target, selected } = input;
   const results = new Map<string, StepResult>();
-  const ctx: RunContext = { ...input.host, target, log: input.log, facts: (id) => results.get(id)?.facts };
+  const cleanups: (() => Promise<unknown>)[] = [];
+  const cleanupTimeoutMs = input.cleanupTimeoutMs ?? 60_000;
+  const defer = (fn: () => Promise<unknown>) => void cleanups.push(fn);
+  const ctx: RunContext = {
+    ...input.host,
+    target,
+    log: input.log,
+    facts: (id) => results.get(id)?.facts,
+    defer,
+    startGhNibfin(args, options) {
+      const child = input.host.startGhNibfin(args, options);
+      defer(() => child.stop());
+      return child;
+    },
+    start(argv) {
+      const child = input.host.start(argv);
+      defer(() => child.stop());
+      return child;
+    },
+  };
 
   const toRun: Scenario[] = selected.scenarios.filter((s) => s.platforms.includes(target.platform));
   const byId = new Map(input.steps.map((s) => [s.id, s]));
@@ -105,6 +140,7 @@ export async function run(input: RunInput): Promise<RunResult> {
       input.log(`provisioning ${step.id}`);
       ran.push(step);
       outcome = await attempt(() => step.run(ctx));
+      await runCleanups(cleanups, `step ${step.id}`, cleanupTimeoutMs, input.log);
     }
     const r = { id: step.id, ...outcome };
     provisioning.push(r);
@@ -117,6 +153,7 @@ export async function run(input: RunInput): Promise<RunResult> {
     if (!outcome) {
       input.log(`scenario ${s.id}`);
       outcome = plain(await attempt(() => s.run(ctx)));
+      await runCleanups(cleanups, `scenario ${s.id}`, cleanupTimeoutMs, input.log);
     }
     scenarios.push({ id: s.id, rules: s.rules, ...outcome });
   }
@@ -127,6 +164,7 @@ export async function run(input: RunInput): Promise<RunResult> {
     if (!fn) continue;
     input.log(`teardown ${step.id}`);
     teardown.push({ id: step.id, ...plain(await attempt(() => fn.call(step, ctx))) });
+    await runCleanups(cleanups, `teardown ${step.id}`, cleanupTimeoutMs, input.log);
   }
 
   const digest = provisioning.map((p) => p.facts?.imageDigest).find((d) => typeof d === 'string');

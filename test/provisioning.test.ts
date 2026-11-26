@@ -11,7 +11,7 @@ import { readTemplate, treeSha } from '../src/host/sandbox.ts';
 import type { HostServices } from '../src/host/services.ts';
 import { createProvisioning } from '../src/provisioning.ts';
 import type { Platform, RunContext, StepOutcome } from '../src/types.ts';
-import { FakeGitHub, cleanRepo, fakeExec } from './host/fakes.ts';
+import { FakeGitHub, cleanRepo, fakeExec, fakeStart } from './host/fakes.ts';
 
 const EXEC = 'taco3064/nibfin-e2e-sandbox';
 const PEER = 'taco3064/nibfin-e2e-sandbox-peer';
@@ -31,6 +31,7 @@ function harness(opts: { exec?: Exec; env?: Record<string, string>; fetch?: type
   const services: HostServices = {
     env,
     exec: opts.exec ?? recorded.exec,
+    start: fakeStart().start,
     fetch: opts.fetch ?? fake.fetch,
     github: createGitHub(sandboxToken, fake.fetch),
     repoRoot,
@@ -44,6 +45,7 @@ function harness(opts: { exec?: Exec; env?: Record<string, string>; fetch?: type
     target: { ghNibfinCommit: COMMIT, platform: opts.platform ?? 'linux' },
     log: () => {},
     facts: (id) => facts.get(id),
+    defer: () => {},
   };
   const runStep = async (id: string): Promise<StepOutcome> => {
     const out = await (steps.get(id)?.run(ctx) as Promise<StepOutcome>);

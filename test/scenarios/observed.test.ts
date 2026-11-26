@@ -100,7 +100,7 @@ async function simulate(probe = PROBE) {
 }
 
 function ctxWith(facts: ObservedFacts): RunContext {
-  return { ...fakeHostContext, target: { ghNibfinCommit: 'a'.repeat(40), platform: 'linux' }, log: () => {}, facts: (id) => (id === 'observed-job' ? (facts as unknown as Record<string, unknown>) : id === 'nibfin' ? { imageDigest: DIGEST } : undefined) };
+  return { ...fakeHostContext, target: { ghNibfinCommit: 'a'.repeat(40), platform: 'linux' }, log: () => {}, defer: () => {}, facts: (id) => (id === 'observed-job' ? (facts as unknown as Record<string, unknown>) : id === 'nibfin' ? { imageDigest: DIGEST } : undefined) };
 }
 
 test('observed-job runs one fixture through Shape, Deliver and Review and records only derived facts', async () => {
