@@ -34,14 +34,14 @@ async function refresh(page: Page): Promise<void> {
   await sleep(3000);
 }
 
-/** Waits for `seen` without navigating; returns the elapsed ms or undefined. */
+/** Checks `seen` at least once and until `ms` passed, without navigating; returns the elapsed ms or undefined. */
 async function seenWithin(page: Page, seen: () => Promise<boolean>, ms: number): Promise<number | undefined> {
   const from = Date.now();
-  while (Date.now() - from <= ms) {
+  for (;;) {
     if (await seen()) return Date.now() - from;
+    if (Date.now() - from > ms) return undefined;
     await sleep(1000);
   }
-  return undefined;
 }
 
 async function remoteChange(ctx: RunContext, secrets: Secrets, markers: Record<string, string>, notes: string[]) {
