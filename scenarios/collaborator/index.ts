@@ -211,22 +211,19 @@ export const collaboratorPrivate: Scenario = {
     requestIssue(reg, peer.login, peer.keyId, problems);
     const lines = issue ? parseRequestBody(issue.body).deployKeys : [];
     if (lines.length !== 1 || !/^ssh-ed25519 [A-Za-z0-9+/=]+$/.test(lines[0] ?? '')) problems.push(`R5.61: request has deploy-key lines [${lines.join(' | ')}], expected one ssh-ed25519 key`);
+    // Read after runner add and before runner remove.
     const keyFile = join(reg.deployKeyDir, 'id_ed25519');
-    let pub = '';
-    try {
-      pub = keyBody(await peer.readPublic(`${keyFile}.pub`));
-    } catch (error) {
-      problems.push(`R5.61: ${keyFile}.pub cannot be read: ${(error as Error).message}`);
-    }
+    const host = p.keyOnHost;
+    const pub = 'text' in host.pub ? keyBody(host.pub.text) : '';
+    if ('error' in host.pub) problems.push(`R5.61: ${keyFile}.pub cannot be read: ${host.pub.error}`);
     if (pub && lines[0] !== pub) problems.push(`R5.61: the request's deploy key is not the host's ${keyFile}.pub`);
-    const fileStat = await peer.stat(keyFile);
-    const dirStat = await peer.stat(reg.deployKeyDir);
+    const fileStat = host.file;
+    const dirStat = host.dir;
     if (fileStat?.mode !== '600' || fileStat.type !== 'regular file') problems.push(`R5.61: ${keyFile} is ${fileStat ? `${fileStat.type} ${fileStat.mode}` : 'missing'}, expected a 0600 file`);
     if (dirStat?.mode !== '700') problems.push(`R5.61: ${reg.deployKeyDir} is ${dirStat ? dirStat.mode : 'missing'}, expected 0700`);
     const runnersDir = join(peer.dataHome, 'nibfin', 'runners');
     if (reg.deployKeyDir.startsWith(runnersDir + '/')) problems.push(`R5.61: the deploy key is under ${runnersDir}`);
-    const inRunners = await peer.run(['find', runnersDir, '-name', 'id_ed25519*']);
-    if (inRunners.stdout.trim()) problems.push(`R5.61: key files under the Runner directories: ${inRunners.stdout.trim()}`);
+    if (host.inRunners) problems.push(`R5.61: key files under the Runner directories: ${host.inRunners}`);
     const key = reg.deployKeys.find((k) => k.title === title);
     if (!key) problems.push(`R5.61: no deploy key ${title} on the execution sandbox (keys: ${reg.deployKeys.map((k) => k.title).join(', ') || 'none'})`);
     else {
