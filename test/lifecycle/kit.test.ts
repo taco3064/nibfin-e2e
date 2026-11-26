@@ -226,3 +226,18 @@ test('windows: agent windows leave out route and finish; all windows include the
   deepEqual((await k.windows(s, 'o/exec', 5)).map((w) => [w.stage, w.jobId]), [['deliver', 21]]);
   deepEqual((await k.windows(s, 'o/exec', 5, true)).map((w) => [w.stage, w.jobId]), [['route', 11], ['deliver', 21], ['finish', 31]]);
 });
+
+test('a failed read during a wait is logged and the wait goes on; the deadline names the last error', async () => {
+  let fail = 2;
+  const logs: string[] = [];
+  const f = routes({ ...empty, 'GET /repos/o/exec/issues': () => (fail-- > 0 ? { status: 502, data: { message: 'Bad Gateway' } } : { data: [] }) });
+  const c = clock();
+  const obs = new Observer(f.github, ['o/exec'], { since: c.now(), now: c.now, sleep: c.sleep, log: (m) => logs.push(m) });
+  const started = c.now();
+  equal(await obs.until('anything', () => true, 10 * 60_000), true);
+  equal(c.now() - started >= 2 * 60_000, true, 'each retry of the read waits one interval');
+  equal(logs.filter((l) => /a read while waiting for anything failed: .*502/.test(l)).length, 2);
+  const broken = routes({ ...empty, 'GET /repos/o/exec/issues': { status: 502, data: { message: 'Bad Gateway' } } });
+  const obs2 = new Observer(broken.github, ['o/exec'], { since: c.now(), now: c.now, sleep: c.sleep });
+  await rejects(obs2.until('B', () => true, 3 * 60_000), /timed out after 3 min waiting for B; last read error: GitHub GET \/repos\/o\/exec\/issues.* returned 502: Bad Gateway/);
+});

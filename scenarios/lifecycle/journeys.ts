@@ -1,7 +1,7 @@
 // Shared deliveries: one set of fixtures, driven once, that several scenarios assert on.
 // A journey performs every harness write its scenarios need and records the moments
 // they check; the scenarios then read GitHub to judge them.
-import { selfHosted, time, wakeRuns } from './analysis.ts';
+import { AGENT_STAGES, selfHosted, time, wakeRuns } from './analysis.ts';
 import type { Issue, Job, Pull, Run } from './analysis.ts';
 import { DEADLINE, changeRequest } from './kit.ts';
 import type { Kit } from './kit.ts';
@@ -73,7 +73,8 @@ async function driveJourney(k: Kit, filed: number[]): Promise<Journey> {
   // R4.7: A without `scope` gets no stage and no comment once its opened wake completed.
   await k.obs.until('A\'s opened wake run to complete', (s) => (wakeRuns(s.runs, exec, a.number).some((r) => r.status === 'completed') ? true : undefined), DEADLINE.event, k.show(exec, a.number));
   const calm = await k.settle('A opened', k.now(), k.runsOf(exec, a.number));
-  const aBeforeScope = { stageRuns: k.stages(calm, exec, a.number).length, comments: (await k.obs.comments(exec, a.number)).length };
+  // Route may run for any Issue event; only an agent stage would mean A was taken up.
+  const aBeforeScope = { stageRuns: k.stages(calm, exec, a.number, AGENT_STAGES).length, comments: (await k.obs.comments(exec, a.number)).length };
   await k.addLabels(exec, a.number, ['scope']);
   const aScopedAt = k.now();
 
