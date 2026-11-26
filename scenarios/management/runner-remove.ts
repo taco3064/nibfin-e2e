@@ -49,8 +49,8 @@ export const runnerRemove: Scenario = {
           ? await podmanStartTasks(run, newTasks(facts.hostBefore, setup))
           : [];
 
-    const hold = await startHold(gh, execution, 120);
     try {
+      const hold = await startHold(gh, execution, 120);
       const one = await ctx.ghNibfin(['runner', 'remove', 'claude', '--count', '1', '--yes']);
       c.that(one.code === 0, 'R5.31', `runner remove claude --count 1 --yes exited ${one.code}: ${tail(one)}`);
       remaining(c, one.stdout, 1, 'runner remove --count 1');
