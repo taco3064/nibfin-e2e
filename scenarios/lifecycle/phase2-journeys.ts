@@ -4,6 +4,8 @@ import {
   AGENT_STAGES,
   BRANCH_WRITES,
   Checks,
+  issueKey,
+  parseStageTitle,
   concurrentPair,
   firstMark,
   isIssueBranch,
@@ -168,12 +170,17 @@ export const deliveryParallel: Scenario = lifecycle({
     const c = new Checks();
     const { exec } = k;
     const s = await k.obs.fresh();
-    const issues = [j.a, j.x, j.b, j.c].map((i) => i.number);
+    // Every Issue with stage runs in the journey's window, in either sandbox: phase 2 shares the two Runners.
+    const issues = new Map<string, { repo: string; n: number }>();
+    for (const r of s.runs) {
+      const t = parseStageTitle(r.display_title);
+      if (r.repo === exec && t && time(r.created_at) >= j.startedAt && time(r.created_at) <= j.endedAt) issues.set(issueKey(t.repo, t.issue), { repo: t.repo, n: t.issue });
+    }
     const agent: Window[] = [];
     const all: Window[] = [];
-    for (const n of issues) {
-      agent.push(...(await k.windows(s, exec, n)));
-      all.push(...(await k.windows(s, exec, n, true)));
+    for (const { repo, n } of issues.values()) {
+      agent.push(...(await k.windows(s, repo, n)));
+      all.push(...(await k.windows(s, repo, n, true)));
     }
     const inJourney = (w: Window) => w.start >= j.startedAt && w.start <= j.endedAt;
     const pair = concurrentPair(agent.filter(inJourney));
