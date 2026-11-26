@@ -154,3 +154,10 @@ test('the review-awaited pattern needs a wait for an approval, not any review co
   equal(PENDING_MARKER.test(markerOf('<!-- nibfin:pending --> needs a person') ?? ''), true);
   equal(PENDING_MARKER.test(markerOf('<!-- nibfin:shape -->') ?? ''), false);
 });
+
+test('a branch creation counts as a write: a fix Deliver that opens a new branch fails R3.20', () => {
+  const w = { start: Date.parse('2026-11-26T10:00:00Z'), end: Date.parse('2026-11-26T10:10:00Z'), reason: 'review' };
+  const created = act('refs/heads/nibfin/issue-5-2', '2026-11-26T10:03:00Z', 'branch_creation');
+  deepEqual(pushesWithin([created], w).length, 1);
+  match(fixPushProblems({ branch: 'nibfin/issue-5', prNumber: 11, windows: [w], activity: [created], headsAfter: [], pullsForBranch: [11] })[0] ?? '', /pushed to refs\/heads\/nibfin\/issue-5-2/);
+});

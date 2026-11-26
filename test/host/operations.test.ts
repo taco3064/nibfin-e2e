@@ -118,3 +118,23 @@ test('secretValues returns the set tokens; ownerLogin and ownerId read GET /user
   deepEqual(ops.secretValues(), ['a']);
   deepEqual([await ops.ownerLogin(), await ops.ownerId(), calls], ['owner', 42, 1]);
 });
+
+test('listByLink follows Link next cursors on the API host only, and stops at the page limit', async () => {
+  const seen: { url: string; auth: string | null }[] = [];
+  const pages: Record<string, { body: unknown[]; next?: string }> = {
+    'https://api.github.com/repos/o/r/activity?time_period=day&per_page=100': { body: [{ id: 1 }], next: 'https://api.github.com/repos/o/r/activity?per_page=100&after=c1' },
+    'https://api.github.com/repos/o/r/activity?per_page=100&after=c1': { body: [{ id: 2 }], next: 'https://evil.example/steal' },
+  };
+  const fetchFn: typeof fetch = async (input, init) => {
+    const url = String(input);
+    seen.push({ url, auth: new Headers(init?.headers).get('authorization') });
+    const p = pages[url];
+    if (!p) return new Response('[]', { status: 404 });
+    return new Response(JSON.stringify(p.body), { status: 200, headers: p.next ? { link: `<${p.next}>; rel="next"` } : {} });
+  };
+  const gh = createGitHub(() => 'tok', fetchFn);
+  deepEqual(await gh.listByLink('/repos/o/r/activity?time_period=day'), [{ id: 1 }, { id: 2 }]);
+  equal(seen.some((s) => s.url.startsWith('https://evil.example')), false);
+  const loop: typeof fetch = async () => new Response('[{"id":1}]', { status: 200, headers: { link: '<https://api.github.com/repos/o/r/activity?after=x>; rel="next"' } });
+  await rejects(createGitHub(() => 'tok', loop).listByLink('/repos/o/r/activity', 3), /more than 3 pages/);
+});

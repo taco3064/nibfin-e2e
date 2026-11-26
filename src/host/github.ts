@@ -11,6 +11,11 @@ export interface GitHub {
   rest<T = unknown>(method: string, path: string, body?: unknown, allow?: number[]): Promise<{ status: number; data: T }>;
   /** Every page of a list endpoint; `key` picks the array out of wrapped responses (`runners`, `secrets`). */
   list<T = unknown>(path: string, key?: string): Promise<T[]>;
+  /**
+   * Every page of a list endpoint that pages with cursors in the `Link` header (for
+   * example repository activity), up to `maxPages`. Only API-host links are followed.
+   */
+  listByLink<T = unknown>(path: string, maxPages?: number): Promise<T[]>;
   graphql<T = unknown>(query: string, variables: Record<string, unknown>): Promise<T>;
   /**
    * A plain-text download such as a Job log. A redirect is followed without the
@@ -33,7 +38,10 @@ export function createGitHub(token: () => string, fetchFn: typeof fetch = fetch,
     ...extra,
   });
   async function call(method: string, path: string, body: unknown, allow: number[]) {
-    const res = await fetchFn(api + path, {
+    return callUrl(method, api + path, path, body, allow);
+  }
+  async function callUrl(method: string, url: string, path: string, body: unknown, allow: number[]) {
+    const res = await fetchFn(url, {
       method,
       headers: headers(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -49,7 +57,7 @@ export function createGitHub(token: () => string, fetchFn: typeof fetch = fetch,
       const message = (data as { message?: unknown } | undefined)?.message;
       throw new GitHubError(method, path, res.status, typeof message === 'string' ? message : text.slice(0, 500));
     }
-    return { status: res.status, data };
+    return { status: res.status, data, link: res.headers.get('link') ?? '' };
   }
 
   const gh: GitHub = {
@@ -67,6 +75,21 @@ export function createGitHub(token: () => string, fetchFn: typeof fetch = fetch,
         out.push(...items);
         if (items.length < 100) return out;
       }
+    },
+    async listByLink<T>(path: string, maxPages = 50) {
+      const out: T[] = [];
+      const sep = path.includes('?') ? '&' : '?';
+      let url = `${api}${path}${sep}per_page=100`;
+      for (let page = 0; page < maxPages; page++) {
+        const r = await callUrl('GET', url, path, undefined, []);
+        if (!Array.isArray(r.data)) throw new Error(`GitHub GET ${path}: expected a list`);
+        out.push(...(r.data as T[]));
+        const next = /<([^>]+)>;\s*rel="next"/.exec(r.link)?.[1];
+        // The token goes only to the API host.
+        if (!next || !next.startsWith(api + '/')) return out;
+        url = next;
+      }
+      throw new Error(`GitHub GET ${path}: more than ${maxPages} pages`);
     },
     async graphql<T>(query: string, variables: Record<string, unknown>) {
       const { data } = await call('POST', '/graphql', { query, variables }, []);

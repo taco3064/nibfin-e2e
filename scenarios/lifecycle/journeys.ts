@@ -111,9 +111,10 @@ async function driveJourney(k: Kit, filed: number[]): Promise<Journey> {
 
   // R3.36: a re-run attempt of CI that starts before CD completes, still running when it does.
   await k.gh.rest('POST', `/repos/${exec}/actions/runs/${ciRun.id}/rerun`);
-  await k.obs.until('the CI re-run to start', (s) => {
-    const r = pushRun(s, 'CI');
-    return r && (r.run_attempt ?? 1) >= 2 && r.status !== 'completed' ? r : undefined;
+  // Read the run itself: a re-run keeps its created_at, which may be older than the observer's listing window.
+  await k.obs.until('the CI re-run to start', async () => {
+    const { data: r } = await k.gh.rest<Run>('GET', `/repos/${exec}/actions/runs/${ciRun.id}`);
+    return (r.run_attempt ?? 1) >= 2 && r.status !== 'completed' ? r : undefined;
   }, DEADLINE.event);
   await k.gh.rest('POST', `/repos/${exec}/git/refs`, { ref: `refs/tags/${t}-a-cd`, sha: mergeSha });
   const cdRun = await k.obs.until('CD of A\'s merge to complete', (s) => {

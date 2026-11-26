@@ -293,6 +293,7 @@ export const fakeHostContext: HostContext = {
       throw new Error('no GitHub in this test');
     },
     list: async () => [],
+    listByLink: async () => [],
     graphql: async () => {
       throw new Error('no GitHub in this test');
     },
