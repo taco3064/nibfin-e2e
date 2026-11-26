@@ -1,6 +1,6 @@
 import { deepEqual, equal } from 'node:assert/strict';
 import { test } from 'node:test';
-import { detectPlatform, run } from '../src/run.ts';
+import { detectPlatform, run, scenarioGroups } from '../src/run.ts';
 import { select } from '../src/select.ts';
 import type { MapEntry, Outcome, ProvisioningStep, RunContext, RunTarget, Scenario } from '../src/types.ts';
 import { fakeHostContext as host, passed, scenario, step } from './fixtures.ts';
@@ -199,4 +199,63 @@ test('children a scenario starts are stopped when it ends', async () => {
   const { selected } = select([{ id: 'R1.1', platforms: ['linux'], scenarios: ['s'] }], [s], { all: true });
   await run({ selection: { all: true }, selected, steps: [], target, host: counting, log: () => {} });
   deepEqual(started.map((c) => c.stops), [1]);
+});
+
+/** A scenario that records when it starts and ends; it ends after a short delay. */
+function timed(id: string, concurrent: boolean, events: string[], outcome: Outcome | Error = passed): Scenario {
+  return {
+    id,
+    rules: [`R1.${id.charCodeAt(0)}`],
+    platforms: ['linux'],
+    concurrent,
+    run: async () => {
+      events.push(`start ${id}`);
+      await new Promise((r) => setTimeout(r, 5));
+      events.push(`end ${id}`);
+      if (outcome instanceof Error) throw outcome;
+      return outcome;
+    },
+  };
+}
+
+test('consecutive concurrent scenarios overlap; others run alone; results keep registry order', async () => {
+  const events: string[] = [];
+  const r = await runAll([
+    timed('a', false, events),
+    timed('b', true, events),
+    timed('c', true, events),
+    timed('d', true, events, new Error('group member broke')),
+    timed('e', false, events),
+  ]);
+  deepEqual(events.slice(0, 2), ['start a', 'end a']);
+  deepEqual(events.slice(2, 5), ['start b', 'start c', 'start d']);
+  deepEqual(events.slice(-2), ['start e', 'end e']);
+  deepEqual(r.scenarios.map((s) => [s.id, s.status]), [['a', 'passed'], ['b', 'passed'], ['c', 'passed'], ['d', 'failed'], ['e', 'passed']]);
+  equal(r.scenarios[3]?.reason, 'group member broke');
+});
+
+test('a non-concurrent scenario between concurrent ones splits them into two groups', () => {
+  const s = (id: string, concurrent?: boolean) => ({ ...scenario(id, ['R1.1'], ['linux'], passed), concurrent });
+  deepEqual(
+    scenarioGroups([s('a', true), s('b'), s('c', true), s('d', true), s('e', false)]).map((g) => g.map((x) => x.id)),
+    [['a'], ['b'], ['c', 'd'], ['e']],
+  );
+});
+
+test('each concurrent scenario runs only its own deferred cleanups, when it ends', async () => {
+  const order: string[] = [];
+  const mk = (id: string, ms: number): Scenario => ({
+    id,
+    rules: [`R1.${id.charCodeAt(0)}`],
+    platforms: ['linux'],
+    concurrent: true,
+    run: async (ctx) => {
+      ctx.defer(async () => order.push(`cleanup ${id}`));
+      await new Promise((r) => setTimeout(r, ms));
+      order.push(`end ${id}`);
+      return passed;
+    },
+  });
+  await runAll([mk('a', 1), mk('b', 30)]);
+  deepEqual(order, ['end a', 'cleanup a', 'end b', 'cleanup b']);
 });

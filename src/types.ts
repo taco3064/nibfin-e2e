@@ -81,6 +81,11 @@ export interface Scenario {
   platforms: Platform[];
   /** Ids of provisioning steps that must pass before this scenario runs. */
   requires?: string[];
+  /**
+   * Consecutive `concurrent` scenarios (in registry order) start together and are
+   * awaited together; every other scenario runs alone. Defaults to off.
+   */
+  concurrent?: boolean;
   run(ctx: RunContext): Promise<Outcome>;
 }
 

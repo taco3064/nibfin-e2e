@@ -93,31 +93,46 @@ function blocker(required: string[], results: Map<string, StepResult>): Outcome 
   return undefined;
 }
 
+/** Splits scenarios into groups run one after another: each maximal run of consecutive `concurrent` scenarios is one group, every other scenario is a group of its own. */
+export function scenarioGroups(list: Scenario[]): Scenario[][] {
+  const groups: Scenario[][] = [];
+  for (const s of list) {
+    const last = groups[groups.length - 1];
+    if (s.concurrent && last?.[0]?.concurrent) last.push(s);
+    else groups.push([s]);
+  }
+  return groups;
+}
+
 export async function run(input: RunInput): Promise<RunResult> {
   const now = input.now ?? (() => new Date());
   const startedAt = now().toISOString();
   const { target, selected } = input;
   const results = new Map<string, StepResult>();
-  const cleanups: (() => Promise<unknown>)[] = [];
   const cleanupTimeoutMs = input.cleanupTimeoutMs ?? 60_000;
-  const defer = (fn: () => Promise<unknown>) => void cleanups.push(fn);
-  const ctx: RunContext = {
-    ...input.host,
-    target,
-    log: input.log,
-    facts: (id) => results.get(id)?.facts,
-    defer,
-    startGhNibfin(args, options) {
-      const child = input.host.startGhNibfin(args, options);
-      defer(() => child.stop());
-      return child;
-    },
-    start(argv) {
-      const child = input.host.start(argv);
-      defer(() => child.stop());
-      return child;
-    },
+  /** A context whose deferred cleanups and started children go to `cleanups`; each scenario gets its own, so concurrent ones never run each other's. */
+  const contextWith = (cleanups: (() => Promise<unknown>)[]): RunContext => {
+    const defer = (fn: () => Promise<unknown>) => void cleanups.push(fn);
+    return {
+      ...input.host,
+      target,
+      log: input.log,
+      facts: (id) => results.get(id)?.facts,
+      defer,
+      startGhNibfin(args, options) {
+        const child = input.host.startGhNibfin(args, options);
+        defer(() => child.stop());
+        return child;
+      },
+      start(argv) {
+        const child = input.host.start(argv);
+        defer(() => child.stop());
+        return child;
+      },
+    };
   };
+  const cleanups: (() => Promise<unknown>)[] = [];
+  const ctx = contextWith(cleanups);
 
   const toRun: Scenario[] = selected.scenarios.filter((s) => s.platforms.includes(target.platform));
   const byId = new Map(input.steps.map((s) => [s.id, s]));
@@ -147,15 +162,20 @@ export async function run(input: RunInput): Promise<RunResult> {
     results.set(step.id, r);
   }
 
-  const scenarios: ScenarioResult[] = [];
-  for (const s of toRun) {
+  const runScenario = async (s: Scenario): Promise<ScenarioResult> => {
     let outcome = blocker(s.requires ?? [], results);
     if (!outcome) {
       input.log(`scenario ${s.id}`);
-      outcome = plain(await attempt(() => s.run(ctx)));
-      await runCleanups(cleanups, `scenario ${s.id}`, cleanupTimeoutMs, input.log);
+      const own: (() => Promise<unknown>)[] = [];
+      outcome = plain(await attempt(() => s.run(contextWith(own))));
+      await runCleanups(own, `scenario ${s.id}`, cleanupTimeoutMs, input.log);
     }
-    scenarios.push({ id: s.id, rules: s.rules, ...outcome });
+    return { id: s.id, rules: s.rules, ...outcome };
+  };
+  const scenarios: ScenarioResult[] = [];
+  for (const group of scenarioGroups(toRun)) {
+    // A group of concurrent scenarios starts together; results keep registry order.
+    scenarios.push(...(await Promise.all(group.map(runScenario))));
   }
 
   const teardown: TeardownResult[] = [];
