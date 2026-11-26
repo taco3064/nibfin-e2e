@@ -1,7 +1,7 @@
 // Server, browser and page support for the Dashboard and site scenarios.
 // Elements are found by accessible role, name and visible text only (Proposal R8.14).
 import { mkdirSync } from 'node:fs';
-import { createServer } from 'node:net';
+import { connect, createServer } from 'node:net';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
 import type { BrowserContext, Locator, Page, Response } from 'playwright-core';
@@ -61,6 +61,16 @@ async function freePort(): Promise<number> {
       const a = s.address();
       s.close(() => (typeof a === 'object' && a ? resolve(a.port) : reject(new Error('no free port'))));
     });
+  });
+}
+
+/** True when nothing accepts connections on 127.0.0.1:<port> any more. */
+export function portClosed(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const s = connect({ host: '127.0.0.1', port, timeout: 3000 });
+    s.once('connect', () => (s.destroy(), resolve(false)));
+    s.once('timeout', () => (s.destroy(), resolve(true)));
+    s.once('error', () => resolve(true));
   });
 }
 

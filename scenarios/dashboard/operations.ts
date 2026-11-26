@@ -121,17 +121,22 @@ async function planningProgress(page: Page, ctx: RunContext, notes: string[]) {
   let d = await dialog(page);
   await (await mustButton(d, PREVIEW, 'R9.6', 'the init dialog')).click();
   let sawElapsed = false;
+  let sawResult = false;
+  let last = '';
   const end = Date.now() + 120_000;
   while (Date.now() < end) {
     const t = await d.innerText().catch(() => '');
-    if (/\b\d+(?:\.\d+)?\s?s\b|\b\d+:\d{2}\b/.test(t) && (await button(d, /^cancel\b/i))) {
-      sawElapsed = true;
-      break;
-    }
-    if (await d.getByRole('button', { name: CONFIRM }).count()) break;
+    last = t;
+    const planning = Boolean(await button(d, /^cancel\b/i)) && !(await d.getByRole('button', { name: CONFIRM }).count());
+    if (planning && /\b\d+(?:\.\d+)?\s?s\b|\b\d+:\d{2}\b/.test(t)) sawElapsed = true;
+    // A checked item with its result next to the one still being checked.
+    if (planning && sawElapsed && /no change needed|→|->|✓|✔|\b(ok|done|checked|passed)\b/i.test(t)) sawResult = true;
+    if (sawElapsed && sawResult) break;
+    if (!planning && (await d.getByRole('button', { name: CONFIRM }).count())) break;
     await sleep(100);
   }
   check(sawElapsed, 'R9.6', 'the item being checked to show an elapsed time during planning', 'planning ended without one');
+  check(sawResult, 'R9.6', 'checked items listed with their results while planning goes on', last.slice(0, 300));
   await (await mustButton(d, /^cancel\b/i, 'R9.6', 'the planning step')).click();
   await sleep(3000);
   const confirmAfter = await openDialogs(page).getByRole('button', { name: CONFIRM }).filter({ visible: true }).count();
@@ -153,10 +158,17 @@ async function planningProgress(page: Page, ctx: RunContext, notes: string[]) {
   notes.push('init planning shows progress and cancels; preview shows current → next and No change needed');
 }
 
+/** The read-only repository must be below triage for the account (and have an open Issue); otherwise a precondition, not a product failure. */
+async function readOnlyPrecondition(ctx: RunContext, opts: { openIssue?: boolean } = {}): Promise<void> {
+  const { data } = await ctx.github.rest<{ permissions?: Record<string, boolean>; open_issues_count: number }>('GET', `/repos/${READ_ONLY_REPO}`);
+  const p = data.permissions;
+  if (!p || p.admin || p.maintain || p.push || p.triage) throw new Error(`precondition: GitHub does not report the account below triage on ${READ_ONLY_REPO} (permissions ${JSON.stringify(p)}); nothing is asserted about the product`);
+  if (opts.openIssue && !(data.open_issues_count > 0)) throw new Error(`precondition: ${READ_ONLY_REPO} has no open Issue; nothing is asserted about the product`);
+}
+
 /** R9.21, R9.22 failure: a plan on a repository the account cannot administer shows a code and a next step. */
 async function failedPlan(page: Page, ctx: RunContext, notes: string[]) {
-  const { data } = await ctx.github.rest<{ permissions?: Record<string, boolean> }>('GET', `/repos/${READ_ONLY_REPO}`);
-  check(data.permissions && !data.permissions.admin && !data.permissions.triage && !data.permissions.maintain && !data.permissions.push, 'R9.20', `the account below triage on ${READ_ONLY_REPO}`, JSON.stringify(data.permissions));
+  await readOnlyPrecondition(ctx);
   await gotoView(page, 'repo');
   await selectRepo(page, READ_ONLY_REPO);
   await (await mustButton(page, /^init\b/i, 'R9.21', 'the repo view')).click();
@@ -263,9 +275,7 @@ async function pauseResume(ctx: RunContext, secrets: Secrets, f: Fixtures, notes
     check(paused.labels.includes('pause'), 'R9.20', 'pause to add pause on GitHub', `[${paused.labels.join(', ')}]`);
 
     // Below triage: disabled with an explanation. Writes nothing.
-    const { data } = await gh.rest<{ permissions?: Record<string, boolean>; open_issues_count: number }>('GET', `/repos/${READ_ONLY_REPO}`);
-    check(data.permissions && !data.permissions.triage && !data.permissions.push && !data.permissions.admin && !data.permissions.maintain, 'R9.20', `the account below triage on ${READ_ONLY_REPO}`, JSON.stringify(data.permissions));
-    check(data.open_issues_count > 0, 'R9.20', `${READ_ONLY_REPO} to have an open Issue`, 'none');
+    await readOnlyPrecondition(ctx, { openIssue: true });
     await gotoView(page, 'repo');
     await selectRepo(page, READ_ONLY_REPO);
     const toggles = page.getByRole('button', { name: /^(pause|resume)\b/i });
