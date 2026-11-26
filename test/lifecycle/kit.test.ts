@@ -181,3 +181,31 @@ test('settle waits only for the fixture\'s own runs; other Issues\' running work
   const s = await k.settle('five', after, ofFive);
   equal(s.at - after >= 5 * 60_000, true);
 });
+
+test('runs once seen are kept; later listings cover only recent runs and unfinished older runs are re-read', async () => {
+  const run = (id: number, status: string, created: string) => ({ id, display_title: `Nibfin · o/exec#${id} · shape`, status, created_at: created });
+  let listing = [run(1, 'in_progress', '2026-11-26T10:00:30Z'), run(2, 'completed', '2026-11-26T10:00:40Z')];
+  let one = run(1, 'in_progress', '2026-11-26T10:00:30Z');
+  const f = routes({
+    'GET /repos/o/exec/actions/runs': () => ({ data: { workflow_runs: listing } }),
+    'GET /repos/o/exec/actions/runs/1': () => ({ data: one }),
+    'GET /repos/o/exec/issues': [],
+    'GET /repos/o/exec/pulls': [],
+    'GET /rate_limit': {},
+  });
+  const c = clock();
+  const obs = new Observer(f.github, ['o/exec'], { since: c.now(), now: c.now, sleep: c.sleep, intervalMs: 60_000 });
+  await obs.next();
+  c.advance(30 * 60_000);
+  listing = [run(3, 'queued', '2026-11-26T10:30:00Z')];
+  one = run(1, 'completed', '2026-11-26T10:00:30Z');
+  const s = await obs.fresh();
+  deepEqual(s.runs.map((r) => [r.id, r.status]).sort(), [[1, 'completed'], [2, 'completed'], [3, 'queued']]);
+  c.advance(30 * 60_000);
+  await obs.fresh();
+  const lists = f.calls.filter((x) => x.startsWith('GET /repos/o/exec/actions/runs?'));
+  match(lists[0] ?? '', /created=%3E%3D2026-11-26T10%3A00%3A00Z/);
+  match(lists[1] ?? '', /created=%3E%3D2026-11-26T10%3A00%3A00Z/, 'never before the start');
+  match(lists[2] ?? '', /created=%3E%3D2026-11-26T10%3A20%3A00Z/, 'ten minutes before the previous listing');
+  equal(f.calls.filter((x) => x === 'GET /repos/o/exec/actions/runs/1').length, 1, 'only the unfinished run missing from the listing is re-read');
+});

@@ -246,7 +246,8 @@ export const pauseAndPending: Scenario = lifecycle({
     const n = h.p.number;
     c.check('R4.12', h.shapedWhilePaused && h.deliverWhilePaused === 0, `with pause on, P had shaped=${h.shapedWhilePaused} and ${h.deliverWhilePaused} deliver runs`);
     c.check('R3.38', h.deliverWhilePaused === 0, 'pause did not hold P');
-    c.check('R4.13', h.reviewWhilePending === 0, `${h.reviewWhilePending} review runs started while P had pending`);
+    if (h.pendingLate) c.notExercised('R4.13', h.pendingLate);
+    else c.check('R4.13', h.reviewWhilePending === 0, `${h.reviewWhilePending} review runs started while P had pending`);
     const shapes = k.stages(s, k.exec, n, ['shape']);
     const delivers = k.stages(s, k.exec, n, ['deliver']);
     c.check('R4.9', shapes.length > 0 && (!delivers[0] || time(shapes[0]?.created_at) < time(delivers[0].created_at)), 'P was not shaped before Deliver');

@@ -24,6 +24,8 @@ export interface ObserverOptions {
 }
 
 const DONE_JOB = (j: Job) => j.status === 'completed';
+/** How far before the previous listing a refresh lists again, for runs GitHub creates late or a clock skew. */
+const RELIST_MARGIN_MS = 10 * 60_000;
 
 export class Observer {
   private gen = 0;
@@ -31,6 +33,9 @@ export class Observer {
   private pending?: Promise<Snapshot>;
   private lastAt?: number;
   private readonly cache = new Map<string, { gen: number; final: boolean; value: Promise<unknown> }>();
+  /** Every run seen since the start, by "repo id". */
+  private readonly seen = new Map<string, Run>();
+  private readonly listedAt = new Map<string, number>();
   readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly interval: number;
@@ -76,17 +81,38 @@ export class Observer {
     return this.snap ? Promise.resolve(this.snap) : this.next();
   }
 
+  /**
+   * Runs are merged across snapshots: GitHub answers a `created`-filtered run list with
+   * at most 1,000 results, so each refresh lists only runs created since shortly before
+   * the previous one and re-reads the runs seen earlier that had not completed.
+   */
+  private async readRuns(repo: string): Promise<void> {
+    const r = `/repos/${repo}`;
+    const from = Math.max(this.opts.since, (this.listedAt.get(repo) ?? -Infinity) - RELIST_MARGIN_MS);
+    this.listedAt.set(repo, this.now());
+    const iso = new Date(from).toISOString().replace(/\.\d+Z$/, 'Z');
+    const listed = new Set<number>();
+    for (const run of await this.gh.list<Omit<Run, 'repo'>>(`${r}/actions/runs?created=${encodeURIComponent('>=' + iso)}`, 'workflow_runs')) {
+      this.seen.set(`${repo} ${run.id}`, { ...run, repo });
+      listed.add(run.id);
+    }
+    for (const [key, run] of this.seen) {
+      if (run.repo !== repo || run.status === 'completed' || listed.has(run.id)) continue;
+      const { data } = await this.gh.rest<Omit<Run, 'repo'>>('GET', `${r}/actions/runs/${run.id}`);
+      this.seen.set(key, { ...data, repo });
+    }
+  }
+
   private async read(): Promise<Snapshot> {
-    const since = new Date(this.opts.since).toISOString().replace(/\.\d+Z$/, 'Z');
-    const runs: Run[] = [];
     const issues = new Map<string, Issue[]>();
     const pulls = new Map<string, Pull[]>();
     for (const repo of this.repos) {
       const r = `/repos/${repo}`;
-      for (const run of await this.gh.list<Omit<Run, 'repo'>>(`${r}/actions/runs?created=${encodeURIComponent('>=' + since)}`, 'workflow_runs')) runs.push({ ...run, repo });
+      await this.readRuns(repo);
       issues.set(repo, (await this.gh.list<Issue>(`${r}/issues?state=all`)).filter((i) => i.pull_request === undefined));
       pulls.set(repo, await this.gh.list<Pull>(`${r}/pulls?state=all`));
     }
+    const runs = [...this.seen.values()];
     const s: Snapshot = { gen: ++this.gen, at: this.now(), runs, issues, pulls };
     try {
       const { data } = await this.gh.rest<{ resources?: { core?: { remaining?: number } } }>('GET', '/rate_limit');
