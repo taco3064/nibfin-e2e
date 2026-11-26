@@ -155,6 +155,8 @@ async function driveJourney(k: Kit, filed: number[]): Promise<Journey> {
 export interface HoldJourney {
   p: Issue;
   pausedAt: number;
+  /** Why the pause did not land while Shape ran, if so. */
+  pauseLate?: string;
   /** Deliver runs of P after the Shape was published while `pause` was on. */
   deliverWhilePaused: number;
   shapedWhilePaused: boolean;
@@ -196,9 +198,14 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
   const running = (stage: 'shape' | 'deliver', after = 0) => async (s: Snapshot) =>
     (await k.agentJobs(s, exec, n, [stage])).find((j: Job) => j.status === 'in_progress' && selfHosted(j) && time(j.started_at) >= after);
 
-  await k.obs.until('P\'s shape job to run', running('shape'), DEADLINE.stage, show);
+  const shapeJob = await k.obs.until('P\'s shape job to run', running('shape'), DEADLINE.stage, show);
   await k.addLabels(exec, n, ['pause']);
   const pausedAt = k.now();
+  const shapeDone = await k.obs.until('P\'s shape job to complete', async () => {
+    const j = await k.obs.job(exec, shapeJob.id);
+    return j.status === 'completed' ? j : undefined;
+  }, DEADLINE.stage, show);
+  const pauseLate = time(shapeDone.completed_at) <= pausedAt ? `P's shape job ${shapeDone.id} completed before pause was added` : undefined;
   const shaped = await k.obs.until('P\'s Shape to be published', (s) => (hasLabel(k, s, n, 'shaped') ? s : undefined), DEADLINE.stage, show);
   const ofP = k.runsOf(exec, n);
   const calm = await k.settle('P shaped', shaped.at, ofP);
@@ -256,5 +263,5 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
   await k.removeLabel(exec, n, 'pending');
   const unpendedAt = k.now();
   await k.obs.until('P to close with delivered', (s) => k.delivered(s, exec, n), DEADLINE.delivery, show);
-  return { p, pausedAt, deliverWhilePaused, shapedWhilePaused, editedAt, sentBack: next === 'sent back', reshapedAt, pendingAt, reviewWhilePending, pendingLate, unpendedAt };
+  return { p, pausedAt, pauseLate, deliverWhilePaused, shapedWhilePaused, editedAt, sentBack: next === 'sent back', reshapedAt, pendingAt, reviewWhilePending, pendingLate, unpendedAt };
 }
