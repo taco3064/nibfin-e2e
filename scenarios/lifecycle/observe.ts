@@ -126,6 +126,10 @@ export class Observer {
   /**
    * Waits until `fn` returns a value other than `undefined`. At the deadline it fails
    * naming what it waited for and, through `show`, the last observed state.
+   *
+   * A wait only reads, so a failed read (a refresh or a read inside `fn`) is logged
+   * and the wait goes on to its next snapshot; the last such error is named if the
+   * deadline passes. Harness writes are never repeated.
    */
   async until<T>(
     desc: string,
@@ -135,14 +139,25 @@ export class Observer {
   ): Promise<T> {
     const end = this.now() + timeoutMs;
     let seen = -1;
+    let lastError: string | undefined;
+    let last: Snapshot | undefined;
     for (;;) {
-      const s = await this.next(seen);
-      seen = s.gen;
-      const v = await fn(s);
-      if (v !== undefined) return v;
+      try {
+        const s = await this.next(seen);
+        seen = s.gen;
+        last = s;
+        const v = await fn(s);
+        if (v !== undefined) return v;
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+        // The next call to next() waits one interval before reading again.
+        this.opts.log?.(`observer: a read while waiting for ${desc} failed: ${lastError}`);
+      }
       if (this.now() >= end) {
-        const state = show ? await show(s) : '';
-        throw new Error(`timed out after ${Math.round(timeoutMs / 60_000)} min waiting for ${desc}${state ? `; observed: ${state}` : ''}`);
+        let state = '';
+        if (show && last) state = await Promise.resolve(show(last)).catch(() => '');
+        const err = lastError ? `; last read error: ${lastError}` : '';
+        throw new Error(`timed out after ${Math.round(timeoutMs / 60_000)} min waiting for ${desc}${state ? `; observed: ${state}` : ''}${err}`);
       }
     }
   }
