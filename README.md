@@ -99,15 +99,27 @@ or through another step), in this order:
 | `sandboxes` | Refuses to start while a runner registration is online on the execution sandbox, then resets both sandboxes and reads them back |
 | `nibfin` | In a clone of the execution sandbox: `gh nibfin runner add claude --count 2`, `init` on execution then peer; reads the image digest from the init PR, rebase-merges both init PRs and records each sandbox's `main` head and tree as its baseline |
 | `observed-job` | Runs one agent fixture on the execution sandbox through Shape, Deliver and Review and records what its Jobs ran with (container projection, probe output, log facts, login volume facts, the pushed branch, how the PR ended) for the scenarios that read it |
+| `collaborator` | Linux only. Checks that the second account is a write (not admin) collaborator on the execution sandbox; creates the OS user `e2epeer` (subordinate ids, linger and its user manager); installs the built gh-nibfin for it; clones the execution sandbox into its home; writes its `nibfin-home-claude` volume; generates an ed25519 key as `e2epeer` and adds the public half to the second account as `nibfin-e2e-peer-<time>` |
 
 After the scenarios, teardown runs for every step that ran, in reverse order:
+the collaborator's `runner remove` and the deletion of every
+`nibfin-e2e-peer-*` SSH key from the second account (read back), the Owner's
 `runner remove`, then a second reset of both sandboxes, read back to show
 nothing is left. It needs these environment variables:
 
 - `E2E_SANDBOX_TOKEN`: fine-grained token for both sandboxes. The harness sends it
   only in its own GitHub API calls and as `GH_TOKEN` to `gh`.
 - `E2E_CLAUDE_TOKEN`: the output of `claude setup-token`. It reaches the login
-  volume only through a helper container's stdin.
+  volumes (the Owner's and `e2epeer`'s) only through a helper container's stdin.
+- `E2E_PEER_GITHUB_TOKEN`: classic token (`repo`, `admin:public_key`) of the
+  second GitHub account, a write collaborator on the execution sandbox. The
+  harness sends it only in its own `/user` and `/user/keys` calls and as
+  `GH_TOKEN` to `e2epeer`'s `gh`, on the first stdin line of the `sudo`
+  wrapper, never as an argument. Only the collaborator scenarios need it.
+
+Commands as `e2epeer` run through `sudo -u e2epeer -H` (passwordless on hosted
+Linux runners), so they get none of the harness's environment. The harness reads
+only public key files and file modes in `e2epeer`'s home, never a private key.
 
 No other child process gets any `E2E_*` variable. Clones and builds go under
 `.e2e-work/`, which is deleted at the start of a run and ignored by Git and lint.
@@ -174,9 +186,12 @@ rules, change 不測 marks, and keep ids as they are (they are never reused).
    `withExecutionVisibility('private', fn)` for scenarios that need a private
    execution repository; it restores public afterwards. `start`/`startGhNibfin`
    run long-lived children, `exec` runs one without secrets, `workDir()` and
-   `browserEnv()` place and configure a browser, and `defer(fn)` registers a
+   `browserEnv()` place and configure a browser, `defer(fn)` registers a
    cleanup for the end of the scenario (each scenario has its own, also when it
-   runs concurrently).
+   runs concurrently), and `peer()` gives the collaborator (requires
+   `collaborator`): its login and id, this run's SSH key id, `ghNibfin(args)` in
+   its clone, `run`, `stat`, `list`, `readPublic`, `units` and its own `github`
+   client.
 2. Import it in `scenarios/index.ts` and add it to the list `createScenarios`
    returns (a scenario that needs the host's processes takes the `HostServices`).
    The delivery-lifecycle scenarios are listed before that list in
