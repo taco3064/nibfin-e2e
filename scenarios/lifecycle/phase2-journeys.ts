@@ -24,11 +24,15 @@ import { closingProblems } from './phase1.ts';
 
 const iso = (ms: number) => new Date(ms).toISOString();
 
-/** R3.13 / R3.40: the shape job's log shows a Validator verdict before the Shape comment and `shaped`. */
-async function validatorProblems(k: Kit, s: Snapshot, repo: string, n: number, after: number): Promise<string[]> {
+/**
+ * R3.13 / R3.40: the shape job's log shows a Validator verdict before the Shape comment
+ * and `shaped`. A first Shape is published when the comment is created; a rewrite
+ * (`rewrite`) when the existing comment is updated.
+ */
+async function validatorProblems(k: Kit, s: Snapshot, repo: string, n: number, after: number, rewrite = false): Promise<string[]> {
   const comment = (await k.obs.comments(repo, n)).find((x) => SHAPE_MARKER.test(markerOf(x.body) ?? ''));
   if (!comment) return [`#${n} has no marked Shape comment`];
-  const published = Math.max(time(comment.created_at), time(comment.updated_at));
+  const published = time(rewrite ? comment.updated_at : comment.created_at);
   const shapedAt = await k.labeledAt(repo, n, 'shaped', after);
   const jobs = (await k.agentJobs(s, repo, n, ['shape'])).filter((j) => j.status === 'completed' && j.conclusion === 'success' && time(j.started_at) >= after);
   const job = jobs.at(-1);
@@ -96,8 +100,11 @@ export const deliveryLifecycle: Scenario = lifecycle({
     const toggled = await k.obs.job(exec, j.wakeToggles.jobId);
     const from = j.wakeToggles.at[0] ?? 0;
     const to = toggled.completed_at ? time(toggled.completed_at) : k.now();
-    const again = k.stages(s, exec, n, AGENT_STAGES).filter((r) => time(r.created_at) >= from && time(r.created_at) <= to);
-    c.check('R4.35', again.length === 0, `while Deliver ran, the wakes started ${again.map((r) => r.stage).join(', ')}`);
+    if (to <= (j.wakeToggles.at.at(-1) ?? 0)) c.notExercised('R4.35', `deliver job ${toggled.id} completed at ${String(toggled.completed_at)}, before the wakes ended`);
+    else {
+      const again = k.stages(s, exec, n, AGENT_STAGES).filter((r) => time(r.created_at) >= from && time(r.created_at) <= to);
+      c.check('R4.35', again.length === 0, `while Deliver ran, the wakes started ${again.map((r) => r.stage).join(', ')}`);
+    }
 
     // R3.22–R3.25, R3.33: review after the required `test` completed on the reviewed head, and that head merged.
     const head = pr.head.sha;
@@ -282,8 +289,9 @@ export const shapeRewrite: Scenario = lifecycle({
     c.check('R3.40', shapes.length === 1, `${shapes.length} marked Shape comments, expected the one rewritten`);
     const shape = shapes[0];
     c.check('R3.40', !!shape && time(shape.updated_at) >= h.editedAt && /quadruple/.test(shape.body ?? ''), 'the Shape comment was not rewritten for the edited Issue (no `quadruple`)');
-    c.none('R3.13', await validatorProblems(k, s, k.exec, n, h.editedAt));
-    c.none('R3.40', (await validatorProblems(k, s, k.exec, n, h.editedAt)).map((p) => `re-Shape: ${p}`));
+    const reShape = await validatorProblems(k, s, k.exec, n, h.editedAt, true);
+    c.none('R3.13', reShape);
+    c.none('R3.40', reShape.map((p) => `re-Shape: ${p}`));
     return c.outcome(`#${n}: Deliver sent the Shape back with a reason, and the rewritten Shape passed a new Validator verdict`);
   },
 });
