@@ -1,5 +1,6 @@
 import { deepEqual, equal, match, rejects } from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { readFileSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
 import { test } from 'node:test';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -77,10 +78,15 @@ test('stop also ends what the child started (gh runs an extension as a grandchil
   const m = await r.waitFor(/grandchild (\d+)/, 5000);
   const pid = Number(m[1]);
   await r.stop();
+  // A zombie (state Z) has ended; a container's init may not reap it at once.
   const alive = () => {
     try {
       process.kill(pid, 0);
-      return true;
+    } catch {
+      return false;
+    }
+    try {
+      return !/^\d+ \(.*\) Z/.test(readFileSync(`/proc/${pid}/stat`, 'utf8'));
     } catch {
       return false;
     }
