@@ -3,7 +3,7 @@
 import { randomBytes } from 'node:crypto';
 import type { GitHub } from '../../src/host/github.ts';
 import type { Outcome, RunContext, Scenario } from '../../src/types.ts';
-import { AGENT_STAGES, issueKey, jobWindow, markerOf, selfHosted, stageRuns, time } from './analysis.ts';
+import { AGENT_STAGES, issueKey, jobWindow, markerOf, parseStageTitle, parseWakeTitle, selfHosted, stageRuns, time } from './analysis.ts';
 import type { Issue, Job, Run, Stage, Window } from './analysis.ts';
 import { Observer } from './observe.ts';
 import type { Snapshot } from './observe.ts';
@@ -273,22 +273,45 @@ export class Kit {
     return jobs.flatMap((j) => jobWindow(j, issueKey(repo, n), j.stage) ?? []);
   }
 
-  /** Whether every execution run created after `after` (except those `ignore` matches) has completed. */
-  quietAfter(s: Snapshot, after: number, ignore: (r: Run) => boolean = () => false): boolean {
-    return s.runs.every((r) => time(r.created_at) < after || r.status === 'completed' || ignore(r));
+  /** Whether every run in `scope` created after `after` has completed. Other Issues' runs never count. */
+  quietAfter(s: Snapshot, after: number, scope: (r: Run) => boolean): boolean {
+    return s.runs.every((r) => !scope(r) || time(r.created_at) < after || r.status === 'completed');
   }
 
-  /** Waits until runs woken after `after` have completed and one more snapshot shows nothing new running. */
-  async settle(desc: string, after: number, ignore?: (r: Run) => boolean): Promise<Snapshot> {
+  /**
+   * Waits until the runs in `scope` woken after `after` have completed, seen on two
+   * snapshots in a row and at least `DEADLINE.quiet` after `after`.
+   */
+  async settle(desc: string, after: number, scope: (r: Run) => boolean): Promise<Snapshot> {
     let calm = 0;
     return this.obs.until(
       `${desc}: the runs it woke to complete`,
       (s) => {
-        calm = this.quietAfter(s, after, ignore) ? calm + 1 : 0;
+        calm = this.quietAfter(s, after, scope) ? calm + 1 : 0;
         return calm >= 2 && s.at - after >= DEADLINE.quiet ? s : undefined;
       },
       DEADLINE.stage,
+      (s) => {
+        const open = s.runs.filter((r) => scope(r) && time(r.created_at) >= after && r.status !== 'completed');
+        return `still running: ${open.map((r) => `${r.display_title} (${r.status})`).join(', ') || 'nothing (waiting for the quiet period)'}`;
+      },
     );
+  }
+
+  /** The runs that belong to one Issue: its stage runs in the execution repository and its wake runs. */
+  runsOf(repo: string, n: number): (r: Run) => boolean {
+    return (r) => {
+      const st = parseStageTitle(r.display_title);
+      if (st) return r.repo === this.exec && st.repo === repo && st.issue === n;
+      const w = parseWakeTitle(r.display_title);
+      return w !== undefined && w.repo === repo && w.issue === n;
+    };
+  }
+
+  /** When a label was first added after `after`, from the Issue's timeline. */
+  async labeledAt(repo: string, n: number, label: string, after = 0): Promise<number | undefined> {
+    const ev = (await this.obs.timeline(repo, n)).find((e) => e.event === 'labeled' && e.label?.name === label && time(e.created_at) >= after);
+    return ev ? time(ev.created_at) : undefined;
   }
 
   /** A one-line state of an Issue for failure messages: labels, state and its runs. */

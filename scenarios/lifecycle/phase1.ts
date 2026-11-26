@@ -270,7 +270,7 @@ export const interruptedDeliver: Scenario = lifecycle({
         DEADLINE.stage,
         show,
       );
-      const calm = await k.settle('the review-awaited comment', waits.at);
+      const calm = await k.settle('the review-awaited comment', waits.at, k.runsOf(exec, n));
       c.check('R3.26', !k.labels(calm, exec, n).includes('pending'), 'I got pending while the merge only waited for an approving review');
       c.check('R3.25', !calm.pulls.get(exec)?.find((p) => p.number === pr.number)?.merged_at, `PR #${pr.number} merged while the approval rule was in force`);
 

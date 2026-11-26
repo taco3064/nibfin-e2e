@@ -159,3 +159,25 @@ test('protected paths: the Proposal R3.46 list and the baseline role Skill file'
   for (const p of ['.nibfin.json', '.nibfin/notes.md', '.rulesync/rules/style.md', '.github/workflows/ci.yml', 'docs/agent/deliver.md', '.github/CODEOWNERS']) equal(isProtected(p), true, p);
   for (const p of ['src/sum.js', 'docs/agent/other.md', 'sandbox/.nibfin.json.bak']) equal(isProtected(p), false, p);
 });
+
+test('settle waits only for the fixture\'s own runs; other Issues\' running work does not hold it', async () => {
+  const run = (id: number, title: string, status: string, repo = 'o/exec') => ({ id, display_title: title, status, created_at: '2026-11-26T10:01:00Z', repo, name: 'x', event: 'e', conclusion: null, head_sha: 'h' });
+  let mine = 'in_progress';
+  const f = routes({
+    ...empty,
+    'GET /repos/o/exec/actions/runs': () => ({
+      workflow_runs: [run(1, 'Nibfin · o/exec#5 · route', mine), run(2, 'Nibfin · o/exec#6 · deliver', 'in_progress'), run(3, 'Nibfin · o/exec#50 · shape', 'queued')],
+    }),
+    'GET /repos/o/peer/actions/runs': { workflow_runs: [run(4, 'Nibfin · o/exec#5 · wake', 'completed')] },
+  });
+  const c = clock();
+  const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
+  const ofFive = k.runsOf('o/exec', 5);
+  deepEqual([run(1, 'Nibfin · o/exec#5 · route', 'x'), run(2, 'Nibfin · o/exec#6 · deliver', 'x'), run(3, 'Nibfin · o/exec#50 · shape', 'x')].map(ofFive), [true, false, false]);
+  equal(ofFive(run(4, 'Nibfin · o/exec#5 · wake', 'completed', 'o/peer')), true);
+  const after = Date.parse('2026-11-26T10:00:00Z');
+  await rejects(k.settle('five', after, ofFive), /still running: Nibfin · o\/exec#5 · route \(in_progress\)/);
+  mine = 'completed';
+  const s = await k.settle('five', after, ofFive);
+  equal(s.at - after >= 5 * 60_000, true);
+});

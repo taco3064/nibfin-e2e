@@ -61,7 +61,7 @@ export const requestInfeasible = requestScenario('request-infeasible', ['R3.2', 
   filed.push(r.number);
   const n = r.number;
   const show = k.show(exec, n);
-  const paused = await k.settle('the paused request', k.now());
+  const paused = await k.settle('the paused request', k.now(), k.runsOf(exec, n));
   c.check('R4.8', k.stages(paused, exec, n, ['scope']).length === 0, 'a paused request got a scope run');
   await k.removeLabel(exec, n, 'pause');
   await k.obs.until('the request to get pending and a comment', async (s) => {
