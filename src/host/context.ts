@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { SANDBOX } from './config.ts';
 import { childEnv } from './exec.ts';
+import { createHostOperations } from './operations.ts';
 import { setVisibility } from './sandbox.ts';
 import type { HostServices } from './services.ts';
 import type { HostContext } from '../types.ts';
@@ -8,9 +9,10 @@ import type { HostContext } from '../types.ts';
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** The host as scenarios see it. */
-export function createHostContext(host: HostServices): HostContext {
+export function createHostContext(host: HostServices, platform: string = process.platform): HostContext {
   const executionDir = join(host.repoRoot, '.e2e-work', 'sandbox');
   return {
+    ...createHostOperations(host, platform),
     sandbox: { ...SANDBOX },
     executionDir,
     ghNibfin: (args) => host.exec(['gh', 'nibfin', ...args], { cwd: executionDir, ghToken: host.sandboxToken() }),
