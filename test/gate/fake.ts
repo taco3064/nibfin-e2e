@@ -165,6 +165,10 @@ export class FakeGate implements GitHub {
     return items as T[];
   }
 
+  async listByLink<T>(): Promise<T[]> {
+    throw new Error('not used by the gate');
+  }
+
   async graphql<T>(): Promise<T> {
     throw new Error('not used by the gate');
   }
