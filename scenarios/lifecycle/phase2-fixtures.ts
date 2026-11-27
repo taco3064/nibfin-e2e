@@ -1,13 +1,50 @@
 // Phase 2 scenarios with their own fixtures: routing, the peer, protected paths and fix loops.
 import { planHasNoRulesets } from '../../src/host/sandbox.ts';
 import type { Scenario } from '../../src/types.ts';
-import { AGENT_STAGES, Checks, fixPushProblems, isIssueBranch, markerOf, reasonOf, time } from './analysis.ts';
+import { AGENT_STAGES, Checks, fixPushProblems, isIssueBranch, markerOf, ranOnRunner, reasonOf, time } from './analysis.ts';
 import type { Issue, Job, Pull, Run, Stage } from './analysis.ts';
 import { DEADLINE, changeRequest, lifecycle } from './kit.ts';
 import type { Kit } from './kit.ts';
 import { PENDING_MARKER } from './marks.ts';
 import type { Snapshot } from './observe.ts';
 import { closingProblems } from './phase1.ts';
+
+/** Timeline and job timestamps have second precision; events this close count in the product's favor. */
+export const PAUSE_TOLERANCE_MS = 5_000;
+/** One `labeled`/`unlabeled` event of `pause` on the Issue's timeline. */
+export interface PauseEvent { event: 'labeled' | 'unlabeled'; actor: string; at: number }
+/** The scenario's own removal of `pause`: whether it was on just before, and the DELETE call's window. */
+export interface OwnRemoval { wasOn: boolean; before: number; after: number }
+
+/**
+ * Why M2's deliver job should not have started when it did (R4.12/R4.26), or undefined:
+ * it started while `pause` was on, or after a removal of `pause` that was not the scenario's
+ * own. The own removal is told by time and state, not by login: the Owner's token and the
+ * sandbox token may be the same account.
+ */
+export function pausedDeliverProblem(start: number, events: PauseEvent[], own: OwnRemoval, tol = PAUSE_TOLERANCE_MS): string | undefined {
+  const ev = [...events].sort((a, b) => a.at - b.at);
+  const iso = (t: number) => (Number.isNaN(t) ? 'an unknown time' : new Date(t).toISOString());
+  const ownEvent = own.wasOn ? ev.find((e) => e.event === 'unlabeled' && e.at >= own.before - tol && e.at <= own.after + tol) : undefined;
+  const listed = ev.length ? ev.map((e) => `${e.event} by ${e.actor} at ${iso(e.at)}`).join('; ') : 'none';
+  const tail = `; pause events: ${listed}; timestamps compared with a ${tol / 1000} s tolerance`;
+  const last = ev.filter((e) => e.at <= start - tol).at(-1);
+  const removedNearStart = ev.some((e) => e.event === 'unlabeled' && e.at > start - tol && e.at <= start + tol);
+  if (last?.event === 'labeled' && !removedNearStart) return `M2's deliver job started at ${iso(start)} while pause was on${tail}`;
+  // The last removal before the start that actually took pause off.
+  let on = false;
+  let lastOff: PauseEvent | undefined;
+  for (const e of ev.filter((x) => x.at <= start + tol)) {
+    if (e.event === 'labeled') on = true;
+    else if (on) {
+      on = false;
+      lastOff = e;
+    }
+  }
+  if (!lastOff || lastOff === ownEvent) return undefined;
+  const saw = own.wasOn ? 'the scenario saw pause on just before its own removal' : 'the scenario saw pause already off just before its own removal';
+  return `M2's deliver job started at ${iso(start)} after pause was removed by ${lastOff.actor} at ${iso(lastOff.at)}, not by the scenario (${saw})${tail}`;
+}
 
 export const assigneeRouting: Scenario = lifecycle({
   id: 'assignee-routing',
@@ -59,13 +96,28 @@ export const assigneeRouting: Scenario = lifecycle({
       if (time(shape.completed_at) <= reassignedAt) c.notExercised('R4.24', `shape job ${shape.id} completed before the reassignment`);
       else c.check('R4.24', shape.conclusion === 'success', `the shape job running at the reassignment concluded ${String(shape.conclusion)}`);
       await k.obs.until('`shaped`', (s) => (k.labels(s, exec, n).includes('shaped') ? true : undefined), DEADLINE.event, show);
+      // removeLabel accepts a 404, so read whether pause was on just before the removal.
+      const { data: beforeRemoval } = await k.gh.rest<Issue>('GET', `/repos/${exec}/issues/${n}`);
+      const wasOn = beforeRemoval.labels.some((l) => l.name === 'pause');
+      const removeStart = k.now();
       await k.removeLabel(exec, n, 'pause');
-      const removedAt = k.now();
-      const deliver = await k.obs.until('M2\'s deliver job to start', async (s) => (await k.agentJobs(s, exec, n, ['deliver'])).find((j) => j.status !== 'queued' && time(j.created_at ?? j.started_at) >= removedAt - 60_000), DEADLINE.stage, show);
-      const firstWithRunners = order.find((l) => l.toLowerCase() === owner.login.toLowerCase());
-      c.check('R4.20', !!firstWithRunners && deliver.labels.includes(label), `M2's deliver ran with ${deliver.labels.join(', ')}; the first Assignee with Runners in GitHub's order (${order.join(', ')}) is ${owner.login} (${label})`);
-      c.check('R4.18', deliver.labels.includes(label), `routing used ${deliver.labels.join(', ')}, not the Assignee's label ${label}`);
-      const pauses = (await k.obs.timeline(exec, n)).filter((e) => e.event === 'labeled' && e.label?.name === 'pause');
+      const removeEnd = k.now();
+      k.ctx.log(`assignee-routing: pause was ${wasOn ? 'on' : 'already off'} on #${n} just before the scenario removed it`);
+      // Whenever a Runner ran it: before or after the removal, running or completed.
+      const deliver = await k.obs.until('M2\'s deliver job to start', async (s) => (await k.agentJobs(s, exec, n, ['deliver'])).filter(ranOnRunner).sort((a, b) => time(a.started_at) - time(b.started_at))[0], DEADLINE.stage, show, {
+        gonePast: k.stageGone(exec, n, 'deliver', { jobs: false }),
+      });
+      const timeline = (await k.obs.timeline(exec, n)) as { event: string; created_at: string; label?: { name: string }; actor?: { login: string } | null }[];
+      const pauseEvents = timeline.flatMap((e): PauseEvent[] => ((e.event === 'labeled' || e.event === 'unlabeled') && e.label?.name === 'pause' ? [{ event: e.event, actor: e.actor?.login ?? 'unknown', at: time(e.created_at) }] : []));
+      const url = (deliver as { html_url?: string | null }).html_url ?? `https://github.com/${exec}/actions/runs/${deliver.run_id}/job/${deliver.id}`;
+      const paused = pausedDeliverProblem(time(deliver.started_at), pauseEvents, { wasOn, before: removeStart, after: removeEnd });
+      if (paused) c.fail('R4.26', `R4.12/R4.26: ${paused}; job ${url}`);
+      else {
+        const firstWithRunners = order.find((l) => l.toLowerCase() === owner.login.toLowerCase());
+        c.check('R4.20', !!firstWithRunners && deliver.labels.includes(label), `M2's deliver ran with ${deliver.labels.join(', ')}; the first Assignee with Runners in GitHub's order (${order.join(', ')}) is ${owner.login} (${label})`);
+        c.check('R4.18', deliver.labels.includes(label), `routing used ${deliver.labels.join(', ')}, not the Assignee's label ${label}`);
+      }
+      const pauses = timeline.filter((e) => e.event === 'labeled' && e.label?.name === 'pause');
       c.check('R4.26', pauses.length === 1, `pause was added ${pauses.length} times; expected once for ${other.login}`);
       await k.addLabels(exec, n, ['pause']);
       return c.outcome(`M1 (only ${other.login}) was left alone; M2 got one pause for ${other.login} and was delivered on ${label}`);
