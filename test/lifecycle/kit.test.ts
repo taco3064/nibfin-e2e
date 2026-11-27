@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { Kit, hostedRunProblems, lifecycle, redact, stageSeen } from '../../scenarios/lifecycle/kit.ts';
 import { Observer } from '../../scenarios/lifecycle/observe.ts';
 import { closingProblems } from '../../scenarios/lifecycle/phase1.ts';
-import { isProtected, writeConflict } from '../../scenarios/lifecycle/phase2-fixtures.ts';
+import { isProtected, peerIssueBody, writeConflict } from '../../scenarios/lifecycle/phase2-fixtures.ts';
 import { leaks, scan } from '../../scenarios/lifecycle/phase3.ts';
 import { SCOPE_ISSUES, scopeGate } from '../../scenarios/lifecycle/requests.ts';
 import { clock, context, routes } from './fake.ts';
@@ -99,6 +99,15 @@ test('the peer conflict is written while the PR is unmerged and not when it merg
   equal(await writeConflict(k, 'o/peer', 'nibfin/issue-3', true), undefined);
   equal(writes.length, 1);
   match(f.calls.find((x) => x.startsWith('GET /repos/o/peer/pulls')) ?? '', /head=o%3Anibfin%2Fissue-3/);
+});
+
+test('the peer Issue names its required final JSDoc line whatever main has', () => {
+  const body = peerIssueBody('Returns the sum of a and b.');
+  match(body, /the JSDoc line just above `export function sum` must end up exactly `\/\*\* Returns the sum of a and b\. \*\/`/);
+  match(body, /required final result whatever wording that line has on main/);
+  match(body, /Change nothing else\./);
+  equal(body.includes('Adds a and b together.'), false);
+  match(body, /_This Issue is an automated nibfin-e2e fixture\._$/);
 });
 
 test('the request gate is waiting and names the Scope Issues not delivered', async () => {

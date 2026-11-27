@@ -90,6 +90,18 @@ export async function writeConflict(k: Kit, repo: string, branch: string, observ
   return { sha, at: k.now() };
 }
 
+/**
+ * Q's body: it names the one required final JSDoc line, so a rebase over main's
+ * rewording of that line (writeConflict) has a single correct resolution.
+ */
+export function peerIssueBody(wording: string): string {
+  return [
+    `In \`src/sum.js\`, the JSDoc line just above \`export function sum\` must end up exactly \`/** ${wording} */\`.`,
+    'This is the required final result whatever wording that line has on main when Deliver finishes: it reads `/** Adds two numbers. */` today, but main may reword it meanwhile.',
+    'Change nothing else.',
+  ].join(' ') + '\n\n_This Issue is an automated nibfin-e2e fixture._';
+}
+
 export const peerDispatch: Scenario = lifecycle({
   id: 'peer-dispatch',
   concurrent: true,
@@ -105,7 +117,7 @@ export const peerDispatch: Scenario = lifecycle({
       q = await k.file(peer, {
         scenario: 'peer-dispatch',
         title: 'Reword the sum JSDoc',
-        body: `In \`src/sum.js\`, change the JSDoc line \`/** Adds two numbers. */\` to \`/** ${wording} */\`. Change nothing else.\n\n_This Issue is an automated nibfin-e2e fixture._`,
+        body: peerIssueBody(wording),
         labels: ['scope'],
         assignees: [owner.login],
       });
