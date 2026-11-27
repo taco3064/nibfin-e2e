@@ -135,9 +135,11 @@ to show nothing is left. It needs these environment variables:
   volumes (the Owner's and `e2epeer`'s) only through a helper container's stdin.
 - `E2E_PEER_GITHUB_TOKEN`: classic token (`repo`, `admin:public_key`) of the
   second GitHub account, a write collaborator on the execution sandbox. The
-  harness sends it only in its own `/user` and `/user/keys` calls and as
-  `GH_TOKEN` to `e2epeer`'s `gh`, on the first stdin line of the `sudo`
-  wrapper, never as an argument. Only the collaborator scenarios need it.
+  harness sends it only in its own `/user` and `/user/keys` calls, in its own
+  calls submitting the `review-events` PR reviews on the execution sandbox, and
+  as `GH_TOKEN` to `e2epeer`'s `gh`, on the first stdin line of the `sudo`
+  wrapper, never as an argument. Only the collaborator scenarios and
+  `review-events` need it.
 
 Commands as `e2epeer` run through `sudo -u e2epeer -H` (passwordless on hosted
 Linux runners), so they get none of the harness's environment. The harness reads

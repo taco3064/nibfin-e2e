@@ -53,7 +53,7 @@
   {"id": "R3.24", "platforms": ["linux"], "scenarios": ["delivery-lifecycle", "fix-loops"]},
   {"id": "R3.25", "platforms": ["linux"], "scenarios": ["interrupted-deliver", "delivery-lifecycle", "fix-loops", "init-settings"]},
   {"id": "R3.26", "platforms": ["linux"], "scenarios": ["interrupted-deliver"]},
-  {"id": "R3.27", "platforms": ["linux"], "scenarios": []},
+  {"id": "R3.27", "platforms": ["linux"], "scenarios": ["review-events"]},
   {"id": "R3.28", "notE2e": "說明性質，Job 帶不進 reviewer 的個人設定"},
   {"id": "R3.29", "notE2e": "網站文字"},
   {"id": "R3.30", "platforms": ["linux"], "scenarios": ["fix-loops"]},
