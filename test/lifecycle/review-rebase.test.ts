@@ -1,6 +1,6 @@
 import { deepEqual, equal, match } from 'node:assert/strict';
 import { test } from 'node:test';
-import { behindProblems, conflictProblems, mergeMethod } from '../../scenarios/lifecycle/review-rebase.ts';
+import { behindProblems, conflictProblems, mergeMethod, notExercisedWhy } from '../../scenarios/lifecycle/review-rebase.ts';
 import type { RebaseEvidence } from '../../scenarios/lifecycle/review-rebase.ts';
 
 const AT = Date.parse('2026-11-27T10:00:00Z');
@@ -14,7 +14,7 @@ const evidence = (extra: Partial<RebaseEvidence> = {}): RebaseEvidence => ({
   delivers: [{ id: 1, started_at: iso(-30) }],
   reviews: [],
   forced: [],
-  merged: { number: 8, head: 'b'.repeat(40) },
+  merged: { number: 8, head: 'b'.repeat(40), merged_at: iso(30) },
   descends: false,
   delivered: true,
   ...extra,
@@ -80,4 +80,16 @@ test('conflictProblems names a missing Deliver, force push, descent and delivery
   match(problems[1] as string, /was not force-pushed/);
   match(problems[2] as string, /does not descend from the conflicting commit/);
   match(problems[3] as string, /did not close with delivered/);
+});
+
+test('notExercisedWhy: a PR that merged before main advanced never counts', () => {
+  const early = evidence({ merged: { number: 8, head: 'b'.repeat(40), merged_at: iso(-1) }, reviews: [{ id: 3, created_at: iso(5) }] });
+  match(notExercisedWhy('behind', early) ?? '', /PR #8 merged at .* before main advanced/);
+  match(notExercisedWhy('conflict', early) ?? '', /before main advanced/);
+});
+
+test('notExercisedWhy: the behind half needs a review run after main advanced', () => {
+  match(notExercisedWhy('behind', evidence({ reviews: [{ id: 3, created_at: iso(-5) }] })) ?? '', /no review run of o\/exec#7 was created after main advanced/);
+  equal(notExercisedWhy('behind', evidence({ reviews: [{ id: 3, created_at: iso(0) }] })), undefined);
+  equal(notExercisedWhy('conflict', evidence()), undefined);
 });
