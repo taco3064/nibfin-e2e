@@ -22,13 +22,13 @@ const run = (id: number, stage: string, status: string, created: string, conclus
   head_sha: 'h',
 });
 const issue = { number: 6, title: 't', state: 'open', labels: [{ name: 'scope' }] };
-/** A self-hosted shape job of run 5 that is queued until `from`, in progress until `to`, then completed. */
-const timedJob = (now: () => number, from: number, to: number): Job => {
+/** A self-hosted job (by default job 11 of shape run 5) that is queued until `from`, in progress until `to`, then completed. */
+const timedJob = (now: () => number, from: number, to: number, ids: { id: number; run: number } = { id: 11, run: 5 }): Job => {
   const t = now() - T0;
   const status = t < from ? 'queued' : t < to ? 'in_progress' : 'completed';
   return {
-    id: 11,
-    run_id: 5,
+    id: ids.id,
+    run_id: ids.run,
     name: 'stage',
     status,
     conclusion: status === 'completed' ? 'success' : null,
@@ -92,4 +92,43 @@ test('a shape run that ended without running its job is left for a newer shape r
   const j = await stageJobRunning(k, 6, 'shape', { desc: 'P\'s shape job to run', deadlineMs: DEADLINE.stage });
   deepEqual([j.id, j.run.id], [12, 8]);
   equal(direct(f.calls, 5).length, 1, 'the cancelled run is read once');
+});
+
+// A's deliver wait in the delivery journey uses the same direct reads (Issue #567, Proposal R4.35).
+test('a deliver job in progress for less than one snapshot interval is found by A\'s deliver wait', async () => {
+  const c = clock(T0);
+  const f = routes({
+    ...base,
+    'GET /repos/o/exec/actions/runs': { workflow_runs: [run(5, 'shape', 'completed', iso(0)), run(9, 'deliver', 'in_progress', iso(30_000))] },
+    'GET /repos/o/exec/actions/runs/9/jobs': () => ({ jobs: [timedJob(c.now, 70_000, 100_000, { id: 21, run: 9 })] }),
+    'GET /repos/o/exec/issues': [issue],
+  });
+  const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
+  const j = await stageJobRunning(k, 6, 'deliver', { desc: 'A\'s deliver job to run', deadlineMs: DEADLINE.delivery, show: k.show('o/exec', 6), who: 'A' });
+  deepEqual([j.id, j.status, j.stage, j.run.id], [21, 'in_progress', 'deliver', 9]);
+  equal(c.now() - T0 < 100_000, true, 'found while it was running');
+  equal(direct(f.calls, 9).length >= 7, true, 'read directly every 10 s');
+  equal(direct(f.calls, 5).length, 0, 'other stages are not read');
+});
+
+test('a deliver job that completed before any read saw it running ends A\'s deliver wait at once with its own reason', async () => {
+  const c = clock(T0);
+  // Deliver completes and Review follows, which alone would end the wait through stageGone.
+  const runs = () => [run(9, 'deliver', c.now() - T0 < 67_000 ? 'in_progress' : 'completed', iso(30_000)), ...(c.now() - T0 >= 66_000 ? [run(10, 'review', 'in_progress', iso(66_000))] : [])];
+  const f = routes({
+    ...base,
+    'GET /repos/o/exec/actions/runs': () => ({ workflow_runs: runs() }),
+    'GET /repos/o/exec/actions/runs/9/jobs': () => ({ jobs: [timedJob(c.now, 62_000, 65_000, { id: 21, run: 9 })] }),
+    'GET /repos/o/exec/actions/runs/10/jobs': { jobs: [] },
+    'GET /repos/o/exec/issues': [issue],
+  });
+  const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
+  await rejects(
+    stageJobRunning(k, 6, 'deliver', { desc: 'A\'s deliver job to run', deadlineMs: DEADLINE.delivery, show: k.show('o/exec', 6), who: 'A' }),
+    new RegExp(
+      `^Error: gave up waiting for A's deliver job to run: A's deliver job 21 \\(run 9\\) completed \\(success\\) before the wait saw it running: started ${iso(62_000)}, completed ${iso(65_000)}; the wait last read it at ${iso(60_000)} \\(queued\\); observed: o/exec#6 open`,
+    ),
+  );
+  equal(c.now() - T0 < 2 * 60_000, true, 'it ended on the read that saw it completed');
+  equal(c.now() - T0 < STALL, true);
 });

@@ -156,13 +156,8 @@ async function driveJourney(k: Kit, filed: number[]): Promise<Journey> {
   const aScopedAt = k.now();
 
   // R4.35: two wakes while A's Deliver runs.
-  const deliverJob = await k.obs.until(
-    'A\'s deliver job to run',
-    async (s) => (await k.agentJobs(s, exec, a.number, ['deliver'])).find((j) => j.status === 'in_progress'),
-    DEADLINE.delivery,
-    k.show(exec, a.number),
-    { gonePast: k.stageGone(exec, a.number, 'deliver') },
-  );
+  // A's deliver jobs are read directly: a short Deliver can run between two snapshots (Issue #567).
+  const deliverJob = await stageJobRunning(k, a.number, 'deliver', { desc: 'A\'s deliver job to run', deadlineMs: DEADLINE.delivery, show: k.show(exec, a.number), who: 'A' });
   const toggles: number[] = [];
   for (let i = 0; i < 2; i++) {
     toggles.push(k.now());
