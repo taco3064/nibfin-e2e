@@ -169,6 +169,7 @@ jobs:
         env:
           E2E_SANDBOX_TOKEN: ${{ secrets.E2E_SANDBOX_TOKEN }}
           E2E_CLAUDE_TOKEN: ${{ secrets.E2E_CLAUDE_TOKEN }}
+          E2E_PEER_GITHUB_TOKEN: ${{ secrets.E2E_PEER_GITHUB_TOKEN }}
           COMMIT: ${{ needs.select.outputs.commit }}
         run: |
           set -uo pipefail
