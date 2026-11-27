@@ -318,7 +318,7 @@ export class Observer {
     return this.memo(`checks ${repo} ${sha}`, () => this.gh.list(`/repos/${repo}/commits/${sha}/check-runs`, 'check_runs'));
   }
 
-  timeline(repo: string, n: number): Promise<{ event: string; created_at: string; label?: { name: string } }[]> {
+  timeline(repo: string, n: number): Promise<{ event: string; created_at: string; label?: { name: string }; actor?: { login: string } | null }[]> {
     return this.memo(`timeline ${repo} ${n}`, () => this.gh.list(`/repos/${repo}/issues/${n}/timeline`));
   }
 
