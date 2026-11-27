@@ -65,7 +65,7 @@ test('stranded consoles: orphaned new consoles and new podman.exe are flagged', 
 });
 
 test('start task: the task that runs podman machine start', () => {
-  const d = (execute: string, args: string) => ({ actions: [{ execute, arguments: args }], triggers: [] });
+  const d = (execute: string, args: string) => ({ actions: [{ execute, arguments: args }], triggers: [], repetitions: [] });
   const picked = startTask([
     { t: '\\Other\\x', d: d('C:\\x.exe', 'machine start') },
     { t: '\\Nibfin\\start', d: d('C:\\Program Files\\RedHat\\Podman\\podman.exe', 'machine start') },
