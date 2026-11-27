@@ -19,6 +19,8 @@ export interface FakeRepo {
   /** `'upgrade'` answers the rules API with GitHub's 403 for free private repositories. */
   rulesets: { id: number; name: string; rules?: { type: string }[] }[] | 'upgrade';
   tags: string[];
+  /** Classic branch protection on main; unset means not protected, `'upgrade'` answers with GitHub's 403 for free private repositories. */
+  protection?: Record<string, unknown> | 'upgrade';
   /** Paths present on main (for the init read-back). */
   mainFiles: Set<string>;
 }
@@ -110,6 +112,13 @@ export class FakeGitHub {
       if (!sha) return { status: 404, data: { message: 'Branch not found' } };
       return ok({ commit: { sha, commit: { tree: { sha: repo.commits.get(sha)?.tree } } } });
     }
+    if (rest === '/branches/main/protection') {
+      if (repo.protection === 'upgrade') return { status: 403, data: { message: 'Upgrade to GitHub Pro or make this repository public to enable this feature.' } };
+      if (method === 'PUT') return ok((repo.protection = { ...body }));
+      if (repo.protection === undefined) return { status: 404, data: { message: 'Branch not protected' } };
+      if (method === 'DELETE') return (delete repo.protection, { status: 204, data: undefined });
+      return ok(repo.protection);
+    }
     if (rest === '/branches') return ok([...repo.branches.keys()].map((name) => ({ name })));
     if (rest === '/issues' && method === 'POST') {
       const number = 1000 + ++this.n;
@@ -169,6 +178,7 @@ export class FakeGitHub {
       if (method === 'DELETE') return repo.branches.delete(name) ? { status: 204, data: undefined } : { status: 422, data: { message: 'Reference does not exist' } };
       const target = repo.commits.get(String(body?.sha));
       const pr = Array.isArray(repo.rulesets) && repo.rulesets.find((r) => r.rules?.some((rule) => rule.type === 'pull_request'));
+      if (name === 'main' && repo.protection !== undefined && repo.protection !== 'upgrade') return { status: 422, data: { message: 'Protected branch update failed for refs/heads/main.' } };
       if (name === 'main' && pr) return { status: 422, data: { message: `Repository rule violations found: changes must be made through a pull request (${pr.name})` } };
       if (body?.force !== false || !target?.parents.includes(repo.branches.get(name) ?? '')) return { status: 422, data: { message: 'Update is not a fast forward' } };
       repo.branches.set(name, String(body?.sha));

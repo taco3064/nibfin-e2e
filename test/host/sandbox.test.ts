@@ -77,6 +77,38 @@ test('only the "Upgrade to GitHub Pro" 403 means a plan without rulesets', () =>
   equal(planHasNoRulesets(''), false);
 });
 
+test('a public sandbox with branch protection on main is reset before the template commit and reads back clean', async () => {
+  const { fake, repo, deps } = setup();
+  repo.protection = { required_status_checks: { strict: true, contexts: ['x'] }, required_linear_history: { enabled: true } };
+  repo.commits.set('c0', { tree: 'old', parents: [] });
+  deepEqual(await resetSandbox(deps, 'o/exec', 'public'), []);
+  equal(repo.protection, undefined);
+  const del = fake.writes.indexOf('DELETE /repos/o/exec/branches/main/protection');
+  const commit = fake.writes.indexOf('PATCH /repos/o/exec/git/refs/heads/main');
+  equal(del >= 0 && commit > del, true, fake.writes.join(', '));
+});
+
+test('a private peer whose branch protection answers "Upgrade to GitHub Pro" gets no write and reads back clean', async () => {
+  const { fake, repo, deps } = setup('private');
+  repo.rulesets = 'upgrade';
+  repo.protection = 'upgrade';
+  deepEqual(await resetSandbox(deps, 'o/exec', 'private'), []);
+  deepEqual(fake.writes, []);
+});
+
+test('a branch protection DELETE that does not stick is reported by the read-back', async () => {
+  const { fake, repo, deps } = setup();
+  repo.protection = { required_linear_history: { enabled: true } };
+  fake.failures.set('DELETE /repos/o/exec/branches/main/protection', 204);
+  deepEqual(await resetSandbox(deps, 'o/exec', 'public'), ['o/exec: branch main has branch protection']);
+});
+
+test('any other 403 on branch protection fails with GitHub\'s message', async () => {
+  const { fake, deps } = setup();
+  fake.failures.set('GET /repos/o/exec/branches/main/protection', 403);
+  await rejects(resetSandbox(deps, 'o/exec', 'public'), /branches\/main\/protection returned 403: refused by fake/);
+});
+
 test('a write that does not stick is reported by the read-back', async () => {
   const { fake, repo, deps } = setup();
   repo.labels.push('scope');
