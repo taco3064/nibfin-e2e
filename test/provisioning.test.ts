@@ -9,7 +9,8 @@ import type { Exec } from '../src/host/exec.ts';
 import { createGitHub } from '../src/host/github.ts';
 import { readTemplate, treeSha } from '../src/host/sandbox.ts';
 import type { HostServices } from '../src/host/services.ts';
-import { claudeRunnersLeft, createProvisioning, readPeriodicBaseline } from '../src/provisioning.ts';
+import { MAX_REASON } from '../src/gate/file.ts';
+import { OUTPUT_BUDGET, claudeRunnersLeft, createProvisioning, outputOf, readPeriodicBaseline } from '../src/provisioning.ts';
 import type { Platform, RunContext, StepOutcome } from '../src/types.ts';
 import { FakeGitHub, cleanRepo, fakeExec, fakeStart } from './host/fakes.ts';
 
@@ -171,6 +172,56 @@ test('nibfin: a failed runner add keeps its output in the facts, and teardown st
   deepEqual(calls.at(-1)?.argv.slice(2, 4), ['runner', 'remove']);
 });
 
+
+test('nibfin: a failed runner add with progress on stderr and the error on stdout keeps both in the reason (R1.14)', async () => {
+  const { exec } = fakeExec((argv) =>
+    argv[2] === 'runner' && argv[3] === 'add'
+      ? { code: 1, stderr: 'pulling image\nstarting podman machine', stdout: 'runner_install_failed: configure claude-1: config.sh: registration token expired' }
+      : undefined,
+  );
+  const out = await harness({ exec }).runStep('nibfin');
+  equal(out.status, 'failed');
+  match(out.reason, /runner add claude --count 2 --yes exited 1: stderr: pulling image\nstarting podman machine\nstdout: runner_install_failed: configure claude-1: config\.sh: registration token expired$/);
+});
+
+test('outputOf: one stream alone is unlabelled; neither gives an empty string', () => {
+  equal(outputOf({ code: 1, stdout: '', stderr: ' no podman machine exists\n' }), 'no podman machine exists');
+  equal(outputOf({ code: 1, stdout: 'only stdout', stderr: '  ' }), 'only stdout');
+  equal(outputOf({ code: 1, stdout: ' \n', stderr: '' }), '');
+  equal(outputOf({ code: 1, stdout: 'a', stderr: 'b' }), 'stderr: b\nstdout: a');
+});
+
+test('outputOf: a long stream keeps its end within the budget and never pushes out the other one', () => {
+  equal(OUTPUT_BUDGET < MAX_REASON, true);
+  const long = 'FIRST' + 'x'.repeat(20_000) + 'LAST error line';
+  for (const r of [
+    { code: 1, stderr: long, stdout: 'short stdout' },
+    { code: 1, stderr: 'short stderr', stdout: long },
+  ]) {
+    const text = outputOf(r);
+    equal(text.length <= OUTPUT_BUDGET, true, `${text.length} > ${OUTPUT_BUDGET}`);
+    equal(text.length, OUTPUT_BUDGET);
+    match(text, /short (stderr|stdout)/);
+    match(text, /…x+LAST error line/);
+    equal(text.includes('FIRST'), false);
+  }
+  match(outputOf({ code: 1, stderr: 'short stderr', stdout: long }), /^stderr: short stderr\nstdout: …x+LAST error line$/);
+
+  const alone = outputOf({ code: 1, stderr: long, stdout: '' });
+  equal(alone.length, OUTPUT_BUDGET);
+  match(alone, /^…x+LAST error line$/);
+
+  const both = outputOf({ code: 1, stderr: 'A'.repeat(9000) + 'stderr end', stdout: 'B'.repeat(9000) + 'stdout end' });
+  equal(both.length <= OUTPUT_BUDGET, true);
+  const [err = '', out = ''] = both.split('\n');
+  match(err, /^stderr: …A+stderr end$/);
+  match(out, /^stdout: …B+stdout end$/);
+  equal(Math.abs(err.length - out.length) <= 1, true, 'each stream gets half');
+
+  // A reason with the longest step and command prefixes still fits, so cap keeps the end.
+  const reason = `provisioning step nibfin failed: gh nibfin init -R taco3064/nibfin-e2e-sandbox-peer --yes exited 1: ${both}`;
+  equal(reason.length <= MAX_REASON, true);
+});
 test('claude-login: the token reaches the helper only on stdin; a new file is 0600 for the host user', async () => {
   let written = '';
   const { exec, calls } = fakeExec((argv, o) => {
