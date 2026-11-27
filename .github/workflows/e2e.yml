@@ -22,7 +22,7 @@ on:
         description: gh-nibfin branch, tag or commit to build
         required: false
         default: main
-  # issue-delivered: sent by nibfin-e2e-notify.yml in nibfin-core and gh-nibfin
+  # issue-delivered: sent by nibfin-e2e-notify.yml in nibfin-core, gh-nibfin and this repository
   # (client_payload: repository, issue). proposal-updated: sent by the Notion relay
   # in relay/ (client_payload: page_id, block_ids, timestamp).
   repository_dispatch:
@@ -106,7 +106,7 @@ jobs:
           set -uo pipefail
           args=()
           if [[ "$EVENT" == repository_dispatch ]]; then
-            [[ "$DELIVERED_REPO" =~ ^taco3064/(nibfin-core|gh-nibfin)$ && "$DELIVERED_ISSUE" =~ ^[0-9]+$ ]] \
+            [[ "$DELIVERED_REPO" =~ ^taco3064/(nibfin-core|gh-nibfin|nibfin-e2e)$ && "$DELIVERED_ISSUE" =~ ^[0-9]+$ ]] \
               || { echo "::error::invalid issue-delivered payload"; exit 2; }
             args=(--delivered "$DELIVERED_REPO#$DELIVERED_ISSUE")
           else
