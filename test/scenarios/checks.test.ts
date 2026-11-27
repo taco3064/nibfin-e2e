@@ -11,10 +11,13 @@ import {
   fieldsFromAriaSnapshot,
   hasCount,
   intervalMatches,
+  issueHeading,
   liveLeaks,
+  noTrackIssueMessage,
   localeProblems,
   parseJobStarts,
   parseSessionUrl,
+  pickTrackIssue,
   lightProblem,
   stateOf,
   statusValue,
@@ -28,6 +31,7 @@ import {
   startsInWindow,
   workflowTriggers,
   TOKEN_PATTERN,
+  trackProblem,
   updateMarkerState,
 } from '../../scenarios/dashboard/checks.ts';
 
@@ -305,4 +309,61 @@ test('summary tile layouts give each count its own word (R9.1)', () => {
   ok(hasCount(runners));
   ok(!hasCount('Reading the host… 3.1 GiB #12 taco3064'));
   ok(!hasCount(''));
+});
+
+test('the Live R9.2 check picks a staged Issue that is open on GitHub and in the snapshot', () => {
+  const i = (number: number, labels: string[]) => ({ number, title: `Issue ${number}`, labels });
+  const repos = [
+    { repo: 'nibfin-core', issues: [i(5, ['request']), i(6, [])], live: [5, 6] },
+    { repo: 'gh-nibfin', issues: [i(9, ['scope', 'shaped']), i(3, ['scope'])], live: [3, 9] },
+    { repo: 'nibfin-e2e', issues: [i(1, ['scope'])], live: [1] },
+  ];
+  deepEqual(pickTrackIssue(repos), { repo: 'gh-nibfin', issue: i(3, ['scope']), stage: 'Shape' });
+  deepEqual(pickTrackIssue(repos, 'nibfin-e2e'), { repo: 'nibfin-e2e', issue: i(1, ['scope']), stage: 'Shape' });
+  // A staged Issue beats request and unlabeled ones even in the shown repository.
+  equal(pickTrackIssue(repos, 'nibfin-core')?.issue.number, 3);
+  // Issues missing from the snapshot are ignored; request beats unlabeled.
+  const partial = [
+    { repo: 'nibfin-core', issues: [i(6, []), i(5, ['request'])], live: [5, 6] },
+    { repo: 'gh-nibfin', issues: [i(3, ['scope'])], live: [] },
+  ];
+  deepEqual(pickTrackIssue(partial), { repo: 'nibfin-core', issue: i(5, ['request']), stage: undefined });
+  equal(pickTrackIssue([{ repo: 'nibfin-core', issues: [i(6, [])], live: [6] }])?.issue.number, 6);
+  equal(pickTrackIssue([{ repo: 'nibfin-core', issues: [], live: [] }, { repo: 'gh-nibfin', issues: [], live: [] }]), undefined);
+});
+
+test('the no-Issue R9.2 failure names it could not be checked and lists the counts', () => {
+  equal(
+    noTrackIssueMessage([
+      { repo: 'nibfin-core', open: 0 },
+      { repo: 'gh-nibfin', open: 0 },
+      { repo: 'nibfin-e2e', open: 0 },
+    ]),
+    'R9.2: could not be checked: no open Issue in nibfin-core, gh-nibfin or nibfin-e2e (open Issues: nibfin-core 0, gh-nibfin 0, nibfin-e2e 0)',
+  );
+});
+
+test("an Issue heading matches the Issue's own heading only", () => {
+  const h = issueHeading(12, 'Fix it');
+  ok(h.test('#12 Fix it (opens on GitHub in a new tab)'));
+  ok(h.test('#12 Fix it'));
+  ok(!h.test('nibfin-e2e#12 Fix it (opens in a new tab)'));
+  ok(!h.test('#123 Fix it (opens on GitHub in a new tab)'));
+  ok(!h.test('#12 Fix it later (opens on GitHub in a new tab)'));
+  ok(!h.test('#12 fix it'));
+  const r = issueHeading(7, 'Check (a) [b]+ $x?');
+  ok(r.test('#7 Check (a) [b]+ $x? (opens on GitHub in a new tab)'));
+  ok(!r.test('#7 Check a b $x'));
+  ok(issueHeading(4, 'Two  spaces').test('#4 Two spaces (opens on GitHub in a new tab)'));
+});
+
+test('a stage track needs Shape, Deliver and Done and the label-given current step', () => {
+  const steps = ['Scope (completed)', 'Shape (current)', 'Deliver', 'Done'];
+  equal(trackProblem(steps, 'Shape (current)', 'Shape'), undefined);
+  equal(trackProblem(['Shape', 'Deliver', 'Done'], 'Shape', 'Shape'), undefined);
+  ok(trackProblem(['Scope', 'Shape', 'Done'], 'Shape', 'Shape')?.includes('no Deliver step'));
+  ok(trackProblem(steps, 'Shape (current)', 'Deliver')?.includes('labels give Deliver'));
+  ok(trackProblem(steps, undefined, 'Done')?.includes('current step none'));
+  equal(trackProblem(steps, undefined, undefined), undefined);
+  equal(trackProblem(steps, 'Scope (current)', undefined), undefined);
 });

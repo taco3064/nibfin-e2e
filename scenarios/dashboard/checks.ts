@@ -161,6 +161,63 @@ export function stageOf(labels: string[]): 'Shape' | 'Deliver' | 'Done' | undefi
   return undefined;
 }
 
+/** One repository's open Issues from GitHub and the open numbers its Live snapshot holds. */
+export interface TrackRepo {
+  repo: string;
+  issues: IssueState[];
+  live: number[];
+}
+
+export interface TrackPick {
+  repo: string;
+  issue: IssueState;
+  stage: ReturnType<typeof stageOf>;
+}
+
+/**
+ * The Issue whose stage track the Live page check reads (Proposal R9.2): open on GitHub
+ * and in the snapshot; a label-given stage first, then `request`, then any other. Ties
+ * go to the shown repository, then the given repository order, then the lowest number.
+ */
+export function pickTrackIssue(repos: TrackRepo[], shown?: string): TrackPick | undefined {
+  const rank = (labels: string[]) => (stageOf(labels) ? 0 : labels.includes('request') ? 1 : 2);
+  const candidates = repos.flatMap((r, order) =>
+    r.issues.filter((i) => r.live.includes(i.number)).map((issue) => ({ repo: r.repo, issue, key: [rank(issue.labels), r.repo === shown ? 0 : 1, order, issue.number] })),
+  );
+  candidates.sort((a, b) => {
+    for (let k = 0; k < a.key.length; k++) if (a.key[k] !== b.key[k]) return (a.key[k] as number) - (b.key[k] as number);
+    return 0;
+  });
+  const best = candidates[0];
+  return best && { repo: best.repo, issue: best.issue, stage: stageOf(best.issue.labels) };
+}
+
+/** The failure when no Live repository has an open Issue to check R9.2 on. */
+export function noTrackIssueMessage(counts: { repo: string; open: number }[]): string {
+  const names = counts.map((c) => c.repo);
+  const list = names.length > 1 ? `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}` : (names[0] ?? 'any repository');
+  return `R9.2: could not be checked: no open Issue in ${list} (open Issues: ${counts.map((c) => `${c.repo} ${c.open}`).join(', ')})`;
+}
+
+const reEscape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * The accessible name of an Issue's own heading, `#<number> <title>` with its "(opens on GitHub …)"
+ * note; not a blocker's `<repo>#<number> …`, another number, or a longer title.
+ */
+export function issueHeading(number: number, title: string): RegExp {
+  const words = title.trim().split(/\s+/).map(reEscape).join('\\s+');
+  return new RegExp(`^#${number}\\s+${words}(?:\\s+\\(opens\\b|\\s*$)`);
+}
+
+/** What is wrong with a stage track: its step texts and the current step against the label-given stage. */
+export function trackProblem(steps: string[], current: string | undefined, want: string | undefined): string | undefined {
+  const missing = ['Shape', 'Deliver', 'Done'].filter((s) => !steps.some((t) => new RegExp(`\\b${s}\\b`, 'i').test(t)));
+  if (missing.length) return `no ${missing.join(', ')} step among [${steps.map((s) => s.trim()).join(' | ')}]`;
+  if (want && !(current && new RegExp(`\\b${want}\\b`, 'i').test(current))) return `current step ${current === undefined ? 'none' : `"${current.trim()}"`}, labels give ${want}`;
+  return undefined;
+}
+
 // ---- Command schema -------------------------------------------------------------
 
 export interface SchemaInput {
