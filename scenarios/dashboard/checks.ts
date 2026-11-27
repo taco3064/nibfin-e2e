@@ -580,6 +580,23 @@ export function classifyUpdateMarker(texts: string[]): UpdateMarker {
   return live ? (manual ? 'both' : 'live') : manual ? 'manual' : 'neither';
 }
 
+/** Page wording for a view whose first read has not finished, matched anywhere (Proposal R9.34). */
+export const NO_DATA_YET = /\bno data yet\b/i;
+/** Header wording while a read is in progress, matched against one element's whole text. */
+export const REFRESHING = /^refreshing(…|\.\.\.)?$/i;
+
+/**
+ * A view's update marker (Proposal R9.8), or `loading` while the view visibly has not
+ * finished its first read: no marker, and the page says "No data yet" or a header element
+ * says only "Refreshing…". A view that shows a marker is never `loading`.
+ */
+export function updateMarkerState(headerTexts: string[], pageText: string): UpdateMarker | 'loading' {
+  const kind = classifyUpdateMarker(headerTexts);
+  if (kind !== 'neither') return kind;
+  const refreshing = headerTexts.some((t) => REFRESHING.test(t.replace(/\s+/g, ' ').trim()));
+  return refreshing || NO_DATA_YET.test(pageText) ? 'loading' : kind;
+}
+
 // ---- Summary tile counts (Proposal R9.1) ----------------------------------------
 
 /**

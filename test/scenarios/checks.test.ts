@@ -28,6 +28,7 @@ import {
   startsInWindow,
   workflowTriggers,
   TOKEN_PATTERN,
+  updateMarkerState,
 } from '../../scenarios/dashboard/checks.ts';
 
 test('the session URL needs the proof only in the fragment, and reasons never carry it', () => {
@@ -247,6 +248,31 @@ test('a view header marks Live or manual refresh only in the marker wording; con
   equal(classifyUpdateMarker([]), 'neither');
   equal(classifyUpdateMarker(['']), 'neither');
   equal(classifyUpdateMarker(['Live', 'Updates on Refresh']), 'both');
+});
+
+test('a view still on its first read is loading, not an R9.8 marker failure; once loaded the marker rule applies (R9.8, R9.34)', () => {
+  const controls = ['Me', 'Repo', 'Runner'];
+  const loaded = 'Me Repo Runner Refresh Open Issues 3 owner/repo#1 Add login';
+  // loading
+  equal(updateMarkerState(['Refreshing…'], 'No data yet Refreshing…'), 'loading');
+  equal(updateMarkerState(['Refreshing...'], ''), 'loading');
+  equal(updateMarkerState([...controls, 'Refresh'], 'Me Repo Runner Refresh No data yet'), 'loading');
+  equal(updateMarkerState([], 'No data yet'), 'loading');
+  equal(updateMarkerState([...controls, 'Refreshing…'], 'Me Repo Runner Refreshing…'), 'loading');
+  // loaded-Live, even with a stray "No data yet" somewhere on the page
+  equal(updateMarkerState(['Live'], loaded), 'live');
+  equal(updateMarkerState([...controls, 'Live'], 'No data yet Live'), 'live');
+  equal(updateMarkerState(['Live', 'Refreshing…'], loaded), 'live');
+  // loaded-manual
+  equal(updateMarkerState(['Updates on Refresh'], loaded), 'manual');
+  equal(updateMarkerState(['Live updates off'], loaded), 'manual');
+  // both markers
+  equal(updateMarkerState(['Live', 'Updates on Refresh'], loaded), 'both');
+  equal(updateMarkerState(['Live', 'Updates on Refresh'], 'No data yet'), 'both');
+  // neither marker after loading
+  equal(updateMarkerState([...controls, 'Refresh'], loaded), 'neither');
+  equal(updateMarkerState([], ''), 'neither');
+  equal(updateMarkerState(['Refreshing data for owner/repo'], loaded), 'neither');
 });
 
 test('a summary count is the standalone number next to its word, never a login or a reference (R9.1)', () => {
