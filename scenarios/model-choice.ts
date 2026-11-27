@@ -60,7 +60,7 @@ export function modelChoice(kitFor: KitFor): Scenario {
         await restart(kit, SLOT);
 
         const run = (repo: string) =>
-          runFirstJob(kit, repo, { title: 'e2e model choice: add double(n)', file: `model-choice-${repo.split('/')[1]}`, deadlineMs: DEADLINE.shape, stage: 'Shape', pause: true, onOpen: (n) => opened.push([repo, n]) });
+          runFirstJob(kit, repo, { title: 'e2e model choice: add double(n)', file: `model-choice-${repo.split('/')[1]}`, deadlineMs: DEADLINE.shape, stage: 'Shape', pauseWhenShaped: true, onOpen: (n) => opened.push([repo, n]) });
         // Both Jobs are awaited, also when one fails, so neither runs on while the Runner is restored.
         const settled = await Promise.allSettled([run(execution), run(peer)]);
         const failedRuns = settled.flatMap((s) => (s.status === 'rejected' ? [message(s.reason)] : []));
