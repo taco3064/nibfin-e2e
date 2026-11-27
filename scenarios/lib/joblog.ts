@@ -84,9 +84,22 @@ export function initEvents(log: string): InitEvent[] {
   return out;
 }
 
-/** The image reference the generated workflow prints (`Nibfin image: <ref>`). */
+/** A printed `Nibfin image:` line naming a digest reference; an echoed script line (`$IMAGE_REF"`) never matches. */
+const PRINTED_IMAGE = /Nibfin image: ([A-Za-z0-9][\w.\-/:]*@sha256:[0-9a-f]{64})(?=\s|$)/;
+
+/**
+ * The image reference the generated workflow prints (`Nibfin image: <image>@sha256:<64 hex>`).
+ * A GitHub Job log shows each step's script, with colour codes, before the step runs, so the
+ * echoed `echo "Nibfin image: $IMAGE_REF"` line is skipped: only a printed digest reference counts.
+ * ANSI codes and a timestamp or BOM prefix do not stop a match.
+ */
 export function imageLine(log: string): string | undefined {
-  return /Nibfin image: (\S+)/.exec(log)?.[1];
+  for (const line of log.split(/\r?\n/)) {
+    // eslint-disable-next-line no-control-regex -- ANSI escape sequences are control characters
+    const m = PRINTED_IMAGE.exec(line.replace(/\x1b\[[0-9;]*[A-Za-z]/g, ''));
+    if (m) return m[1];
+  }
+  return undefined;
 }
 
 /** Output an image build would print; the host must never build (Proposal R8.2). */
