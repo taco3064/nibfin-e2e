@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { createScenarios } from '../scenarios/index.ts';
+import { createKit } from '../scenarios/lib/kit.ts';
 import { lifecycleScenarios } from '../scenarios/lifecycle/index.ts';
 import { createHostContext } from './host/context.ts';
 import { createServices } from './host/services.ts';
@@ -12,6 +13,7 @@ import { dashboardUpdates } from '../scenarios/dashboard/updates.ts';
 import { dashboardViews } from '../scenarios/dashboard/views.ts';
 import { dashboard } from '../scenarios/management/dashboard.ts';
 import { failurePending } from '../scenarios/management/failure-pending.ts';
+import { hostRequirements } from '../scenarios/management/host-requirements.ts';
 import { extensionReleases, imageDigest } from '../scenarios/management/image-release.ts';
 import { initFiles } from '../scenarios/management/init-files.ts';
 import { initSettings } from '../scenarios/management/init-settings.ts';
@@ -40,6 +42,8 @@ const services = createServices(fileURLToPath(new URL('..', import.meta.url)), (
 // volume, runs last.
 export const scenarios: Scenario[] = [
   runnerAddSetup,
+  // Right after runner-add-setup: only this host's Runners are registered and nothing has changed them yet.
+  hostRequirements((ctx) => createKit(services, ctx)),
   initSettings,
   initFiles,
   imageDigest,
