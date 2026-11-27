@@ -85,17 +85,13 @@ export const loginExpiry: Scenario = lifecycle({
       const next = await k.obs.until('the next agent stage run', (s) => k.stages(s, exec, n, AGENT_STAGES).find((r) => time(r.created_at) >= woke), DEADLINE.stage, show);
       c.check('R6.13', next.stage === 'shape', `after re-login the first agent stage run is ${next.stage}, expected the failed stage shape`);
       c.check('R3.43', next.stage === 'shape', `removing pending (a legal event) led to ${next.stage}, not a redo of shape`);
-      await k.obs.until(
-        'the redone shape job to start',
-        async (s) => (await k.agentJobs(s, exec, n, ['shape'])).find((j) => j.run.id === next.id && j.status !== 'queued'),
-        DEADLINE.stage,
-        show,
-        { gonePast: k.stageGone(exec, n, 'shape', { since: woke - 60_000 }) },
-      );
-      await k.addLabels(exec, n, ['pause']);
-      const done = await k.obs.until('the redone shape run to complete', (s) => s.runs.find((r) => r.id === next.id && r.status === 'completed'), DEADLINE.stage, show);
+      // No `pause` until `shaped`: Core reads the Issue when it starts and again before it
+      // publishes, and a paused Issue is not published (Proposal R4.12, R4.35).
+      const gone = k.stageGone(exec, n, 'shape', { since: woke - 60_000, publishes: 'shaped' });
+      const done = await k.obs.until('the redone shape run to complete', (s) => s.runs.find((r) => r.id === next.id && r.status === 'completed'), DEADLINE.stage, show, { gonePast: gone });
       c.check('R1.12', done.conclusion === 'success', `the redone shape run concluded ${String(done.conclusion)}`);
-      await k.obs.until('`shaped`', (s) => (k.labels(s, exec, n).includes('shaped') ? true : undefined), DEADLINE.event, show);
+      await k.obs.until('`shaped`', (s) => (k.labels(s, exec, n).includes('shaped') ? true : undefined), DEADLINE.event, show, { gonePast: gone });
+      await k.addLabels(exec, n, ['pause']);
       const comments = await k.obs.comments(exec, n);
       const shapes = comments.filter((x) => SHAPE_MARKER.test(markerOf(x.body) ?? ''));
       c.check('R3.42', shapes.length === 1, `#${n} has ${shapes.length} marked Shape comments, expected exactly one`);
