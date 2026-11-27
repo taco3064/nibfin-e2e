@@ -109,9 +109,10 @@ export const failurePending: Scenario = {
           (s) => s.record !== undefined,
           { what: `a resolution record on #${n}`, deadlineMs: 15 * 60_000, signal: ctx.signal, intervalMs: POLL_MS },
         );
-      } catch (error) {
+      } catch {
+        // waitFor throws only on its deadline or an abort; its message quotes raw comment text, so it is not reported.
         ctx.signal.throwIfAborted();
-        c.fail('R4.40', `no resolution record on #${n} within 15 min after pending was added at ${since}; marker keys seen after it: ${keys.join(', ') || 'none'} (${message(error)})`);
+        c.fail('R4.40', `no resolution record on #${n} within 15 min after pending was added at ${since}; marker keys seen after it: ${keys.join(', ') || 'none'}`);
         return undefined;
       }
       const r = seen.record as ResolutionRecord;
