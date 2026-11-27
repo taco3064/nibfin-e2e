@@ -24,7 +24,6 @@ import { runnerRemove } from '../scenarios/management/runner-remove.ts';
 import { statusViews } from '../scenarios/management/status-views.ts';
 import { upgrade } from '../scenarios/management/upgrade.ts';
 import { imageSwitch } from '../scenarios/management/image-switch.ts';
-import { createKit } from '../scenarios/lib/kit.ts';
 import { wording } from '../scenarios/management/wording.ts';
 import { siteDeployOnPush } from '../scenarios/site/deploy-on-push.ts';
 import { livePage } from '../scenarios/site/live-page.ts';
