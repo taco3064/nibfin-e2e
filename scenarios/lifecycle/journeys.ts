@@ -2,11 +2,12 @@
 // A journey performs every harness write its scenarios need and records the moments
 // they check; the scenarios then read GitHub to judge them.
 import { AGENT_STAGES, selfHosted, time, wakeRuns } from './analysis.ts';
-import type { Issue, Job, Pull, Run } from './analysis.ts';
-import { DEADLINE, changeRequest } from './kit.ts';
+import type { Issue, Job, Pull, Run, Stage } from './analysis.ts';
+import { DEADLINE, changeRequest, redact } from './kit.ts';
 import type { Kit } from './kit.ts';
 import type { Snapshot } from './observe.ts';
-import { waitFor } from '../lib/wait.ts';
+import { sleep, waitFor } from '../lib/wait.ts';
+import { untilAborted } from '../../src/abort.ts';
 
 type Gone = (s: Snapshot) => Promise<string | undefined>;
 
@@ -20,6 +21,68 @@ const firstOf =
     }
     return undefined;
   };
+
+/** How often `stageJobRunning` reads a stage run's jobs directly. */
+export const DIRECT_READ_MS = 10_000;
+/** How long `stageJobRunning` reads directly on one snapshot before it lets the observer read the next one (its default interval). */
+const DIRECT_SPAN_MS = 60_000;
+
+/**
+ * Waits for a self-hosted job of an Issue's `stage` to be `in_progress`, reading the
+ * jobs of the Issue's unfinished runs of that stage directly every `DIRECT_READ_MS`
+ * rather than through the observer's snapshot and its cached job reads, which may miss a
+ * short job (Issue #544). The wait fails at once when such a job completed before any
+ * read saw it running, and otherwise ends on `stageGone`, the stall limit or the deadline.
+ */
+export async function stageJobRunning(
+  k: Kit,
+  n: number,
+  stage: Stage,
+  o: { desc: string; deadlineMs: number; show?: (s: Snapshot) => Promise<string>; /** The Issue's name in the reason (default `P`). */ who?: string },
+): Promise<Job & { stage: Stage; run: Run }> {
+  const pause = k.sleep ?? sleep;
+  const iso = (t: number) => new Date(t).toISOString();
+  /** Runs that completed without running an agent job (cancelled or skipped). */
+  const finished = new Set<number>();
+  /** The previous direct read of each job: when, and its status then. */
+  const lastRead = new Map<number, { at: number; status: string }>();
+  let missed: string | undefined;
+  const read = async (run: Run & { stage: Stage }): Promise<(Job & { stage: Stage; run: Run }) | undefined> => {
+    const at = k.now();
+    const jobs = await k.gh.list<Job>(`/repos/${k.exec}/actions/runs/${run.id}/jobs?filter=latest`, 'jobs');
+    const own = jobs.filter(selfHosted);
+    const live = own.find((j) => j.status === 'in_progress');
+    if (live) return { ...live, stage, run };
+    const done = own.find((j) => j.status === 'completed' && j.conclusion !== 'cancelled' && j.conclusion !== 'skipped');
+    if (done) {
+      const prev = lastRead.get(done.id);
+      const seen = prev ? `the wait last read it at ${iso(prev.at)} (${prev.status})` : `on its first read at ${iso(at)}`;
+      missed = redact(
+        `${o.who ?? 'P'}'s ${stage} job ${done.id} (run ${run.id}) completed (${String(done.conclusion)}) before the wait saw it running: started ${String(done.started_at)}, completed ${String(done.completed_at)}; ${seen}`,
+        k.ctx.secretValues(),
+      );
+      return undefined;
+    }
+    for (const j of own) lastRead.set(j.id, { at, status: j.status });
+    if (run.status === 'completed' && jobs.every((j) => j.status === 'completed')) finished.add(run.id);
+    return undefined;
+  };
+  const fn = async (s: Snapshot) => {
+    const until = k.now() + DIRECT_SPAN_MS;
+    for (;;) {
+      if (missed !== undefined) return undefined;
+      const runs = k.stages(s, k.exec, n, [stage]).filter((r) => !finished.has(r.id));
+      if (!runs.length) return undefined;
+      for (const run of runs) {
+        const j = await read(run);
+        if (j || missed !== undefined) return j;
+      }
+      if (k.now() + DIRECT_READ_MS > until) return undefined;
+      await untilAborted(pause(DIRECT_READ_MS), k.ctx.signal);
+    }
+  };
+  return k.obs.until(o.desc, fn, o.deadlineMs, o.show, { gonePast: firstOf(async () => missed, k.stageGone(k.exec, n, stage)) });
+}
 
 export interface Journey {
   a: Issue;
@@ -236,7 +299,7 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
   const running = (stage: 'shape' | 'deliver', after = 0) => async (s: Snapshot) =>
     (await k.agentJobs(s, exec, n, [stage])).find((j: Job) => j.status === 'in_progress' && selfHosted(j) && time(j.started_at) >= after);
 
-  const shapeJob = await k.obs.until('P\'s shape job to run', running('shape'), DEADLINE.stage, show, { gonePast: k.stageGone(exec, n, 'shape') });
+  const shapeJob = await stageJobRunning(k, n, 'shape', { desc: 'P\'s shape job to run', deadlineMs: DEADLINE.stage, show });
   await k.addLabels(exec, n, ['pause']);
   const pausedAt = k.now();
   const shapeDone = await k.obs.until('P\'s shape job to complete', async () => {
