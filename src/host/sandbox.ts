@@ -91,6 +91,23 @@ export async function rulesets(gh: GitHub, repo: string): Promise<Ruleset[]> {
   return r.data as Ruleset[];
 }
 
+/**
+ * Classic branch protection of the branch, or undefined when it has none: GitHub answers
+ * 404 for an unprotected branch (Proposal R4.39), and 403 "Upgrade to GitHub Pro" on a
+ * private repository whose plan has no branch protection.
+ */
+export async function branchProtection(gh: GitHub, repo: string, branch = 'main'): Promise<Record<string, unknown> | undefined> {
+  const path = `/repos/${repo}/branches/${ref(branch)}/protection`;
+  const r = await gh.rest<Record<string, unknown>>('GET', path, undefined, [403, 404]);
+  if (r.status === 404) return undefined;
+  if (r.status === 403) {
+    const message = String((r.data as { message?: unknown } | undefined)?.message ?? '');
+    if (/Upgrade to GitHub Pro/i.test(message)) return undefined;
+    throw new Error(`GitHub GET ${path} returned 403: ${message}`);
+  }
+  return r.data;
+}
+
 interface State {
   settings: Record<string, unknown>;
   pulls: { number: number }[];
@@ -102,6 +119,8 @@ interface State {
   keys: { id: number; title: string }[];
   runners: { id: number; name: string; status: string }[];
   rulesets: Ruleset[];
+  /** main has classic branch protection. */
+  protection: boolean;
   tags: string[];
   mainCommit?: string;
   mainTree?: string;
@@ -123,6 +142,7 @@ async function read(gh: GitHub, repo: string): Promise<State> {
     keys: await gh.list<{ id: number; title: string }>(`${r}/keys`),
     runners: await gh.list<{ id: number; name: string; status: string }>(`${r}/actions/runners`, 'runners'),
     rulesets: await rulesets(gh, repo),
+    protection: (await branchProtection(gh, repo)) !== undefined,
     mainCommit: main?.commit,
     mainTree: main?.tree,
     // matching-refs returns every match in one answer (it is not paginated).
@@ -153,6 +173,7 @@ export function differences(repo: string, state: State, visibility: Visibility, 
   for (const k of state.keys) out.push(`${repo}: deploy key ${k.title} exists`);
   for (const r of state.runners) out.push(`${repo}: runner registration ${r.name} (${r.status}) exists`);
   for (const r of state.rulesets) out.push(`${repo}: ruleset ${r.name} exists`);
+  if (state.protection) out.push(`${repo}: branch main has branch protection`);
   for (const t of state.tags) out.push(`${repo}: tag ${t} exists`);
   return out;
 }
@@ -209,7 +230,9 @@ export async function resetSandbox(deps: SandboxDeps, repo: string, visibility: 
     log(`${repo}: settings ${Object.keys(settings).join(', ')}`);
     await gh.rest('PATCH', r, settings);
   }
+  // Both policies go before the commit on main, so neither can refuse it.
   for (const rs of s.rulesets) await gh.rest('DELETE', `${r}/rulesets/${rs.id}`);
+  if (s.protection) await gh.rest('DELETE', `${r}/branches/main/protection`);
   for (const p of s.pulls) await gh.rest('PATCH', `${r}/pulls/${p.number}`, { state: 'closed' });
   for (const b of s.branches) if (b !== 'main') await gh.rest('DELETE', `${r}/git/refs/heads/${ref(b)}`);
   for (const i of s.issues) {
