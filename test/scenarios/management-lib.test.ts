@@ -1,6 +1,7 @@
 import { deepEqual, equal, match, rejects, throws } from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseIni, parseUnitFiles } from '../../src/host/hoststate.ts';
+import { parseIni, parseUnitFiles, readLinuxHostState, userRuntimeDir } from '../../src/host/hoststate.ts';
+import type { HostRun } from '../../src/host/hoststate.ts';
 import { Check, precondition, redact, tail } from '../../scenarios/lib/check.ts';
 import { isNibfinRunFor, leafCommands, parseHelp, parseRemaining } from '../../scenarios/lib/gh.ts';
 import { mainDigest, requireCurrentImage } from '../../scenarios/lib/image.ts';
@@ -154,4 +155,37 @@ test('host state parsing: unit files and .wslconfig', () => {
   ]);
   deepEqual(parseIni('[WSL2]\r\nmemory = 8GB\r\n# c\r\n[experimental]\nx=1\n'), { wsl2: { memory: '8GB' }, experimental: { x: '1' } });
   deepEqual(parseIni(null), {});
+});
+
+test('host state: the user manager runtime directory defaults to /run/user/<uid>', () => {
+  equal(userRuntimeDir({ XDG_RUNTIME_DIR: '/x' }, 1000), '/x');
+  equal(userRuntimeDir({}, 1001), '/run/user/1001');
+});
+
+test('host state before runner add: no user manager and no linger read as no units and linger no', async () => {
+  const seen: { argv: string[]; env?: Record<string, string> }[] = [];
+  const run: HostRun = async (argv, env) => {
+    seen.push({ argv, env });
+    if (argv[0] === 'systemctl') return { code: 1, stdout: '', stderr: 'Failed to connect to bus: No medium found' };
+    return { code: 1, stdout: '', stderr: 'Failed to get user: User runner is not logged in or lingering.' };
+  };
+  const state = await readLinuxHostState(run, { env: {}, uid: 1001, user: 'runner', exists: () => false, systemFiles: () => ['a.service'] });
+  deepEqual(state, { platform: 'linux', units: [], linger: 'no', systemFiles: ['a.service'] });
+  deepEqual(
+    seen.map((s) => s.env),
+    [{ XDG_RUNTIME_DIR: '/run/user/1001' }, { XDG_RUNTIME_DIR: '/run/user/1001' }],
+  );
+});
+
+test('host state: a running user manager and a lingering user are read, and their failures still throw', async () => {
+  const ok: HostRun = async (argv) =>
+    argv[0] === 'systemctl' ? { code: 0, stdout: 'a.service enabled enabled\n', stderr: '' } : { code: 0, stdout: 'yes\n', stderr: '' };
+  const opts = { env: { XDG_RUNTIME_DIR: '/r' }, uid: 1001, user: 'runner', systemFiles: () => [] };
+  deepEqual(await readLinuxHostState(ok, { ...opts, exists: () => true }), { platform: 'linux', units: [{ name: 'a.service', state: 'enabled' }], linger: 'yes', systemFiles: [] });
+
+  const unitsFail: HostRun = async (argv) => (argv[0] === 'systemctl' ? { code: 1, stdout: '', stderr: 'boom' } : { code: 0, stdout: 'no\n', stderr: '' });
+  await rejects(readLinuxHostState(unitsFail, { ...opts, exists: (p) => p === '/r/bus' }), /systemctl --user list-unit-files exited 1: boom/);
+
+  const lingerFail: HostRun = async (argv) => (argv[0] === 'systemctl' ? { code: 0, stdout: '', stderr: '' } : { code: 1, stdout: '', stderr: 'bad' });
+  await rejects(readLinuxHostState(lingerFail, { ...opts, exists: (p) => p === '/var/lib/systemd/linger/runner' }), /loginctl show-user runner exited 1: bad/);
 });

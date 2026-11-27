@@ -139,7 +139,7 @@ export function createProvisioning(host: HostServices): ProvisioningStep[] {
           await mustRun(host.exec, ['git', 'clone', '--quiet', `https://github.com/${SANDBOX.execution}.git`, ctx.executionDir]);
           // The host state before runner add, so scenarios can see what the always-on setup changed.
           if (ctx.target.platform === 'windows') seedWslconfig();
-          facts.hostBefore = await readHostState((argv, env) => host.exec(argv, { env }), ctx.target.platform);
+          facts.hostBefore = await readHostState((argv, env) => host.exec(argv, { env }), ctx.target.platform, { env: host.env });
           facts.runnerAdd = true;
           await nibfin(['runner', 'add', 'claude', '--count', '2', '--yes']);
           await nibfin(['init', '--yes']);
