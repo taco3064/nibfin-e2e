@@ -442,6 +442,8 @@ export interface LifecycleDef {
   id: string;
   rules: string[];
   concurrent?: boolean;
+  /** Provisioning steps the scenario needs besides `nibfin` (for example `collaborator`). */
+  requires?: string[];
   run(k: Kit): Promise<Outcome>;
 }
 
@@ -451,7 +453,7 @@ export function lifecycle(def: LifecycleDef, makeKit: (ctx: RunContext) => Kit =
     id: def.id,
     rules: def.rules,
     platforms: ['linux'],
-    requires: ['nibfin'],
+    requires: ['nibfin', ...(def.requires ?? [])],
     concurrent: def.concurrent,
     async run(ctx) {
       let out: Outcome;

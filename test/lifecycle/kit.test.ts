@@ -147,6 +147,12 @@ test('a lifecycle scenario turns a throw into failed and redacts secret values',
   equal(redact('a b a', ['a']), '*** b ***');
 });
 
+test('a lifecycle scenario adds its own requirements after nibfin', () => {
+  const run = async () => ({ status: 'passed' as const, reason: '' });
+  deepEqual(lifecycle({ id: 'x', rules: ['R3.27'], run }).requires, ['nibfin']);
+  deepEqual(lifecycle({ id: 'x', rules: ['R3.27'], requires: ['collaborator'], run }).requires, ['nibfin', 'collaborator']);
+});
+
 test('the closing comment must name each PR and its merge commit', () => {
   const pr = { number: 7, html_url: 'https://github.com/o/exec/pull/7', merge_commit_sha: 'abcdef1234567' };
   const comment = (body: string) => ({ id: 1, body, created_at: '', updated_at: '', user: null, html_url: '' });
