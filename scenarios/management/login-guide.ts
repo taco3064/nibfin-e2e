@@ -1,14 +1,19 @@
 // Reading the CLI's login guide from streamed `gh nibfin runner add` output (Proposal R5.30).
 // Without a terminal, gh-nibfin prints each login step as its own stderr line:
 // `open <URL>` for the sign-in URL and `enter code <CODE>` for a device code.
+// `gh nibfin login <provider>` (Proposal R5.34) prints the same step lines, and Claude's adds
+// the prompt `paste the code shown in your browser: `.
 import type { Running } from '../../src/host/exec.ts';
+import type { RunContext } from '../../src/types.ts';
 import { redact as redactSecrets } from '../dashboard/checks.ts';
-import { redact as redactTokens } from '../lib/check.ts';
+import { redact as redactTokens, tail } from '../lib/check.ts';
 
 /** The CLI's sign-in step line; it alone counts as the login guide. */
 export const GUIDE_LINE = /^\s*open (https:\/\/\S+)\s*$/m;
 /** The CLI's device-code step line; optional evidence. */
 export const CODE_LINE = /^\s*enter code (\S+)\s*$/m;
+/** The CLI's prompt for the code shown in the browser (Claude); optional evidence. */
+export const PASTE_PROMPT = /paste the code shown in your browser/;
 /** A line that claims a finished login (used only to word a failure); "not logged in" is not one. */
 export const SUCCESS_LINE = /(?<!not )\b(logged in|login (succeeded|complete|finished))\b/i;
 
@@ -117,4 +122,33 @@ export function statusRunners(status: unknown, provider: string): unknown[] | un
   if (list === null) return [];
   if (!Array.isArray(list)) return undefined;
   return list.filter((r) => (r as { provider?: unknown } | null)?.provider === provider);
+}
+
+/**
+ * Reads `gh nibfin login <provider>` output for Proposal R5.34's refusal. `guide` is true when
+ * a sign-in step line or the paste prompt appeared; `refused` when the command exited
+ * non-zero, some line names the missing Runner of `provider` (or `runner add <provider>`)
+ * and no guide appeared.
+ */
+export function loginRefusal(code: number, output: string, provider: string): { refused: boolean; guide: boolean } {
+  const all = lines(output);
+  const guide = loginGuide(output).url !== undefined || all.some((l) => PASTE_PROMPT.test(l));
+  const p = provider.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const names = new RegExp(`\\bno ${p} runners?\\b|\\brunner add ${p}\\b`, 'i');
+  return { refused: code !== 0 && !guide && all.some((l) => names.test(l)), guide };
+}
+
+/** `podman volume exists`: true, false, or throws on another error (exit 125). */
+export async function volumeExists(ctx: Pick<RunContext, 'exec'>, volume: string): Promise<boolean> {
+  const r = await ctx.exec(['podman', 'volume', 'exists', volume]);
+  if (r.code === 0) return true;
+  if (r.code === 1) return false;
+  throw new Error(`podman volume exists ${volume} exited ${r.code}: ${tail(r, 300)}`);
+}
+
+/** IDs of every container (running or not) that mounts `volume`. */
+export async function volumeContainers(ctx: Pick<RunContext, 'exec'>, volume: string): Promise<string[]> {
+  const r = await ctx.exec(['podman', 'ps', '-a', '--filter', `volume=${volume}`, '--format', '{{.ID}}']);
+  if (r.code !== 0) throw new Error(`podman ps -a --filter volume=${volume} exited ${r.code}: ${tail(r, 300)}`);
+  return r.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
 }
