@@ -8,7 +8,7 @@ import { chromium } from 'playwright-core';
 import type { BrowserContext, Locator, Page } from 'playwright-core';
 import type { Running } from '../../src/host/exec.ts';
 import type { Outcome, RunContext, RuleId, Scenario } from '../../src/types.ts';
-import { fieldsFromAriaSnapshot, parseJobStarts, parseSessionUrl, redact, updateMarkerState } from './checks.ts';
+import { buttonNamesFromAriaSnapshot, fieldsFromAriaSnapshot, missingButtonMessage, parseJobStarts, parseSessionUrl, redact, updateMarkerState } from './checks.ts';
 import type { ContainerStart, FormField, Reply, SessionUrl } from './checks.ts';
 import { sleep, until } from './github.ts';
 
@@ -360,10 +360,24 @@ export async function button(scope: Page | Locator, name: RegExp): Promise<Locat
   return (await b.count()) ? b.first() : undefined;
 }
 
+/** How long `mustButton` waits for its button; the page's default action timeout (see `openPage`). */
+const BUTTON_WAIT_MS = 15_000;
+const BUTTON_POLL_MS = 250;
+/** Bound on reading the buttons shown for a failure message, so a vanished scope adds little. */
+const SHOWN_READ_MS = 2_000;
+
+/**
+ * First button in `scope` whose name matches, waiting up to 15 s for one to appear.
+ * When none appears, throws `<rule>: expected a <name> button in <where>; observed none`
+ * followed by the buttons the scope shows.
+ */
 export async function mustButton(scope: Page | Locator, name: RegExp, rule: string, where: string): Promise<Locator> {
-  const b = await button(scope, name);
-  if (!b) throw new Error(`${rule}: expected a ${name} button in ${where}; observed none`);
-  return b;
+  const b = scope.getByRole('button', { name });
+  const n = await until(() => b.count(), (c) => c > 0, BUTTON_WAIT_MS, BUTTON_POLL_MS);
+  if (n > 0) return b.first();
+  const root = 'goto' in scope ? scope.locator('body') : scope;
+  const shown = await root.ariaSnapshot({ timeout: SHOWN_READ_MS }).then(buttonNamesFromAriaSnapshot, () => undefined);
+  throw new Error(missingButtonMessage(rule, name, where, shown));
 }
 
 /** Selects or types a repository in the repo view. */

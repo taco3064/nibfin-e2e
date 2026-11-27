@@ -354,6 +354,43 @@ export function fieldsFromAriaSnapshot(snapshot: string): FormField[] {
   return out;
 }
 
+// ---- Buttons --------------------------------------------------------------------
+
+/**
+ * The accessible names of the `button` lines in a `Locator.ariaSnapshot()`, in order.
+ * Trailing `[attr]` parts are ignored; a button line without a name reads `(unnamed)`.
+ */
+export function buttonNamesFromAriaSnapshot(snapshot: string): string[] {
+  const out: string[] = [];
+  for (const line of snapshot.split('\n')) {
+    const m = /^\s*-\s+([a-z]+)(?:\s+"([^"]*)")?/.exec(line);
+    if (m?.[1] === 'button') out.push(m[2] ?? '(unnamed)');
+  }
+  return out;
+}
+
+const SHOWN_MAX = 15;
+const SHOWN_NAME_MAX = 40;
+
+/**
+ * The failure when no button matching `name` appears in `where`: the fixed
+ * `<rule>: expected a <name> button in <where>; observed none` prefix, then the buttons
+ * shown (whitespace-collapsed, each trimmed to 40 characters, at most 15), "no buttons
+ * shown" for an empty list, or "the buttons shown could not be read" when `shown` is undefined.
+ */
+export function missingButtonMessage(rule: string, name: RegExp, where: string, shown: string[] | undefined): string {
+  const head = `${rule}: expected a ${name} button in ${where}; observed none`;
+  if (shown === undefined) return `${head}; the buttons shown could not be read`;
+  if (!shown.length) return `${head}; no buttons shown`;
+  const trim = (s: string) => {
+    const t = s.replace(/\s+/g, ' ').trim();
+    return t.length > SHOWN_NAME_MAX ? `${t.slice(0, SHOWN_NAME_MAX - 1)}…` : t;
+  };
+  const listed = shown.slice(0, SHOWN_MAX).map((s) => `"${trim(s)}"`).join(', ');
+  const more = shown.length > SHOWN_MAX ? ` … and ${shown.length - SHOWN_MAX} more` : '';
+  return `${head}; buttons shown: ${listed}${more}`;
+}
+
 // ---- Live data ------------------------------------------------------------------
 
 export const TOKEN_PATTERN = /\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/;
