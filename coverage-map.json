@@ -131,7 +131,7 @@
   {"id": "R5.9", "platforms": ["linux"], "scenarios": ["host-requirements"]},
   {"id": "R5.10", "platforms": ["linux", "windows"], "scenarios": []},
   {"id": "R5.11", "platforms": ["linux", "windows"], "scenarios": []},
-  {"id": "R5.12", "platforms": ["linux", "windows"], "scenarios": []},
+  {"id": "R5.12", "platforms": ["linux", "windows"], "scenarios": ["podman-machine-detached"]},
   {"id": "R5.13", "platforms": ["windows"], "scenarios": ["runner-add-setup"]},
   {"id": "R5.14", "notE2e": "需要實體 Mac，雲端 macOS 主機無法執行 podman machine（R8.24）"},
   {"id": "R5.15", "platforms": ["linux"], "scenarios": ["runner-add-setup"]},
