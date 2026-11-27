@@ -1,5 +1,12 @@
 name: e2e
 
+run-name: >-
+  ${{ github.event_name == 'repository_dispatch'
+  && (github.event.action == 'issue-delivered'
+  && format('e2e · retest {0}#{1}', github.event.client_payload.repository, github.event.client_payload.issue)
+  || 'e2e · Proposal updated')
+  || 'e2e · manual' }}
+
 on:
   workflow_dispatch:
     inputs:
@@ -15,10 +22,18 @@ on:
         description: gh-nibfin branch, tag or commit to build
         required: false
         default: main
+  # issue-delivered: sent by nibfin-e2e-notify.yml in nibfin-core and gh-nibfin
+  # (client_payload: repository, issue). proposal-updated: sent by the Notion relay
+  # in relay/ (client_payload: page_id, block_ids, timestamp).
+  repository_dispatch:
+    types: [issue-delivered, proposal-updated]
 
-# Only one run at a time may use the sandboxes (Proposal R8.19); later runs wait in line.
+# Only one run at a time may use the sandboxes (Proposal R8.19); later runs wait in
+# line. A Proposal update touches no sandbox, so it gets a group of its own.
 concurrency:
-  group: e2e-sandboxes
+  group: >-
+    ${{ github.event.action == 'proposal-updated'
+    && format('e2e-proposal-{0}', github.run_id) || 'e2e-sandboxes' }}
   cancel-in-progress: false
   queue: max
 
@@ -26,19 +41,49 @@ permissions:
   contents: read
 
 jobs:
-  resolve:
+  proposal-updated:
+    if: github.event_name == 'repository_dispatch' && github.event.action == 'proposal-updated'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts
+      - name: File the Proposal update request
+        env:
+          NIBFIN_GITHUB_TOKEN: ${{ secrets.NIBFIN_GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          npm run --silent gate -- proposal-updated > gate.json
+          code=$?
+          jq -r '.summary // empty' gate.json >> "$GITHUB_STEP_SUMMARY" || cat gate.json
+          exit $code
+
+  select:
+    if: github.event.action != 'proposal-updated'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
       commit: ${{ steps.target.outputs.commit }}
-      args: ${{ steps.target.outputs.args }}
+      execute: ${{ steps.plan.outputs.execute }}
     steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts
       - id: target
         env:
           GH_TOKEN: ${{ github.token }}
           REF: ${{ inputs.gh_nibfin_ref }}
-          RULES: ${{ inputs.rules }}
-          SECTIONS: ${{ inputs.sections }}
         run: |
           set -euo pipefail
           ref="${REF:-main}"
@@ -47,22 +92,52 @@ jobs:
           fi
           commit=$(gh api "repos/taco3064/gh-nibfin/commits/$ref" --jq .sha)
           [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::could not resolve $ref"; exit 2; }
-          args=()
-          for r in ${RULES//,/ }; do
-            [[ "$r" =~ ^R[0-9]+\.[0-9]+$ ]] || { echo "::error::invalid rule id: $r"; exit 2; }
-            args+=(--rule "$r")
-          done
-          for s in ${SECTIONS//,/ }; do
-            [[ "$s" =~ ^[0-9]+$ ]] || { echo "::error::invalid section: $s"; exit 2; }
-            args+=(--section "$s")
-          done
-          [[ ${#args[@]} -gt 0 ]] || args=(--all)
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
-          echo "args=${args[*]}" >> "$GITHUB_OUTPUT"
-          echo "gh-nibfin $ref -> $commit; selection: ${args[*]}" >> "$GITHUB_STEP_SUMMARY"
+          echo "gh-nibfin $ref -> $commit" >> "$GITHUB_STEP_SUMMARY"
+      - id: plan
+        env:
+          NIBFIN_GITHUB_TOKEN: ${{ secrets.NIBFIN_GITHUB_TOKEN }}
+          EVENT: ${{ github.event_name }}
+          RULES: ${{ inputs.rules }}
+          SECTIONS: ${{ inputs.sections }}
+          DELIVERED_REPO: ${{ github.event.client_payload.repository }}
+          DELIVERED_ISSUE: ${{ github.event.client_payload.issue }}
+        run: |
+          set -uo pipefail
+          args=()
+          if [[ "$EVENT" == repository_dispatch ]]; then
+            [[ "$DELIVERED_REPO" =~ ^taco3064/(nibfin-core|gh-nibfin)$ && "$DELIVERED_ISSUE" =~ ^[0-9]+$ ]] \
+              || { echo "::error::invalid issue-delivered payload"; exit 2; }
+            args=(--delivered "$DELIVERED_REPO#$DELIVERED_ISSUE")
+          else
+            for r in ${RULES//,/ }; do
+              [[ "$r" =~ ^R[0-9]+\.[0-9]+$ ]] || { echo "::error::invalid rule id: $r"; exit 2; }
+              args+=(--rule "$r")
+            done
+            for s in ${SECTIONS//,/ }; do
+              [[ "$s" =~ ^[0-9]+$ ]] || { echo "::error::invalid section: $s"; exit 2; }
+              args+=(--section "$s")
+            done
+            [[ ${#args[@]} -gt 0 ]] || args=(--all)
+          fi
+          npm run --silent gate -- select "${args[@]}" > plan.json
+          code=$?
+          echo "gate select exit code: $code"
+          # 1 only means the coverage check failed; the plan is still valid and the
+          # report job files what it found. 2 is a usage or input error: no plan.
+          jq -e '.selection' plan.json > /dev/null 2>&1 || { cat plan.json; exit 2; }
+          jq -r '.summary // empty' plan.json >> "$GITHUB_STEP_SUMMARY"
+          echo "execute=$(jq -r '.execute' plan.json)" >> "$GITHUB_OUTPUT"
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: plan
+          path: plan.json
+          if-no-files-found: ignore
 
   run:
-    needs: resolve
+    needs: select
+    if: needs.select.outputs.execute == 'true'
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -86,17 +161,18 @@ jobs:
           go-version: stable
           cache: false
       - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: plan
+          path: gate
       - name: Run the harness
         env:
           E2E_SANDBOX_TOKEN: ${{ secrets.E2E_SANDBOX_TOKEN }}
           E2E_CLAUDE_TOKEN: ${{ secrets.E2E_CLAUDE_TOKEN }}
-          ARGS: ${{ needs.resolve.outputs.args }}
-          COMMIT: ${{ needs.resolve.outputs.commit }}
+          COMMIT: ${{ needs.select.outputs.commit }}
         run: |
           set -uo pipefail
-          # ARGS was validated by the resolve job: only --all, --rule R<n>.<n> and --section <n>.
-          read -ra args <<< "$ARGS"
-          npm run --silent e2e -- "${args[@]}" --gh-nibfin-commit "$COMMIT" > result.json
+          npm run --silent e2e -- --plan gate/plan.json --gh-nibfin-commit "$COMMIT" > result.json
           code=$?
           echo "harness exit code: $code"
           exit $code
@@ -107,50 +183,43 @@ jobs:
           path: result.json
           if-no-files-found: ignore
 
+  # Files one request per root failure, failed job without a result and plan gap.
+  # Runs even when earlier jobs fail, time out or are cancelled.
   report:
-    needs: [resolve, run]
-    if: always()
+    needs: [select, run]
+    if: always() && github.event.action != 'proposal-updated'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
     steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          name: plan
+          path: gate
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: result-*
           path: results
-      - name: Summarize
+      - name: Report and file requests
         env:
-          RUN_RESULT: ${{ needs.run.result }}
+          NIBFIN_GITHUB_TOKEN: ${{ secrets.NIBFIN_GITHUB_TOKEN }}
         run: |
           set -uo pipefail
-          {
-            echo "## e2e result"
-            echo
-            echo "Matrix conclusion: \`$RUN_RESULT\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-          shopt -s nullglob
-          found=0
-          for f in results/*/result.json; do
-            leg=$(basename "$(dirname "$f")")
-            found=1
-            {
-              echo
-              echo "### ${leg#result-}"
-              if ! jq -e . "$f" > /dev/null 2>&1; then
-                echo "No readable result (the harness stopped before printing it)."
-                continue
-              fi
-              jq -r '"gh-nibfin `\(.meta.ghNibfinCommit)`, image `\(.meta.imageDigest // "none")`, mode `\(.meta.mode)`"' "$f"
-              echo
-              echo "| Kind | Id | Status | Reason |"
-              echo "|---|---|---|---|"
-              jq -r '
-                [(.provisioning[] | {k: "provisioning"} + .),
-                 (.scenarios[] | {k: "scenario"} + .),
-                 (.teardown[] | {k: "teardown"} + .)][]
-                | "| \(.k) | \(.id) | \(.status) | \(.reason | gsub("[|\n]"; " ")) |"' "$f"
-              jq -r 'if .gate then "\nGate: \(if .gate.passed then "passed" else "failed: " + (.gate.reasons | join("; ")) end)" else empty end' "$f"
-            } >> "$GITHUB_STEP_SUMMARY"
-          done
-          if [[ $found -eq 0 ]]; then
-            echo "No result files; see the job conclusions above." >> "$GITHUB_STEP_SUMMARY"
-          fi
+          mkdir -p results
+          plan=()
+          [[ -f gate/plan.json ]] && plan=(--plan gate/plan.json)
+          npm run --silent gate -- report "${plan[@]}" --results results > report.json
+          code=$?
+          jq -r '.summary // empty' report.json >> "$GITHUB_STEP_SUMMARY" || cat report.json
+          exit $code
