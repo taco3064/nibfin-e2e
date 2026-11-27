@@ -2,13 +2,13 @@ import type { GitHub } from '../../src/host/github.ts';
 import type { Scenario } from '../../src/types.ts';
 import { Check } from '../lib/check.ts';
 import { nibfinFacts, readFile } from '../lib/github.ts';
-import { readWorkflow } from '../lib/workflows.ts';
+import { readWorkflow, titleStartsWith, triggers, unpinnedImages } from '../lib/workflows.ts';
 
 const WF = '.github/workflows/';
 
-/** The files each init PR may add, as Issue #284 and Proposal R5.2–R5.3 name them. */
+/** The files each init PR may add, as Proposal R5.2–R5.3 name them. */
 export const EXPECTED = {
-  execution: [`${WF}nibfin-issue.yml`, `${WF}nibfin-shared-runner.yml`],
+  execution: [`${WF}nibfin-issue.yml`, `${WF}nibfin-shared-runner.yml`, `${WF}nibfin-job.yml`, `${WF}nibfin-runner-request.yml`],
   peer: [`${WF}nibfin-issue.yml`],
 };
 
@@ -36,21 +36,43 @@ export function checkInitFiles(c: Check, repo: string, kind: 'execution' | 'peer
     c.that(isWorkflow && /^nibfin-[^/]+\.yml$/.test(f.path.slice(WF.length)), 'R5.5', `${repo}: ${f.path} is not named .github/workflows/nibfin-*.yml`);
     if (isWorkflow) {
       c.that(!!w.name?.startsWith('Nibfin · '), 'R5.5', `${repo}: ${f.path} name is ${JSON.stringify(w.name ?? null)}, expected "Nibfin · …"`);
-      c.that(!!w.runName?.startsWith('Nibfin'), 'R5.5', `${repo}: ${f.path} run-name is ${JSON.stringify(w.runName ?? null)}, expected to start with "Nibfin"`);
+      // A workflow only other workflows call creates no run of its own, so GitHub renders no title from it.
+      const reusableOnly = triggers(f.text).join() === 'workflow_call';
+      if (!reusableOnly) {
+        c.that(titleStartsWith(w.runName ?? '', 'Nibfin'), 'R5.5', `${repo}: ${f.path} run-name is ${JSON.stringify(w.runName ?? null)}, expected to start with "Nibfin"`);
+      }
     }
     for (const u of w.uses) c.that(!/taco3064\//i.test(u), 'R5.7', `${repo}: ${f.path} uses ${u}, a workflow or action of the Owner`);
     c.that(!/github\.com\/taco3064\//i.test(f.text), 'R5.7', `${repo}: ${f.path} refers to a github.com/taco3064/ repository`);
-    for (const img of w.images) {
-      c.that(img === `ghcr.io/taco3064/nibfin@${digest}`, 'R5.7', `${repo}: ${f.path} references ${img}, expected ghcr.io/taco3064/nibfin@${digest}`);
+    const callers = files.filter((o) => o !== f && localCalls(o.text).includes(f.path)).map((o) => o.text);
+    for (const { ref, why } of unpinnedImages(f.text, digest, callers)) {
+      c.fail('R5.7', `${repo}: ${f.path} references ${ref}${why ? ` ${why}` : ''}, expected ghcr.io/taco3064/nibfin@${digest}`);
     }
     if (w.images.length) c.that(/\bpodman\b/.test(f.text), 'R5.7', `${repo}: ${f.path} references the image but does not run it with podman`);
   }
 
   const shared = files.find((f) => f.path === `${WF}nibfin-shared-runner.yml`);
   if (shared) {
-    const runsOn = readWorkflow(shared.text).runsOn;
-    c.that(runsOn.some((v) => /nibfin-/.test(v)), 'R5.7', `${repo}: no runs-on in nibfin-shared-runner.yml uses a nibfin- label (${runsOn.join(' | ') || 'none'})`);
+    // The shared runner's own Jobs and the local reusable workflows it calls, transitively.
+    const reached = [shared];
+    for (let i = 0; i < reached.length; i++) {
+      for (const p of localCalls((reached[i] as { text: string }).text)) {
+        const called = files.find((f) => f.path === p);
+        if (called && !reached.includes(called)) reached.push(called);
+      }
+    }
+    const runsOn = reached.flatMap((f) => readWorkflow(f.text).runsOn);
+    const calledNames = reached.slice(1).map((f) => f.path.slice(WF.length));
+    const where = calledNames.length ? `nibfin-shared-runner.yml or the local workflows it calls (${calledNames.join(', ')})` : 'nibfin-shared-runner.yml';
+    c.that(runsOn.some((v) => /nibfin-/.test(v)), 'R5.7', `${repo}: no runs-on in ${where} uses a nibfin- label (${runsOn.join(' | ') || 'none'})`);
   }
+}
+
+/** The repository paths of the local reusable workflows a workflow calls (`uses: ./.github/workflows/…`). */
+function localCalls(text: string): string[] {
+  return readWorkflow(text)
+    .uses.filter((u) => u.startsWith(`./${WF}`))
+    .map((u) => u.slice(2).replace(/@.*$/, ''));
 }
 
 /** The files a PR adds or changes, read at its head. */
