@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { requireEnv } from '../src/host/config.ts';
+import { CRONTAB_PROBE } from '../src/host/hoststate.ts';
 import { createHostContext } from '../src/host/context.ts';
 import type { Exec } from '../src/host/exec.ts';
 import { createGitHub } from '../src/host/github.ts';
@@ -272,6 +273,36 @@ test('claude-login: a read-back with the wrong mode fails without printing the t
   deepEqual([calls[0]?.argv, calls.at(-1)?.argv], [['podman', 'machine', 'start'], ['podman', 'machine', 'stop']]);
 });
 
+const ALREADY_RUNNING = { code: 125, stderr: 'Error: unable to start "podman-machine-default": already running' };
+
+test('claude-login on Windows: an already running machine is used, the token is written and the machine is stopped at the end', async () => {
+  let written = '';
+  const { exec, calls } = fakeExec((argv, o) => {
+    if (argv.join(' ') === 'podman machine start') return ALREADY_RUNNING;
+    const script = argv.at(-1) ?? '';
+    if (script.startsWith('umask')) return ((written = o.input ?? ''), {});
+    if (script.startsWith('stat')) return { stdout: written ? `0 755\n0 600\n${written}` : '0 755\n-\n' };
+    return undefined;
+  });
+  const out = await harness({ exec, platform: 'windows' }).runStep('claude-login');
+  equal(out.status, 'passed', out.reason);
+  deepEqual(JSON.parse(written), { env: { CLAUDE_CODE_OAUTH_TOKEN: 'claude-token' } });
+  deepEqual([calls[0]?.argv, calls.at(-1)?.argv], [['podman', 'machine', 'start'], ['podman', 'machine', 'stop']]);
+  equal(calls.filter((c) => c.argv[2] === 'start').length, 1);
+});
+
+test('claude-login on Windows: any other start failure fails with Podman\'s exit code and output and writes nothing', async () => {
+  const { exec, calls } = fakeExec((argv) => (argv.join(' ') === 'podman machine start' ? { code: 125, stderr: 'Error: machine is broken', stdout: 'claude-token' } : undefined));
+  const err = await harness({ exec, platform: 'windows' })
+    .runStep('claude-login')
+    .then((o) => o.reason)
+    .catch((e: Error) => e.message);
+  equal(err, 'podman machine start exited 125: Error: machine is broken');
+  equal(String(err).includes('claude-token'), false);
+  deepEqual(calls.map((c) => c.argv.join(' ')), ['podman machine start']);
+  equal(calls.some((c) => c.options.input), false);
+});
+
 test('gh-nibfin: builds the Dashboard first, then the binary, installs it and checks it runs', async () => {
   const { exec, calls } = fakeExec((argv) => (argv[1] === 'rev-parse' ? { stdout: COMMIT + '\n' } : undefined));
   const out = await harness({ exec }).runStep('gh-nibfin');
@@ -379,6 +410,21 @@ test('readPeriodicBaseline on Windows: start, read the VM, stop even when the re
   await readPeriodicBaseline(run(noStart.exec), { env: {}, exec: noStart.exec }, b);
   deepEqual(b, { ...win(), vm: { error: 'podman machine start exited 125: machine is broken' } });
   deepEqual(noStart.calls.map((c) => c.argv.join(' ')), ['podman machine start']);
+
+  const running = fakeExec((argv) => {
+    if (argv.join(' ') === 'podman machine start') return ALREADY_RUNNING;
+    const command = argv[2] === 'ssh' ? (argv[4] ?? '') : '';
+    if (command.startsWith('systemctl --user list-unit-files')) return { stdout: 'a.timer static -\n' };
+    if (command === CRONTAB_PROBE) return { stdout: 'nibfin-e2e:crontab=absent\n' };
+    if (command.startsWith('systemctl list-unit-files')) return { stdout: 'ssh.service enabled enabled\n' };
+    return undefined;
+  });
+  const c = win();
+  await readPeriodicBaseline(run(running.exec), { env: {}, exec: running.exec }, c);
+  const vm = (c as { vm?: { error?: string; units?: unknown; manager?: boolean } }).vm;
+  deepEqual([vm?.error, vm?.units, vm?.manager], [undefined, [{ name: 'a.timer', state: 'static' }], true]);
+  const steps = running.calls.map((x) => x.argv.slice(0, 3).join(' '));
+  deepEqual([steps[0], new Set(steps.slice(1, -1)), steps.at(-1)], ['podman machine start', new Set(['podman machine ssh']), 'podman machine stop']);
 
   const noStop = fakeExec((argv) => (argv[2] === 'stop' ? { code: 125, stderr: 'cannot stop' } : undefined));
   await rejects(readPeriodicBaseline(run(noStop.exec), { env: {}, exec: noStop.exec }, win()), /podman machine stop after reading the VM baseline exited 125: cannot stop/);

@@ -11,7 +11,7 @@ import type { GitHub } from './host/github.ts';
 import { writeClaudeLogin } from './host/login.ts';
 import { preparePeer, teardownPeer } from './host/peer.ts';
 import type { PeerFacts } from './host/peer.ts';
-import { preparePodman } from './host/podman.ts';
+import { preparePodman, startPodmanMachine } from './host/podman.ts';
 import { mainHead, onlineRunners, readTemplate, resetSandbox } from './host/sandbox.ts';
 import type { HostServices } from './host/services.ts';
 import type { ProvisioningStep, RunContext, StepOutcome } from './types.ts';
@@ -118,7 +118,7 @@ export async function readPeriodicBaseline(run: HostRun, host: Pick<HostServices
     before.periodic = await baselineOf(() => readPeriodic(hostPeriodicRun(run, runtime), { noManagerOk: !hasUserManager(runtime, existsSync) }));
     return;
   }
-  const start = await host.exec(['podman', 'machine', 'start']);
+  const start = await startPodmanMachine(host.exec);
   if (start.code !== 0) {
     before.vm = { error: `podman machine start exited ${start.code}: ${outputOf(start) || 'no output'}` };
     return;

@@ -95,14 +95,17 @@ export function createExec(env: Env, log: (message: string) => void): Exec {
     });
 }
 
+/** The error `mustRun` throws for a result that did not exit 0. */
+export function failureOf(argv: string[], r: ExecResult, hideStdout = false): Error {
+  const out = (r.stderr.trim() || (hideStdout ? '' : r.stdout.trim())).slice(-4000);
+  return new Error(`${argv.slice(0, 3).join(' ')} exited ${r.code}: ${out}`);
+}
+
 /** Throws with the command's own output when it did not exit 0. */
 export async function mustRun(exec: Exec, argv: string[], options?: ExecOptions & { hideStdout?: boolean }): Promise<ExecResult> {
   const { hideStdout, ...opts } = options ?? {};
   const r = await exec(argv, opts);
-  if (r.code !== 0) {
-    const out = (r.stderr.trim() || (hideStdout ? '' : r.stdout.trim())).slice(-4000);
-    throw new Error(`${argv.slice(0, 3).join(' ')} exited ${r.code}: ${out}`);
-  }
+  if (r.code !== 0) throw failureOf(argv, r, hideStdout);
   return r;
 }
 

@@ -1,5 +1,6 @@
 import { CLAUDE_VOLUME, HELPER_IMAGE, requireEnv } from './config.ts';
-import { mustRun } from './exec.ts';
+import { failureOf, mustRun } from './exec.ts';
+import { startPodmanMachine } from './podman.ts';
 import type { Exec } from './exec.ts';
 import type { Platform } from '../types.ts';
 import type { HostServices } from './services.ts';
@@ -84,12 +85,15 @@ export async function writeClaudeLogin(host: HostServices, platform: Platform): 
 
 /**
  * Writes `token` as the login volume's Claude token, as `writeClaudeLogin` does, and
- * reads it back. `manageMachine` starts the podman machine first and stops it after
- * (Windows provisioning only; never while Runners run).
+ * reads it back. `manageMachine` starts the podman machine first (one already running
+ * is accepted) and stops it after (Windows provisioning only; never while Runners run).
  */
 export async function writeClaudeToken(host: HostServices, token: string, options: { manageMachine: boolean }): Promise<string> {
   const { exec } = host;
-  if (options.manageMachine) await podman(exec, ['machine', 'start']);
+  if (options.manageMachine) {
+    const start = await startPodmanMachine(exec);
+    if (start.code !== 0) throw failureOf(['podman', 'machine', 'start'], start, true);
+  }
   try {
     const after = await updateClaudeSettings(
       exec,
