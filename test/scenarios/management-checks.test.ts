@@ -14,40 +14,116 @@ const D = 'sha256:' + 'a'.repeat(64);
 const wf = (name: string, extra = '') => `name: Nibfin · ${name}\nrun-name: Nibfin · \${{ inputs.issue }}\non: issues\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n      - run: podman run ghcr.io/taco3064/nibfin@${D}\n${extra}`;
 const shared = wf('Shared', '  k:\n    runs-on: [self-hosted, nibfin-1]\n');
 
-test('init files: exactly the Issue sets pass', () => {
+const WFS = '.github/workflows/';
+/** A shared runner shaped like the generated one: a block-scalar expression run-name, no Jobs of its own, a call to nibfin-job.yml. */
+const sharedCaller = `name: Nibfin · Shared runner
+run-name: >-
+  \${{ inputs.issue != ''
+  && format('Nibfin · {0}#{1} · {2}', inputs.repo, inputs.issue, inputs.stage)
+  || format('Nibfin · {0}@{1} · route', inputs.repo, inputs.ref) }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue:
+        type: string
+jobs:
+  job:
+    uses: ./.github/workflows/nibfin-job.yml
+    with:
+      issue: \${{ inputs.issue }}
+`;
+/** A reusable job shaped like the generated one: the bare name only to find older images, the pinned one to run. */
+const job = (o: { run?: string; env?: string; runsOn?: string; on?: string } = {}) => `name: Nibfin · Job
+on:
+${o.on ?? '  workflow_call:\n    inputs:\n      assignee:\n        type: string\n'}env:
+${o.env ?? `  IMAGE: ghcr.io/taco3064/nibfin\n  IMAGE_REF: ghcr.io/taco3064/nibfin@${D}\n`}jobs:
+  route:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: podman pull "$IMAGE_REF"
+  stage:
+    runs-on: ${o.runsOn ?? '[self-hosted, "nibfin-${{ inputs.assignee }}"]'}
+    steps:
+      - run: |
+          podman images | while read -r id repository; do [ "$repository" != "$IMAGE" ] || echo "$id"; done
+          podman run --rm \\
+            --label x \\
+            ${o.run ?? '"$IMAGE_REF"'} nibfin run
+`;
+const request = 'name: Nibfin · Runner request\nrun-name: Nibfin · ${{ github.event.issue.number }} · runner request\non:\n  issues:\n    types: [opened]\njobs:\n  r:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo\n';
+/** The problems of an execution init PR: the four R5.3 files, with some replaced or added (`over`) or left out (`drop`). */
+const execProblems = (over: Record<string, string> = {}, drop: string[] = []) => {
+  const files = Object.entries({ 'nibfin-issue.yml': wf('Issue'), 'nibfin-shared-runner.yml': sharedCaller, 'nibfin-job.yml': job(), 'nibfin-runner-request.yml': request, ...over })
+    .filter(([name]) => !drop.includes(name))
+    .map(([name, text]) => ({ path: name.includes('/') ? name : WFS + name, text }));
   const c = new Check();
-  checkInitFiles(c, 'o/exec', 'execution', [
-    { path: '.github/workflows/nibfin-issue.yml', text: wf('Issue') },
-    { path: '.github/workflows/nibfin-shared-runner.yml', text: shared },
-  ], D);
-  checkInitFiles(c, 'o/peer', 'peer', [{ path: '.github/workflows/nibfin-issue.yml', text: wf('Issue') }], D);
+  checkInitFiles(c, 'o/exec', 'execution', files, D);
+  return c.problems.join('\n');
+};
+
+test('init files: the four R5.3 execution files with a reusable nibfin-job.yml, and the peer set, pass', () => {
+  equal(execProblems(), '');
+  const c = new Check();
+  checkInitFiles(c, 'o/peer', 'peer', [{ path: WFS + 'nibfin-issue.yml', text: wf('Issue') }], D);
   deepEqual(c.problems, []);
+  // A shared runner with a nibfin- Job of its own still passes.
+  equal(execProblems({ 'nibfin-shared-runner.yml': shared }), '');
 });
 
-test('init files: extra files, other digests, Owner calls and bad names are each reported', () => {
-  const c = new Check();
-  checkInitFiles(c, 'o/exec', 'execution', [
-    { path: '.github/workflows/nibfin-issue.yml', text: wf('Issue', '      - uses: taco3064/nibfin-core/.github/workflows/x.yml@main\n') },
-    { path: '.github/workflows/nibfin-shared-runner.yml', text: shared.replace(D, 'sha256:' + 'b'.repeat(64)) },
-    { path: '.github/workflows/nibfin-job.yml', text: wf('Job') },
-    { path: '.github/workflows/nibfin-runner-request.yml', text: 'name: Runner request\non: issues\n' },
-    { path: '.github/producer-pins.json', text: '{}' },
-  ], D);
-  const all = c.problems.join('\n');
-  match(all, /R5.3: o\/exec init PR adds .github\/workflows\/nibfin-job.yml/);
-  match(all, /R5.3: o\/exec init PR adds .github\/workflows\/nibfin-runner-request.yml/);
+test('init files: extra and missing files, Owner calls, other digests and bad names are each reported', () => {
+  const all = execProblems({
+    'nibfin-issue.yml': wf('Issue', '      - uses: taco3064/nibfin-core/.github/workflows/x.yml@main\n'),
+    'nibfin-job.yml': job({ run: `ghcr.io/taco3064/nibfin@sha256:${'b'.repeat(64)}` }),
+    'nibfin-runner-request.yml': 'name: Runner request\non: issues\n',
+    'nibfin-extra.yml': wf('Extra'),
+    'nibfin-wake.yml': wf('Wake'),
+    '.github/producer-pins.json': '{}',
+  });
+  match(all, /R5.3: o\/exec init PR adds .github\/workflows\/nibfin-extra.yml, which is not in the execution set \(nibfin-issue.yml, nibfin-shared-runner.yml, nibfin-job.yml, nibfin-runner-request.yml\)/);
+  match(all, /R5.4: o\/exec init PR adds .github\/workflows\/nibfin-wake.yml/);
   match(all, /R5.4: o\/exec init PR adds .github\/producer-pins.json/);
+  equal(/adds .github\/workflows\/nibfin-(job|runner-request).yml/.test(all), false);
   match(all, /R5.5: o\/exec: .github\/producer-pins.json is not named/);
   match(all, /R5.5: o\/exec: .github\/workflows\/nibfin-runner-request.yml name is "Runner request"/);
   match(all, /R5.5: o\/exec: .github\/workflows\/nibfin-runner-request.yml run-name is null/);
   match(all, /R5.7: o\/exec: .github\/workflows\/nibfin-issue.yml uses taco3064\/nibfin-core/);
-  match(all, /R5.7: .*nibfin-shared-runner.yml references ghcr.io\/taco3064\/nibfin@sha256:b+, expected/);
+  match(all, /R5.7: .*nibfin-job.yml references ghcr.io\/taco3064\/nibfin@sha256:b+, expected ghcr.io\/taco3064\/nibfin@sha256:a+/);
+  match(execProblems({}, ['nibfin-runner-request.yml']), /R5.3: o\/exec init PR lacks .github\/workflows\/nibfin-runner-request.yml/);
   const peer = new Check();
   checkInitFiles(peer, 'o/peer', 'peer', [
-    { path: '.github/workflows/nibfin-issue.yml', text: wf('Issue') },
-    { path: '.github/workflows/nibfin-shared-runner.yml', text: shared },
+    { path: WFS + 'nibfin-issue.yml', text: wf('Issue') },
+    { path: WFS + 'nibfin-shared-runner.yml', text: shared },
   ], D);
   match(peer.problems.join('\n'), /R5.37: o\/peer init PR has nibfin-shared-runner.yml, so it is not the peer version/);
+});
+
+test('init files: a reusable nibfin-job.yml that runs an unpinned image fails R5.7', () => {
+  match(execProblems({ 'nibfin-job.yml': job({ run: '"$IMAGE"' }) }), /R5.7: o\/exec: .github\/workflows\/nibfin-job.yml references ghcr.io\/taco3064\/nibfin run without a digest, expected/);
+  match(execProblems({ 'nibfin-job.yml': job({ run: 'ghcr.io/taco3064/nibfin:latest' }) }), /R5.7: .*nibfin-job.yml references ghcr.io\/taco3064\/nibfin:latest, expected/);
+  match(
+    execProblems({ 'nibfin-job.yml': job({ env: '  IMAGE: ghcr.io/taco3064/nibfin\n', run: '"$IMAGE:main"' }) }),
+    /R5.7: .*nibfin-job.yml references ghcr.io\/taco3064\/nibfin with no expected digest in the file or its caller/,
+  );
+});
+
+test('init files: a shared runner and the job it calls with no nibfin- runs-on label fail R5.7', () => {
+  match(
+    execProblems({ 'nibfin-job.yml': job({ runsOn: 'ubuntu-24.04' }) }),
+    /R5.7: o\/exec: no runs-on in nibfin-shared-runner.yml or the local workflows it calls \(nibfin-job.yml\) uses a nibfin- label \(ubuntu-24.04 \| ubuntu-24.04\)/,
+  );
+});
+
+test('init files: only a workflow-call-only file may leave out its run-name (R5.5)', () => {
+  equal(execProblems({ 'nibfin-job.yml': job() }), '');
+  match(
+    execProblems({ 'nibfin-job.yml': job({ on: '  workflow_call:\n  issues:\n    types: [opened]\n' }) }),
+    /R5.5: o\/exec: .github\/workflows\/nibfin-job.yml run-name is null, expected to start with "Nibfin"/,
+  );
+  match(
+    execProblems({ 'nibfin-issue.yml': wf('Issue').replace(/run-name: .*\n/, "run-name: ${{ github.event.issue && format('Nibfin · {0}', 1) || 'Other' }}\n") }),
+    /R5.5: .*nibfin-issue.yml run-name is .*, expected to start with "Nibfin"/,
+  );
 });
 
 test('Dashboard flags compare by name and by the default cobra prints', () => {
