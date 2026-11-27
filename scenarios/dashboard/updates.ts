@@ -143,14 +143,6 @@ async function localJob(ctx: RunContext, secrets: Secrets, markers: Record<strin
     check(first.length, 'R9.23', 'a local Nibfin Job container to start for fixture E', 'no Job container start was seen in 20 min');
     const jobStart = Math.min(Date.now(), (first[0] as { at: number }).at);
     const issue = E;
-    // The 20 s count from the later of the Job start and E's first appearance on the page.
-    const listed = await seenWithin(person, async () => (await issueElement(person, issue.title).count()) > 0, POLL_MS + TOLERANCE_MS);
-    check(listed !== undefined, 'R9.24', `E listed in the repo view within ${(POLL_MS + TOLERANCE_MS) / 1000} s`, 'not listed');
-    // seenWithin returns as soon as E is seen, so now is E's first appearance.
-    const startedAt = Math.max(jobStart, Date.now());
-    const inProgress = async () => /in progress|running|queued/i.test(`${await issueElement(person, issue.title).innerText().catch(() => '')} ${await issueElement(person, issue.title).locator('[aria-label]').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')).join(' ')).catch(() => '')}`);
-    const stripMs = await seenWithin(person, inProgress, Math.max(0, 20_000 - (Date.now() - startedAt)));
-    check(stripMs !== undefined && (await sameDocument(person)), 'R9.23', "E's run strip to show an in-progress run within 20 s of the Job start (or of E's first appearance, if later), without navigation", 'not shown');
     // Only a Runner row that holds #E: other rows, legends and E's own track may say "busy" or "Shape".
     const busyWithE = async (p: Page = runner) => {
       const row = p.locator('li, [role="row"], [role="listitem"], article').filter({ hasText: new RegExp(`#${issue.number}\\b`) }).filter({ hasText: /\bbusy\b/i }).last();
@@ -159,11 +151,23 @@ async function localJob(ctx: RunContext, secrets: Secrets, markers: Record<strin
       const stage = (await row.locator('[aria-current="step"], [aria-current="true"]').first().innerText().catch(() => '')) || t;
       return /\bshape\b/i.test(stage) && /\b\d{1,2}:\d{2}\b|\b\d+\s?(s|m|min)\b/.test(t);
     };
+    // A live Runner view learns of the Job from podman events (R9.23), so its 20 s count from
+    // the container start alone; it is watched while the repo view waits for E to be listed.
+    const runnerBusy = markers.runner === 'live' ? seenWithin(runner, busyWithE, Math.max(0, jobStart + 20_000 - Date.now())) : Promise.resolve(undefined);
+    // E reaches the repo view through GitHub (R9.24); its strip counts 20 s from the later
+    // of the Job start and E's first appearance, since an unlisted Issue cannot show a strip.
+    const listed = await seenWithin(person, async () => (await issueElement(person, issue.title).count()) > 0, POLL_MS + TOLERANCE_MS);
+    check(listed !== undefined, 'R9.24', `E listed in the repo view within ${(POLL_MS + TOLERANCE_MS) / 1000} s`, 'not listed');
+    // seenWithin returns as soon as E is seen, so now is E's first appearance.
+    const startedAt = Math.max(jobStart, Date.now());
+    const inProgress = async () => /in progress|running|queued/i.test(`${await issueElement(person, issue.title).innerText().catch(() => '')} ${await issueElement(person, issue.title).locator('[aria-label]').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')).join(' ')).catch(() => '')}`);
+    const stripMs = await seenWithin(person, inProgress, Math.max(0, 20_000 - (Date.now() - startedAt)));
+    check(stripMs !== undefined && (await sameDocument(person)), 'R9.23', "E's run strip to show an in-progress run within 20 s of the Job start (or of E's first appearance, if later), without navigation", 'not shown');
     // The page the Runner view is read on: the live page, or a manually refreshed one.
     let runnerPage = runner;
     if (markers.runner === 'live') {
-      const ms = await seenWithin(runner, busyWithE, Math.max(0, 20_000 - (Date.now() - startedAt)));
-      check(ms !== undefined && (await sameDocument(runner)), 'R9.23', `a Runner busy with #${issue.number}, its stage and a time within 20 s, without navigation`, (await bodyText(runner)).slice(0, 300));
+      const ms = await runnerBusy;
+      check(ms !== undefined && (await sameDocument(runner)), 'R9.23', `a Runner busy with #${issue.number}, its stage and a time within 20 s of the Job container start, without navigation`, (await bodyText(runner)).slice(0, 300));
     } else {
       runnerPage = await refreshed(ctx, secrets, runner, 'runner');
       check(await busyWithE(runnerPage), 'R9.5', `after a refresh, a Runner busy with #${issue.number}, its stage and a time`, (await bodyText(runnerPage)).slice(0, 300));
