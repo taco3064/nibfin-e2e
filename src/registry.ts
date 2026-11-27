@@ -24,6 +24,8 @@ import { runnerAddLogin } from '../scenarios/management/runner-add-login.ts';
 import { runnerRemove } from '../scenarios/management/runner-remove.ts';
 import { statusViews } from '../scenarios/management/status-views.ts';
 import { upgrade } from '../scenarios/management/upgrade.ts';
+import { imageSwitch } from '../scenarios/management/image-switch.ts';
+import { createKit } from '../scenarios/lib/kit.ts';
 import { wording } from '../scenarios/management/wording.ts';
 import { siteDeployOnPush } from '../scenarios/site/deploy-on-push.ts';
 import { livePage } from '../scenarios/site/live-page.ts';
@@ -37,7 +39,9 @@ const services = createServices(fileURLToPath(new URL('..', import.meta.url)), (
 // imports and lists the Issue #299 ones, and the others are listed here. The installation and
 // management scenarios run first: they read the fresh host and the init PRs, and upgrade, which
 // changes main's workflow, runs before the long lifecycle scenarios so GHCR's main image has
-// little time to move after init. They leave their fixture Issues paused or without `scope`, and the
+// little time to move after init. image-switch, which pins an earlier image on main and checks that a running
+// Job keeps it while the next Job runs the upgraded one, runs alone right after upgrade for the same reason and
+// restores main's pin before the lifecycle scenarios. They leave their fixture Issues paused or without `scope`, and the
 // delivery-lifecycle scenarios judge only their own tagged fixtures and runs created since they
 // started. Then Issue #299's, the site and the Dashboard scenarios, which need earlier work in
 // the sandboxes to have settled. runner-add-login (alone, with no fixture waiting for a Runner)
@@ -58,6 +62,7 @@ export const scenarios: Scenario[] = [
   confirmPreview,
   failurePending,
   upgrade,
+  imageSwitch((ctx) => createKit(services, ctx)),
   ...lifecycleScenarios,
   ...createScenarios(services),
   livePage,

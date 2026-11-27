@@ -180,7 +180,7 @@
   {"id": "R5.52", "platforms": ["linux"], "scenarios": ["pause-resume"]},
   {"id": "R5.53", "platforms": ["linux"], "scenarios": ["dashboard"]},
   {"id": "R5.54", "platforms": ["linux"], "scenarios": ["upgrade"]},
-  {"id": "R5.55", "platforms": ["linux"], "scenarios": []},
+  {"id": "R5.55", "platforms": ["linux"], "scenarios": ["image-switch"]},
   {"id": "R5.56", "platforms": ["linux"], "scenarios": ["init-settings"]},
   {"id": "R5.57", "platforms": ["linux"], "scenarios": ["collaborator-register"]},
   {"id": "R5.58", "platforms": ["linux"], "scenarios": ["collaborator-register"]},
