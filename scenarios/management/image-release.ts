@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { Scenario } from '../../src/types.ts';
 import { Check, tail } from '../lib/check.ts';
 import { nibfinFacts } from '../lib/github.ts';
-import { mainDigest } from '../lib/image.ts';
+import { requireCurrentImage } from '../lib/image.ts';
 
 export const imageDigest: Scenario = {
   id: 'image-digest',
@@ -14,14 +14,11 @@ export const imageDigest: Scenario = {
     const c = new Check();
     const { imageDigest: digest } = nibfinFacts(ctx);
     // No image release record exists yet, so init must use the newest signed main image.
-    const current = await mainDigest();
-    c.that(
-      current === digest,
-      'R8.7',
-      `init pinned ${digest}, but GHCR :main (the newest signed main image) is ${current}; precondition not reached if a newer main image appeared after init`,
-    );
+    const moved = await requireCurrentImage(digest);
     const v = await ctx.gh(['attestation', 'verify', `oci://ghcr.io/taco3064/nibfin@${digest}`, '--repo', 'taco3064/nibfin-core']);
     c.that(v.code === 0, 'R8.7', `gh attestation verify of ghcr.io/taco3064/nibfin@${digest} exited ${v.code}: ${tail(v, 400)}`);
+    // A newer main image after init makes a different digest correct: report the precondition, not a product mismatch.
+    if (moved) return { status: 'failed', reason: [moved.reason, ...c.problems].join('; ') };
     return c.outcome(`init pinned ${digest}, the current GHCR :main digest, and its attestation verifies against nibfin-core`);
   },
 };
