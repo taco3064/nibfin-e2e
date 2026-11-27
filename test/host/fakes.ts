@@ -17,13 +17,27 @@ export interface FakeRepo {
   keys: { id: number; title: string }[];
   runners: { id: number; name: string; status: string; busy?: boolean; os?: string }[];
   /** `'upgrade'` answers the rules API with GitHub's 403 for free private repositories. */
-  rulesets: { id: number; name: string; rules?: { type: string }[] }[] | 'upgrade';
+  rulesets: FakeRuleset[] | 'upgrade';
   tags: string[];
   /** Classic branch protection on main; unset means not protected, `'upgrade'` answers with GitHub's 403 for free private repositories. */
   protection?: Record<string, unknown> | 'upgrade';
   /** Paths present on main (for the init read-back). */
   mainFiles: Set<string>;
 }
+
+/** A ruleset; an entry without `enforcement` behaves as it did before enforcement was modelled. */
+export interface FakeRuleset {
+  id: number;
+  name: string;
+  rules?: { type: string }[];
+  enforcement?: string;
+  target?: string;
+  conditions?: unknown;
+  bypass_actors?: unknown[];
+}
+
+/** GitHub's refusal of a direct write to main under an active ruleset that requires the `test` check. */
+export const RULE_VIOLATION = 'Repository rule violations found. Required status check "test" is expected.';
 
 export function cleanRepo(visibility: string, tree: string): FakeRepo {
   return {
@@ -167,7 +181,15 @@ export class FakeGitHub {
     }
     if ((x = /^\/contents\/(.+)$/.exec(rest))) {
       const file = x[1] as string;
-      if (q.get('ref') === 'main') return repo.mainFiles.has(file) ? ok({ content: '' }) : { status: 404, data: { message: 'Not Found' } };
+      if (method === 'PUT' || method === 'DELETE') {
+        if (body?.branch !== 'main') return { status: 422, data: { message: 'fake: only main is written' } };
+        const required = Array.isArray(repo.rulesets) && repo.rulesets.some((r) => r.enforcement === 'active' && r.rules?.some((rule) => rule.type === 'required_status_checks'));
+        if (required) return { status: 409, data: { message: RULE_VIOLATION } };
+        if (method === 'DELETE') return repo.mainFiles.delete(file) ? ok({ commit: {} }) : { status: 404, data: { message: 'Not Found' } };
+        repo.mainFiles.add(file);
+        return { status: 201, data: { content: { path: file } } };
+      }
+      if (q.get('ref') === 'main') return repo.mainFiles.has(file) ? ok({ content: '', sha: `blob-${file}` }) : { status: 404, data: { message: 'Not Found' } };
       const f = repo.pulls.flatMap((p) => (p.head.sha === q.get('ref') ? (p.files ?? []) : [])).find((ff) => ff.filename === file);
       return f ? ok({ content: Buffer.from(f.content).toString('base64') }) : { status: 404, data: { message: 'Not Found' } };
     }
@@ -228,13 +250,24 @@ export class FakeGitHub {
     if (rest === '/rulesets') {
       if (repo.rulesets === 'upgrade') return { status: 403, data: { message: 'Upgrade to GitHub Pro or make this repository public to enable this feature.' } };
       if (method === 'POST') {
-        const created = { id: 500 + ++this.n, name: String(body?.name), rules: body?.rules as { type: string }[] };
+        const created: FakeRuleset = { id: 500 + ++this.n, name: String(body?.name), rules: body?.rules as { type: string }[] };
+        for (const k of ['enforcement', 'target', 'conditions', 'bypass_actors'] as const) if (body?.[k] !== undefined) Object.assign(created, { [k]: body[k] });
         repo.rulesets.push(created);
         return { status: 201, data: created };
       }
       return ok(repo.rulesets);
     }
-    if ((x = /^\/rulesets\/(\d+)$/.exec(rest)) && Array.isArray(repo.rulesets)) return del(repo.rulesets, (r) => r.id === Number(x?.[1]));
+    if ((x = /^\/rulesets\/(\d+)$/.exec(rest)) && Array.isArray(repo.rulesets)) {
+      const found = repo.rulesets.find((r) => r.id === Number(x?.[1]));
+      if (method === 'GET') return found ? ok(found) : { status: 404, data: { message: 'Not Found' } };
+      if (method === 'PUT') {
+        if (!found) return { status: 404, data: { message: 'Not Found' } };
+        // Only the fields sent change: every field of GitHub's update body is optional.
+        for (const [k, v] of Object.entries(body ?? {})) if (k !== 'id') Object.assign(found, { [k]: v });
+        return ok(found);
+      }
+      return del(repo.rulesets, (r) => r.id === Number(x?.[1]));
+    }
     return { status: 404, data: { message: `fake: no route ${method} ${rest}` } };
   }
 }
