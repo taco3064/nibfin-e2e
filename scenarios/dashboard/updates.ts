@@ -1,7 +1,8 @@
 // Proposal R9.23, R9.24, R9.5, R9.8 and R9.34: how the Dashboard keeps its data current.
 import type { Page } from 'playwright-core';
 import type { RunContext } from '../../src/types.ts';
-import { FIXTURE_E, check, fail, fixtureTitle, intervalMatches, startsInWindow } from './checks.ts';
+import { FIXTURE_E, check, describePauseView, fail, fixtureTitle, intervalMatches, pauseAppeared, startsInWindow } from './checks.ts';
+import type { PauseView } from './checks.ts';
 import { assertQuietSandboxes, createIssue, ensureFixtures, findByTitle, me, openIssues, readIssue, sleep, until } from './github.ts';
 import type { Issue } from './github.ts';
 import {
@@ -23,7 +24,6 @@ import {
 import type { Secrets, View } from './support.ts';
 import { issueFeatures } from './views.ts';
 
-const PLAIN_LABEL = 'e2e-plain';
 /** R9.24 checks every 30–60 s; the tolerance covers the push to the browser and rendering. */
 const POLL_MS = 60_000;
 const TOLERANCE_MS = 30_000;
@@ -64,6 +64,25 @@ async function seenWithin(page: Page, seen: () => Promise<boolean>, ms: number):
   }
 }
 
+/** What D's element shows about pause in a view, without navigating (R9.2, R9.19). */
+async function pauseView(p: Page, title: string): Promise<PauseView> {
+  const missing: PauseView = { present: false, text: '', pauseControls: 0, resumeControls: 0 };
+  const el = issueElement(p, title);
+  if (!(await el.count().catch(() => 0))) return missing;
+  const text = await el.innerText().catch(() => undefined);
+  if (text === undefined) return missing;
+  const count = (name: RegExp) => el.getByRole('button', { name }).count().catch(() => 0);
+  return { present: true, text, pauseControls: await count(/^pause\b/i), resumeControls: await count(/^resume\b/i) };
+}
+
+/** Removes the pause added to D and reads D back, so later steps find it with pending and without pause (R9.34). */
+async function unpauseD(ctx: RunContext, exec: string, number: number): Promise<void> {
+  const gh = ctx.github;
+  await gh.rest('DELETE', `/repos/${exec}/issues/${number}/labels/pause`, undefined, [404]);
+  const D = await until(() => readIssue(gh, exec, number), (i) => !i.labels.includes('pause'), 60_000, 2000);
+  if (D.labels.includes('pause') || !D.labels.includes('pending')) throw new Error(`harness: fixture D (#${number}) still has [${D.labels.join(', ')}] after removing pause`);
+}
+
 async function remoteChange(ctx: RunContext, secrets: Secrets, markers: Record<string, string>, notes: string[]) {
   const gh = ctx.github;
   const exec = ctx.sandbox.execution;
@@ -80,29 +99,68 @@ async function remoteChange(ctx: RunContext, secrets: Secrets, markers: Record<s
     await gotoView(repo, 'repo');
     await selectRepo(repo, exec);
     markers.repo = await readUpdateMarker(repo);
+    const views = [['person', person], ['repo', repo]] as const;
 
-    await gh.rest('POST', `/repos/${exec}/labels`, { name: PLAIN_LABEL, color: 'cccccc', description: 'nibfin-e2e: not a Nibfin label' }, [422]);
+    // D must show a Pause control and no Resume before the edit, so the edit can only show up
+    // as a new Resume control or a new pause marker.
+    const before: Record<string, PauseView> = {};
+    for (const [name, page] of views) {
+      const v = await until(() => pauseView(page, f.D.title), (x) => x.present && x.pauseControls > 0 && x.resumeControls === 0, POLL_MS + TOLERANCE_MS, 2000);
+      if (!(v.present && v.pauseControls > 0 && v.resumeControls === 0)) {
+        throw new Error(`precondition: fixture D is not listed with a Pause control and no Resume in the ${name} view before the edit (saw: ${describePauseView(v)}); nothing was edited and nothing is asserted about R9.24`);
+      }
+      before[name] = v;
+    }
+
     const D = await readIssue(gh, exec, f.D.number);
     check(D.labels.includes('pending'), 'R9.24', 'fixture D to keep pending (so the label event dispatches nothing)', `[${D.labels.join(', ')}]`);
-    await gh.rest('POST', `/repos/${exec}/issues/${D.number}/labels`, { labels: [PLAIN_LABEL] });
-    // Every view's window starts at the edit, not when its own check starts.
-    const changedAt = Date.now();
-    let liveSeen = 0;
-    for (const [name, page] of [['person', person], ['repo', repo]] as const) {
-      const shows = async (p: Page = page) => (await issueElement(p, D.title).innerText().catch(() => '')).includes(PLAIN_LABEL);
-      if (markers[name] === 'live') {
-        const ms = await seenWithin(page, shows, Math.max(0, POLL_MS + TOLERANCE_MS - (Date.now() - changedAt)));
-        check(ms !== undefined, 'R9.24', `the ${name} view (marked Live) to show D's new label within ${(POLL_MS + TOLERANCE_MS) / 1000} s of the edit, without navigation`, 'not shown');
-        check(await sameDocument(page), 'R9.24', `no reload of the ${name} view`, 'the document was reloaded');
-        notes.push(`${name} view showed a label edited on GitHub ${Math.round((Date.now() - changedAt) / 1000)} s after the edit`);
-        liveSeen++;
-      } else {
-        const again = await refreshed(ctx, secrets, page, name, name === 'repo' ? exec : undefined);
-        check(await shows(again), 'R9.8', `the ${name} view (marked manual) to show D's new label after a manual refresh`, 'not shown');
-        notes.push(`${name} view is manual and showed the label after a refresh`);
+    let pauseAdded = false;
+    let failed = false;
+    let error: unknown;
+    try {
+      pauseAdded = true;
+      await gh.rest('POST', `/repos/${exec}/issues/${D.number}/labels`, { labels: ['pause'] });
+      // Every view's window starts at the edit, not when its own check starts.
+      const changedAt = Date.now();
+      let liveSeen = 0;
+      for (const [name, page] of views) {
+        const shown = (after: PauseView) => `before the edit: ${describePauseView(before[name] as PauseView)}; after: ${describePauseView(after)}`;
+        if (markers[name] === 'live') {
+          const ms = await seenWithin(page, async () => pauseAppeared(before[name] as PauseView, await pauseView(page, D.title)), Math.max(0, POLL_MS + TOLERANCE_MS - (Date.now() - changedAt)));
+          if (ms === undefined) {
+            const after = await pauseView(page, D.title);
+            fail('R9.24', `the ${name} view (marked Live) to show D's pause (added on GitHub) within ${(POLL_MS + TOLERANCE_MS) / 1000} s of the edit, without navigation`, `not shown; ${shown(after)}`);
+          }
+          check(await sameDocument(page), 'R9.24', `no reload of the ${name} view`, 'the document was reloaded');
+          notes.push(`${name} view showed a pause added on GitHub ${Math.round((Date.now() - changedAt) / 1000)} s after the edit`);
+          liveSeen++;
+        } else {
+          const again = await refreshed(ctx, secrets, page, name, name === 'repo' ? exec : undefined);
+          const after = await pauseView(again, D.title);
+          check(pauseAppeared(before[name] as PauseView, after), 'R9.8', `the ${name} view (marked manual) to show D's pause after a manual refresh`, () => `not shown; ${shown(after)}`);
+          notes.push(`${name} view is manual and showed the pause after a refresh`);
+        }
+      }
+      check(liveSeen > 0, 'R9.24', 'the server to push changes made elsewhere to at least one view marked Live', 'neither the person nor the repo view is Live');
+    } catch (e) {
+      failed = true;
+      error = e;
+    }
+    // Always remove the pause again; an earlier failure keeps its own message and a
+    // clean-up failure is then only logged.
+    if (pauseAdded) {
+      try {
+        await unpauseD(ctx, exec, D.number);
+      } catch (e) {
+        if (!failed) {
+          failed = true;
+          error = e;
+        } else {
+          ctx.log(`removing pause from fixture D failed: ${(e as Error).message}`);
+        }
       }
     }
-    check(liveSeen > 0, 'R9.24', 'the server to push changes made elsewhere to at least one view marked Live', 'neither the person nor the repo view is Live');
+    if (failed) throw error;
   } finally {
     await dashP.stop();
     await dashR.stop();
