@@ -93,43 +93,52 @@ test('run titles: every title an expression can render must start with the prefi
   equal(titleStartsWith('', 'Nibfin'), false);
 });
 
-test('unpinned images: a bare name passes only next to the digest and when podman never runs it bare', () => {
+test('unpinned images: a bare name passes only next to the digest, assigned and compared, never used otherwise', () => {
   const job = (run: string, env = `  IMAGE: ghcr.io/taco3064/nibfin\n  IMAGE_REF: ghcr.io/taco3064/nibfin@${D1}\n`) =>
     `on:\n  workflow_call:\nenv:\n${env}jobs:\n  s:\n    runs-on: [self-hosted, nibfin-1]\n    steps:\n      - run: |\n          ${run}\n`;
-  deepEqual(unpinnedImages(job('podman run --rm \\\n            "$IMAGE_REF" nibfin run\n          [ "$r" != "$IMAGE" ]'), D1), []);
-  deepEqual(unpinnedImages(job('podman run --rm \\\n            "$IMAGE" nibfin run'), D1), [{ ref: 'ghcr.io/taco3064/nibfin', why: 'run without a digest' }]);
-  deepEqual(unpinnedImages(job('podman pull ${IMAGE}'), D1), [{ ref: 'ghcr.io/taco3064/nibfin', why: 'run without a digest' }]);
-  deepEqual(unpinnedImages(job('podman create ghcr.io/taco3064/nibfin'), D1), [{ ref: 'ghcr.io/taco3064/nibfin', why: 'run without a digest' }]);
+  const bare = [{ ref: 'ghcr.io/taco3064/nibfin', why: 'run without a digest' }];
+  // Passes: assigned, then only compared, as when telling older local images apart.
+  deepEqual(unpinnedImages(job('podman run --rm \\\n            "$IMAGE_REF" nibfin run\n          if [ "$r" != "$IMAGE" ]; then continue; fi\n          [[ ${IMAGE} == "$x" ]]'), D1), []);
+  deepEqual(unpinnedImages(job('IMAGE=ghcr.io/taco3064/nibfin\n          [ "$r" = "$IMAGE" ]'), D1), []);
+  // The digest must be in the file or a caller.
   deepEqual(unpinnedImages(job('echo', '  IMAGE: ghcr.io/taco3064/nibfin\n'), D1), [{ ref: 'ghcr.io/taco3064/nibfin', why: 'with no expected digest in the file or its caller' }]);
   deepEqual(unpinnedImages(job('echo', '  IMAGE: ghcr.io/taco3064/nibfin\n'), D1, [`with:\n  digest: ${D1}\n`]), []);
-  deepEqual(unpinnedImages(job('echo', `  IMAGE: ghcr.io/taco3064/nibfin\n  D: ${D1}\n`) + '    container: ghcr.io/taco3064/nibfin\n', D1), [{ ref: 'ghcr.io/taco3064/nibfin', why: 'run without a digest' }]);
+  // Other references fail on their own.
   deepEqual(unpinnedImages(job('podman run ghcr.io/taco3064/nibfin:latest'), D1), [{ ref: 'ghcr.io/taco3064/nibfin:latest' }]);
   deepEqual(unpinnedImages(job(`podman run ghcr.io/taco3064/nibfin@${D2}`), D1), [{ ref: `ghcr.io/taco3064/nibfin@${D2}` }]);
-  // Options before the subcommand, another container tool, a variable copied from the bare one, a folded run block.
-  const bare = [{ ref: 'ghcr.io/taco3064/nibfin', why: 'run without a digest' }];
-  deepEqual(unpinnedImages(job('podman --log-level debug run "$IMAGE"'), D1), bare);
-  deepEqual(unpinnedImages(job('docker run ghcr.io/taco3064/nibfin'), D1), bare);
-  deepEqual(unpinnedImages(job('IMG="$IMAGE"\n          podman run "$IMG"'), D1), bare);
-  deepEqual(unpinnedImages(job('IMG="${IMAGE}@x"\n          podman run "$IMAGE_REF"'), D1), []);
-  const folded = (arg: string) => job('x').replace('      - run: |\n          x\n', `      - run: >\n          podman run\n          ${arg}\n      - run: echo "$IMAGE"\n`);
-  deepEqual(unpinnedImages(folded('"$IMAGE"'), D1), bare);
-  deepEqual(unpinnedImages(folded('"$IMAGE_REF"'), D1), []);
-  // A copy of the bare name with a tag or another digest appended still holds it.
-  deepEqual(unpinnedImages(job('IMG="$IMAGE:latest"\n          podman run "$IMG"'), D1), bare);
-  deepEqual(unpinnedImages(job(`IMG="\${IMAGE}@${D2}"\n          podman run "$IMG"`), D1), bare);
-  // The bare name as an input default, or passed in by a caller, and run through the input.
-  const input = job('podman run "${{ inputs.image }}"').replace('  workflow_call:\n', '  workflow_call:\n    inputs:\n      image:\n        type: string\n        default: ghcr.io/taco3064/nibfin\n');
-  deepEqual(unpinnedImages(input, D1), bare);
+  // Run, pulled or created, literally or through the variable, however written.
+  for (const run of [
+    'podman run --rm \\\n            "$IMAGE" nibfin run',
+    'podman pull ${IMAGE}',
+    'podman create ghcr.io/taco3064/nibfin',
+    'podman --log-level debug run "$IMAGE"',
+    'docker run ghcr.io/taco3064/nibfin',
+    'echo "$IMAGE" | xargs podman run --rm',
+    'podman run "${IMAGE:-x}"',
+    'podman run "${IMAGE%%@*}"',
+    'P=podman; $P run "$IMAGE"',
+    'IMG="$IMAGE"\n          podman run "$IMG"',
+    'IMG="$IMAGE:latest"\n          podman run "$IMG"',
+    `IMG="\${IMAGE}@${D2}"\n          podman run "$IMG"`,
+    'echo "img=$IMAGE" >> "$GITHUB_OUTPUT"',
+    '[ "$(podman run "$IMAGE")" = x ]',
+    '[ "$r" != "$IMAGE" ] || podman run "$IMAGE"',
+  ]) deepEqual(unpinnedImages(job(run), D1), bare, run);
+  // Expressions, matrices, inputs, values below their key, image keys.
+  const swap = (from: string, to: string) => job('x').replace(from, to);
+  deepEqual(unpinnedImages(swap('          x\n', '          podman run "${{ env[\'IMAGE\'] }}"\n'), D1), bare);
+  deepEqual(unpinnedImages(swap('    steps:\n', '    strategy:\n      matrix:\n        img:\n          - ghcr.io/taco3064/nibfin\n    steps:\n'), D1), bare);
+  deepEqual(unpinnedImages(swap('  workflow_call:\n', '  workflow_call:\n    inputs:\n      image:\n        type: string\n        default: ghcr.io/taco3064/nibfin\n'), D1), bare);
+  deepEqual(unpinnedImages(swap('  IMAGE: ghcr.io/taco3064/nibfin\n', '  IMAGE:\n    ghcr.io/taco3064/nibfin\n'), D1), bare);
+  deepEqual(unpinnedImages(swap('  IMAGE: ghcr.io/taco3064/nibfin\n', '  IMAGE: >-\n    ghcr.io/taco3064/nibfin\n'), D1), bare);
+  deepEqual(unpinnedImages(swap('    steps:\n', '    container: ghcr.io/taco3064/nibfin\n    steps:\n'), D1), bare);
+  deepEqual(unpinnedImages(swap('    steps:\n', '    container:\n      image: ${{ env.IMAGE }}\n    steps:\n'), D1), bare);
+  deepEqual(unpinnedImages(swap('      - run: |\n', '      - uses: docker://ghcr.io/taco3064/nibfin\n      - run: |\n'), D1), bare);
+  // A caller passing the bare name in.
   const called = 'on:\n  workflow_call:\n    inputs:\n      img:\n        type: string\njobs:\n  s:\n    steps:\n      - run: podman run "${{ inputs.img }}"\n';
   const caller = `env:\n  D: ${D1}\njobs:\n  j:\n    uses: ./.github/workflows/nibfin-job.yml\n    with:\n      img: ghcr.io/taco3064/nibfin\n`;
   deepEqual(unpinnedImages(called, D1, [caller]), bare);
-  deepEqual(unpinnedImages(called.replace('inputs.img', 'inputs.other'), D1, [caller]), []);
-  // A value written on the lines below its key, and an image fed into the command through a pipe.
-  const below = (value: string, run = 'podman run "$IMAGE"') => job(run, `  IMAGE:${value}\n  IMAGE_REF: ghcr.io/taco3064/nibfin@${D1}\n`);
-  deepEqual(unpinnedImages(below('\n    ghcr.io/taco3064/nibfin'), D1), bare);
-  deepEqual(unpinnedImages(below(' >-\n    ghcr.io/taco3064/nibfin'), D1), bare);
-  deepEqual(unpinnedImages(below('\n    ghcr.io/taco3064/nibfin', 'podman run "$IMAGE_REF"'), D1), []);
-  deepEqual(unpinnedImages(job('echo "$IMAGE" | xargs podman run --rm'), D1), bare);
+  deepEqual(unpinnedImages(called, D1, []), []);
 });
 
 const HELP = `Add Runners
