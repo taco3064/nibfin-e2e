@@ -18,7 +18,7 @@ import {
   startedBefore,
   time,
 } from './analysis.ts';
-import type { Comment, Issue, Job, Run } from './analysis.ts';
+import type { Comment, Issue, Job, Run, Stage } from './analysis.ts';
 import { DEADLINE, changeRequest, finishAt, hostedRunProblems, stageSeen, lifecycle, message, redact } from './kit.ts';
 import type { Kit } from './kit.ts';
 import { AWAITS_REVIEW, RELOGIN, SHAPE_MARKER } from './marks.ts';
@@ -253,19 +253,31 @@ async function dispatched(
 
 /**
  * Why I's deliver job and I2's shape job can no longer hold both Runners at once: they
- * cannot cover the registered Runners, ran on the same one, or I's job completed before
- * I2's started. Read from the jobs' own times, not from a snapshot's Runner list.
+ * cannot cover the registered Runners, ran on the same one, I's job completed before
+ * I2's started, or I2's job completed before I's started. `oldJob` is `undefined` while
+ * I's deliver job has not started. Read from the jobs' own times, not from a snapshot's
+ * Runner list.
  */
-export function busyGone(oldJob: Job, shapeJob: Job | undefined, runners: string[]): string | undefined {
-  if (runners.length !== 2)
-    return `the registered Runners are ${runners.join(', ') || 'none'}; I's deliver job and I2's shape job cannot cover them`;
+export function busyGone(oldJob: Job | undefined, shapeJob: Job | undefined, runners: string[]): string | undefined {
+  if (runners.length !== 2) return `the registered Runners are ${runners.join(', ') || 'none'}; I's deliver job and I2's shape job cannot cover them`;
   const shapeStarted = shapeJob !== undefined && jobWindow(shapeJob, 'I2', 'shape') !== undefined;
-  if (shapeStarted && shapeJob.runner_name === oldJob.runner_name)
-    return `I2's shape job ${shapeJob.id} ran on ${String(shapeJob.runner_name)}, the same Runner as I's deliver job ${oldJob.id}`;
-  if (oldJob.status === 'completed' && (!shapeStarted || time(shapeJob.started_at) >= time(oldJob.completed_at))) {
-    return `I's deliver job ${oldJob.id} completed at ${String(oldJob.completed_at)} before I2's shape job started`;
+  if (oldJob) {
+    if (shapeStarted && shapeJob.runner_name === oldJob.runner_name) return `I2's shape job ${shapeJob.id} ran on ${String(shapeJob.runner_name)}, the same Runner as I's deliver job ${oldJob.id}`;
+    if (oldJob.status === 'completed' && (!shapeStarted || time(shapeJob.started_at) >= time(oldJob.completed_at))) {
+      return `I's deliver job ${oldJob.id} completed at ${String(oldJob.completed_at)} before I2's shape job started`;
+    }
+  }
+  if (shapeStarted && shapeJob.status === 'completed' && (!oldJob || time(shapeJob.completed_at) <= time(oldJob.started_at))) {
+    return oldJob
+      ? `I2's shape job ${shapeJob.id} completed at ${String(shapeJob.completed_at)} before I's deliver job ${oldJob.id} started at ${String(oldJob.started_at)}`
+      : `I2's shape job ${shapeJob.id} completed at ${String(shapeJob.completed_at)} before I's deliver job started`;
   }
   return undefined;
+}
+
+/** When I2 is filed: once I is `shaped` or has a deliver run, so that I2's route and shape can overlap I's Deliver. */
+export function i2Due(labels: readonly string[], stages: readonly Stage[]): boolean {
+  return labels.includes('shaped') || stages.includes('deliver');
 }
 
 /** Whether every registered Runner was busy with one of the jobs at `t`, from the jobs' own windows. */
@@ -314,6 +326,7 @@ export const interruptedDeliver: Scenario = lifecycle({
         filed.push(i.number);
         return i.number;
       };
+      const iFiledAt = k.now();
       const n = await file(
         'i',
         'Add clamp and document it',
@@ -326,8 +339,45 @@ export const interruptedDeliver: Scenario = lifecycle({
       );
       const branch = `nibfin/issue-${n}`;
       const show = k.show(exec, n);
+      // Every deliver job of I is created after I was filed, so none is skipped however late a wait builds this check.
+      const iGone = k.stageGone(exec, n, 'deliver', { since: iFiledAt - 60_000 });
 
-      // 3: I's Deliver runs and has pushed to its branch.
+      // I2 is filed once I is shaped or its deliver run exists, so that I2's route and shape can overlap I's Deliver.
+      await k.obs.until(
+        'I to be shaped or its deliver run to exist',
+        (s) => (i2Due(k.labels(s, exec, n), k.stages(s, exec, n, ['deliver']).map((r) => r.stage)) ? true : undefined),
+        DEADLINE.stage,
+        show,
+        { gonePast: k.stageGone(exec, n, 'shape') },
+      );
+      const n2 = await file('i2', 'Add decrement', changeRequest(k.slug('i2'), 'decrement', 'returns its argument minus one'));
+
+      // 4: I2 takes the second Runner while I's deliver job holds the other: both Runners busy, read from the jobs' own times.
+      const runnerNames = (await k.obs.runners(exec)).map((r) => r.name);
+      const i2Shape = async (s: Snapshot) => (await k.agentJobs(s, exec, n2, ['shape'])).find((j) => jobWindow(j, issueKey(exec, n2), 'shape'));
+      const iDeliver = async (s: Snapshot) => {
+        const j = (await k.agentJobs(s, exec, n, ['deliver'])).find((x) => jobWindow(x, issueKey(exec, n), 'deliver'));
+        return j && k.obs.job(exec, j.id);
+      };
+      const i2Gone = k.stageGone(exec, n2, 'shape');
+      await k.obs.until(
+        'I2\'s shape job to run while I\'s deliver job holds the other Runner',
+        async (s) => {
+          const j = await i2Shape(s);
+          const d = await iDeliver(s);
+          const old = d && jobWindow(d, issueKey(exec, n), 'deliver');
+          const w = j && jobWindow(j, issueKey(exec, n2), 'shape');
+          return old && w && busyTogether([old, w], runnerNames) ? { deliver: d, shape2: j } : undefined;
+        },
+        DEADLINE.stage,
+        k.show(exec, n, n2),
+        { gonePast: async (s) => busyGone(await iDeliver(s), await i2Shape(s), runnerNames) ?? (await i2Gone(s)) ?? iGone(s) },
+      );
+
+      // I3 is filed as soon as the overlap is seen, so that its route starts while both Runners are busy.
+      const n3 = await file('i3', 'Add sign', changeRequest(k.slug('i3'), 'sign', 'returns -1, 0 or 1 for the sign of its argument'));
+
+      // 3: I's Deliver runs and has pushed to its branch. It runs after step 4: I2 was filed when I got shaped or its deliver run appeared.
       const { oldJob, h1 } = await k.obs.until(
         "I's deliver job to run with commits on its branch",
         async (s) => {
@@ -345,50 +395,18 @@ export const interruptedDeliver: Scenario = lifecycle({
         },
         DEADLINE.stage,
         show,
-        { gonePast: k.stageGone(exec, n, 'deliver') },
+        { gonePast: iGone },
       );
 
-      // 4: I2 takes the second Runner while I's deliver job holds the other: both Runners busy, read from the jobs' own times.
-      const n2 = await file(
-        'i2',
-        'Add decrement',
-        changeRequest(k.slug('i2'), 'decrement', 'returns its argument minus one'),
-      );
-      const runnerNames = (await k.obs.runners(exec)).map((r) => r.name);
-      const i2Shape = async (s: Snapshot) =>
-        (await k.agentJobs(s, exec, n2, ['shape'])).find((j) => jobWindow(j, issueKey(exec, n2), 'shape'));
-      const i2Gone = k.stageGone(exec, n2, 'shape');
-      const shape2 = await k.obs.until(
-        "I2's shape job to run while I's deliver job holds the other Runner",
-        async (s) => {
-          const j = await i2Shape(s);
-          const old = jobWindow(await k.obs.job(exec, oldJob.id), issueKey(exec, n), 'deliver');
-          const w = j && jobWindow(j, issueKey(exec, n2), 'shape');
-          return old && w && busyTogether([old, w], runnerNames) ? j : undefined;
-        },
-        DEADLINE.stage,
-        k.show(exec, n, n2),
-        {
-          gonePast: async (s) => busyGone(await k.obs.job(exec, oldJob.id), await i2Shape(s), runnerNames) ?? i2Gone(s),
-        },
-      );
-
-      // 5: I3 is dispatched while the member is online; its job queues (R4.23).
-      const n3 = await file(
-        'i3',
-        'Add sign',
-        changeRequest(k.slug('i3'), 'sign', 'returns -1, 0 or 1 for the sign of its argument'),
-      );
+      // 5: I3 is dispatched while the member is online; its job queues (R4.23). I2 may be in Shape or already in Deliver.
       const d3 = await k.obs.until(
-        "I3's shape job to queue on the Owner's label while I's deliver job and I2's shape job hold both Runners",
+        'I3\'s shape job to queue on the Owner\'s label while I\'s deliver job and I2\'s shape or deliver job hold both Runners',
         async (s) => {
           const d = await dispatched(k, s, n3, label);
           if (!d) return undefined;
           if (d.started) return d;
           // The windows are re-read until those jobs complete.
-          return allBusyAt(s.at, [await k.obs.job(exec, oldJob.id), await k.obs.job(exec, shape2.id)], runnerNames)
-            ? d
-            : undefined;
+          return allBusyAt(s.at, [await k.obs.job(exec, oldJob.id), ...(await k.agentJobs(s, exec, n2))], runnerNames) ? d : undefined;
         },
         DEADLINE.event,
         k.show(exec, n3),
