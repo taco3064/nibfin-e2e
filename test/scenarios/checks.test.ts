@@ -4,10 +4,12 @@ import {
   classifyUpdateMarker,
   commandInputs,
   commandSchemaFrom,
+  countNear,
   dateTexts,
   deployProblems,
   fieldProblems,
   fieldsFromAriaSnapshot,
+  hasCount,
   intervalMatches,
   liveLeaks,
   localeProblems,
@@ -245,4 +247,36 @@ test('a view header marks Live or manual refresh only in the marker wording; con
   equal(classifyUpdateMarker([]), 'neither');
   equal(classifyUpdateMarker(['']), 'neither');
   equal(classifyUpdateMarker(['Live', 'Updates on Refresh']), 'both');
+});
+
+test('a summary count is the standalone number next to its word, never a login or a reference (R9.1)', () => {
+  equal(countNear('taco3064 on github.com Open Issues 14', /open(?: issues?)?/), 14);
+  equal(countNear('Open Issues with scope or request assigned to taco3064 on github.com Open Issues 14', /open(?: issues?)?/), 14);
+  equal(countNear('Open Issues 14', /open(?: issues?)?/), 14);
+  equal(countNear('14 open', /open(?: issues?)?/), 14);
+  equal(countNear('Shape 3 Deliver 2', /Shape/), 3);
+  equal(countNear('Shape 3 Deliver 2', /Deliver/), 2);
+  equal(countNear('Open #12', /open/), undefined);
+  equal(countNear('Waiting on repo#12', /waiting on/), undefined);
+  equal(countNear('Open Issues for taco3064', /open(?: issues?)?/), undefined);
+  equal(countNear('', /open/), undefined);
+  equal(countNear('Reopened 3', /open/), undefined);
+});
+
+test('summary tile layouts give each count its own word (R9.1)', () => {
+  const open = 'Open Issues\n14\nIssues\nShape 3\nDeliver 2';
+  equal(countNear(open, /open(?: issues?)?/), 14);
+  equal(countNear(open, /Shape/), 3);
+  equal(countNear(open, /Deliver/), 2);
+  const runs = 'Runs\n7 runs\nSucceeded 3\nFailed 1\nRunning 0';
+  deepEqual([/succeeded/, /failed/, /running/].map((w) => countNear(runs, w)), [3, 1, 0]);
+  equal(countNear(runs, /skipped or cancell?ed/), undefined);
+  const mixed = '7 runs Succeeded 3 Failed 1 Running 0 Skipped or cancelled 3';
+  deepEqual([/succeeded/, /failed/, /running/, /skipped or cancell?ed/].map((w) => countNear(mixed, w)), [3, 1, 0, 3]);
+  const runners = 'Runners\n2 online · 0 busy\nMemory 3.1 GiB of 7.6 GiB in use';
+  equal(countNear(runners, /online/), 2);
+  equal(countNear(runners, /busy/), 0);
+  ok(hasCount(runners));
+  ok(!hasCount('Reading the host… 3.1 GiB #12 taco3064'));
+  ok(!hasCount(''));
 });

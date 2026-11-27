@@ -579,3 +579,42 @@ export function classifyUpdateMarker(texts: string[]): UpdateMarker {
   }
   return live ? (manual ? 'both' : 'live') : manual ? 'manual' : 'neither';
 }
+
+// ---- Summary tile counts (Proposal R9.1) ----------------------------------------
+
+/**
+ * Standalone counts: digit runs that are not part of a longer word, a login, an Issue
+ * reference (`#12`, `repo#12`), a path or a decimal (`3.1`).
+ */
+const COUNT = /(?<![\p{L}\d_#./-])\d+(?![\p{L}\d_]|\.\d)/gu;
+/** Most non-digit characters between a word and its count. */
+const COUNT_GAP = 16;
+
+/** True when the text shows at least one standalone count. */
+export function hasCount(text: string): boolean {
+  return new RegExp(COUNT.source, COUNT.flags).test(text);
+}
+
+/**
+ * The standalone count nearest a whole word in a tile's text: "Open Issues 14", "14 open",
+ * "Shape 3 Deliver 2" (3 for Shape, 2 for Deliver). Candidates are the nearest count after
+ * and before an occurrence of the word, within 16 non-digit characters; the shorter gap
+ * wins, the count after on a tie. The first occurrence with a candidate decides.
+ */
+export function countNear(text: string, word: RegExp): number | undefined {
+  const t = text.replace(/\s+/g, ' ');
+  const counts = [...t.matchAll(new RegExp(COUNT.source, COUNT.flags))].map((m) => ({ start: m.index, end: m.index + m[0].length, n: Number(m[0]) }));
+  const gapOk = (gap: string) => gap.length <= COUNT_GAP && !/\d/.test(gap);
+  for (const w of t.matchAll(new RegExp(`\\b(?:${word.source})\\b`, 'gi'))) {
+    if (!w[0]) continue;
+    const ws = w.index;
+    const we = ws + w[0].length;
+    const after = counts.find((c) => c.start >= we);
+    const before = counts.findLast((c) => c.end <= ws);
+    const a = after && gapOk(t.slice(we, after.start)) ? { n: after.n, gap: after.start - we } : undefined;
+    const b = before && gapOk(t.slice(before.end, ws)) ? { n: before.n, gap: ws - before.end } : undefined;
+    if (a && (!b || a.gap <= b.gap)) return a.n;
+    if (b) return b.n;
+  }
+  return undefined;
+}
