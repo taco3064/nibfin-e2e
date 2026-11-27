@@ -8,7 +8,14 @@ import type { Activity, Comment, Issue, Job, LogLine, Pull, Run, Runner } from '
 
 export interface Snapshot {
   gen: number;
+  /** When the read finished. */
   at: number;
+  /**
+   * When the read's first list call began: every list in the snapshot was read at or
+   * after it, so a read that blocked on any request (a peer one included) cannot make
+   * old data look recent. The stall check measures recency from it, not from `at`.
+   */
+  startedAt: number;
   /** Runs of every observed repository created since the observer started. */
   runs: Run[];
   issues: Map<string, Issue[]>;
@@ -24,7 +31,12 @@ export interface ObserverOptions {
   log?: (message: string) => void;
   /** The run's signal: a wait ends with its reason once it aborts (the harness budget). */
   signal?: AbortSignal;
-  /** A wait not marked `quiet` fails once no snapshot changed and no run was in progress for this long; absent, never. */
+  /**
+   * A wait not marked `quiet` fails once no snapshot changed and no run was in progress
+   * for this long; absent, never. It fails only on a recent snapshot judged by the
+   * wait's `gonePast`, when given: one whose read started no earlier than one interval
+   * before the decision, or one read anew for it.
+   */
   stallMs?: number;
 }
 
@@ -135,6 +147,7 @@ export class Observer {
   private async read(): Promise<Snapshot> {
     const issues = new Map<string, Issue[]>();
     const pulls = new Map<string, Pull[]>();
+    const startedAt = this.now();
     for (const repo of this.repos) {
       const r = `/repos/${repo}`;
       await this.readRuns(repo);
@@ -142,7 +155,7 @@ export class Observer {
       pulls.set(repo, await this.gh.list<Pull>(`${r}/pulls?state=all`));
     }
     const runs = [...this.seen.values()];
-    const s: Snapshot = { gen: ++this.gen, at: this.now(), runs, issues, pulls };
+    const s: Snapshot = { gen: ++this.gen, at: this.now(), startedAt, runs, issues, pulls };
     const print = fingerprint(s);
     if (print !== this.lastPrint || runs.some((r) => r.status === 'in_progress')) this.lastActivityAt = s.at;
     this.lastPrint = print;
@@ -160,6 +173,12 @@ export class Observer {
    * `fn` it ends early when `opts.gonePast` gives a reason the goal is out of reach (only
    * snapshots read after the wait began are judged), or
    * when the sandboxes showed no activity for `stallMs` (unless the wait is `quiet`).
+   * The stall check fails only on a recent snapshot read after the wait began and, when
+   * `gonePast` is given, judged by it with no reason: one whose read started (its
+   * `startedAt`, not `at`) no earlier than one interval before the decision. Without
+   * one, as after a pass or read that blocked for long, it first reads a snapshot anew,
+   * newer than every read made or in flight at the decision (a `fresh()` inside `fn`
+   * included), judges it, and fails only if the calm still lasts.
    * At the deadline it fails naming what it waited for and, through `show`, the last
    * observed state. It ends with the abort reason once the run's signal aborts.
    *
@@ -183,6 +202,8 @@ export class Observer {
     let seen = -1;
     let lastError: string | undefined;
     let last: Snapshot | undefined;
+    // The `startedAt` of the latest snapshot after `staleUpTo` that `gonePast` (when given) judged with no reason.
+    let checkedAt = -Infinity;
     const fail = async (message: string): Promise<never> => {
       let state = '';
       if (show && last) state = await Promise.resolve(show(last)).catch(() => '');
@@ -194,6 +215,21 @@ export class Observer {
       lastError = error instanceof Error ? error.message : String(error);
       // The next call to next() waits one interval before reading again.
       this.opts.log?.(`observer: a read while waiting for ${desc} failed: ${lastError}`);
+    };
+    const calmSince = () => Math.max(this.lastActivityAt ?? start, start, this.lastFailedAt ?? start);
+    const stalled = (): Promise<never> => fail(`no sandbox activity for ${Math.round((this.now() - calmSince()) / 60_000)} min while waiting for ${desc}`);
+    // Whether `gonePast` (when given) judged the snapshot with no reason; a reason ends the wait, a failed read is logged.
+    const judge = async (s: Snapshot): Promise<boolean> => {
+      if (!opts.gonePast) return true;
+      let reason: string | undefined;
+      try {
+        reason = await opts.gonePast(s);
+      } catch (error) {
+        readError(error);
+        return false;
+      }
+      if (reason !== undefined) await fail(`gave up waiting for ${desc}: ${reason}`);
+      return true;
     };
     for (;;) {
       throwIfAborted(signal);
@@ -207,20 +243,28 @@ export class Observer {
       } catch (error) {
         readError(error);
       }
-      if (fresh && fresh.gen > staleUpTo && opts.gonePast) {
-        let reason: string | undefined;
+      if (fresh && fresh.gen > staleUpTo && (await judge(fresh))) checkedAt = Math.max(checkedAt, fresh.startedAt);
+      const stall = this.opts.stallMs;
+      if (stall !== undefined && !opts.quiet && this.now() - calmSince() >= stall) {
+        if (checkedAt >= this.now() - this.interval) await stalled();
+        // No recent judged snapshot: read one that starts after this decision, judge it, and fail only if the calm still lasts.
+        const decidedUpTo = this.gen + (this.pending ? 1 : 0);
+        let s: Snapshot | undefined;
         try {
-          reason = await opts.gonePast(fresh);
+          do s = await this.next(decidedUpTo);
+          while (s.gen <= decidedUpTo);
         } catch (error) {
           readError(error);
+          s = undefined;
         }
-        if (reason !== undefined) await fail(`gave up waiting for ${desc}: ${reason}`);
-      }
-      const stall = this.opts.stallMs;
-      if (stall !== undefined && !opts.quiet) {
-        const calmSince = Math.max(this.lastActivityAt ?? start, start, this.lastFailedAt ?? start);
-        const now = this.now();
-        if (now - calmSince >= stall) await fail(`no sandbox activity for ${Math.round((now - calmSince) / 60_000)} min while waiting for ${desc}`);
+        if (s) {
+          seen = s.gen;
+          last = s;
+          if (await judge(s)) {
+            if (this.now() - calmSince() >= stall) await stalled();
+            checkedAt = Math.max(checkedAt, s.startedAt);
+          }
+        }
       }
       if (this.now() >= end) await fail(`timed out after ${Math.round(timeoutMs / 60_000)} min waiting for ${desc}`);
     }

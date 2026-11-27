@@ -246,3 +246,89 @@ test('failed reads do not count as calm: the stall limit counts from the last fa
   const took = (c.now() - started) / MIN;
   equal(took >= 49 && took <= 51, true, `failed after ${took} min`);
 });
+
+// Issue #569: the stall check fails only on a recent snapshot judged by gonePast.
+const blockedComment = [{ id: 1, body: '<!-- nibfin:pending -->\nNibfin stopped and needs a person. - Code: STAGE_BLOCKED', created_at: '', updated_at: '', user: null, html_url: '' }];
+const pendingIssue = () => [issue(6, { labels: [{ name: 'scope' }, { name: 'shaped' }, { name: 'pending' }] })];
+
+test('a wait whose first pass blocks past the stall limit while the Issue gets pending ends with that reason, not on the stall check', async () => {
+  let issues: unknown[] = [issue(6)];
+  const f = routes({ ...base, 'GET /repos/o/exec/actions/runs': { workflow_runs: [] }, 'GET /repos/o/exec/issues': () => issues, 'GET /repos/o/exec/issues/6/comments': blockedComment });
+  const c = clock();
+  const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
+  let polls = 0;
+  await rejects(
+    k.obs.until('a marked review comment', () => {
+      if (++polls === 1) {
+        c.advance(STALL + 5 * MIN);
+        issues = pendingIssue();
+      }
+      return undefined;
+    }, DEADLINE.stage, k.show('o/exec', 6), { gonePast: k.closeGone('o/exec', 6) }),
+    /^Error: gave up waiting for a marked review comment: #6 has pending; last Nibfin comment: Nibfin stopped and needs a person\. - Code: STAGE_BLOCKED/,
+  );
+  equal(polls, 1);
+});
+
+test('a refresh inside a blocked pass does not stand in for the stall decision\'s own read', async () => {
+  let issues: unknown[] = [issue(6)];
+  const f = routes({ ...base, 'GET /repos/o/exec/actions/runs': { workflow_runs: [] }, 'GET /repos/o/exec/issues': () => issues, 'GET /repos/o/exec/issues/6/comments': blockedComment });
+  const c = clock();
+  const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
+  let polls = 0;
+  await rejects(
+    k.obs.until('a marked review comment', async () => {
+      if (++polls === 1) {
+        await k.obs.fresh();
+        c.advance(STALL + 5 * MIN);
+        issues = pendingIssue();
+      }
+      return undefined;
+    }, DEADLINE.stage, undefined, { gonePast: k.closeGone('o/exec', 6) }),
+    /^Error: gave up waiting for a marked review comment: #6 has pending; last Nibfin comment: Nibfin stopped and needs a person\. - Code: STAGE_BLOCKED/,
+  );
+});
+
+test('an observer read blocked on a peer request does not count as recent for the stall check', async () => {
+  let issues: unknown[] = [issue(6)];
+  let peerReads = 0;
+  const c = clock();
+  const f = routes({
+    ...base,
+    'GET /repos/o/exec/actions/runs': { workflow_runs: [] },
+    'GET /repos/o/exec/issues': () => issues,
+    'GET /repos/o/exec/issues/6/comments': blockedComment,
+    // The wait's first read lists the exec issues, then blocks on the peer's while F gets pending.
+    'GET /repos/o/peer/issues': () => {
+      if (++peerReads === 2) {
+        c.advance(STALL + 5 * MIN);
+        issues = pendingIssue();
+      }
+      return [];
+    },
+  });
+  const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
+  await k.obs.next();
+  await rejects(
+    k.obs.until('a marked review comment', () => undefined, DEADLINE.stage, undefined, { gonePast: k.closeGone('o/exec', 6) }),
+    /^Error: gave up waiting for a marked review comment: #6 has pending; last Nibfin comment: Nibfin stopped and needs a person\. - Code: STAGE_BLOCKED/,
+  );
+  equal(peerReads >= 3, true, 'the decision read anew');
+});
+
+test('a blocked pass with no gonePast reason and no activity still fails on the stall check', async () => {
+  const f = routes({ ...base, 'GET /repos/o/exec/actions/runs': { workflow_runs: [] }, 'GET /repos/o/exec/issues': [issue(6)] });
+  const c = clock();
+  const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
+  const started = c.now();
+  let polls = 0;
+  const block = () => {
+    if (++polls === 1) c.advance(STALL + 5 * MIN);
+    return undefined;
+  };
+  await rejects(k.obs.until('a marked review comment', block, DEADLINE.stage, undefined, { gonePast: k.closeGone('o/exec', 6) }), /^Error: no sandbox activity for 25 min while waiting for a marked review comment$/);
+  equal(c.now() - started, STALL + 5 * MIN);
+  // Without gonePast too.
+  polls = 0;
+  await rejects(k.obs.until('B', block, DEADLINE.stage), /^Error: no sandbox activity for 25 min while waiting for B$/);
+});
