@@ -17,6 +17,7 @@ import { initFiles } from '../scenarios/management/init-files.ts';
 import { initSettings } from '../scenarios/management/init-settings.ts';
 import { confirmPreview, pauseResume } from '../scenarios/management/labels.ts';
 import { runnerAddSetup } from '../scenarios/management/runner-add-setup.ts';
+import { runnerAddLogin } from '../scenarios/management/runner-add-login.ts';
 import { runnerRemove } from '../scenarios/management/runner-remove.ts';
 import { statusViews } from '../scenarios/management/status-views.ts';
 import { upgrade } from '../scenarios/management/upgrade.ts';
@@ -36,7 +37,8 @@ const services = createServices(fileURLToPath(new URL('..', import.meta.url)), (
 // little time to move after init. They leave their fixture Issues paused or without `scope`, and the
 // delivery-lifecycle scenarios judge only their own tagged fixtures and runs created since they
 // started. Then Issue #299's, the site and the Dashboard scenarios, which need earlier work in
-// the sandboxes to have settled. runner-remove, which removes every local Runner and the login
+// the sandboxes to have settled. runner-add-login (alone, with no fixture waiting for a Runner)
+// starts a Codex login and abandons it at the guide. runner-remove, which removes every local Runner and the login
 // volume, runs last.
 export const scenarios: Scenario[] = [
   runnerAddSetup,
@@ -60,6 +62,7 @@ export const scenarios: Scenario[] = [
   dashboardOperations,
   dashboardUpdates,
   dashboardLoginRelay,
+  runnerAddLogin,
   runnerRemove,
 ];
 
