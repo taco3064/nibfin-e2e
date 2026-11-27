@@ -84,11 +84,19 @@ const pathsOf = async (kit: Kit, repo: string, ref: string) => {
   return data.tree.map((t) => t.path).sort();
 };
 
-async function imagesNamed(kit: Kit): Promise<{ names: string[]; repoDigests: string[] }[]> {
+/** A local image named ghcr.io/taco3064/nibfin: its image id, names and repo digests. */
+export interface LocalImage {
+  id: string;
+  names: string[];
+  repoDigests: string[];
+}
+
+/** The local images named ghcr.io/taco3064/nibfin (`podman images`). */
+export async function imagesNamed(kit: Pick<Kit, 'exec'>): Promise<LocalImage[]> {
   const r = await kit.exec(['podman', 'images', '--format', 'json', '--filter', 'reference=ghcr.io/taco3064/nibfin']);
   if (r.code !== 0) throw new Error(`podman images exited ${r.code}: ${r.stderr.trim().slice(-2000)}`);
-  const list = JSON.parse(r.stdout || '[]') as { Names?: string[]; RepoDigests?: string[] }[];
-  return list.map((i) => ({ names: i.Names ?? [], repoDigests: i.RepoDigests ?? [] }));
+  const list = JSON.parse(r.stdout || '[]') as { Id?: string; Names?: string[]; RepoDigests?: string[] }[];
+  return list.map((i) => ({ id: i.Id ?? '', names: i.Names ?? [], repoDigests: i.RepoDigests ?? [] }));
 }
 
 async function rootless(kit: Kit): Promise<boolean | undefined> {

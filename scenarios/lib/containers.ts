@@ -1,5 +1,6 @@
 import { abortError } from '../../src/abort.ts';
 import type { Exec } from '../../src/host/exec.ts';
+import { tail } from './check.ts';
 import type { Kit } from './kit.ts';
 
 /** The Podman labels the generated workflow puts on every Job container (Proposal R9.23). */
@@ -190,4 +191,34 @@ export async function runningJobContainers(exec: Exec, repo: string): Promise<st
   const r = await exec(['podman', 'ps', '--quiet', '--no-trunc', '--filter', `label=${LABEL_REPO}=${repo}`]);
   if (r.code !== 0) throw new Error(`podman ps exited ${r.code}: ${r.stderr.trim().slice(-2000)}`);
   return r.stdout.split('\n').map((l) => l.trim()).filter(Boolean);
+}
+
+/** A running container's full id and image name, from `podman ps --format '{{.ID}} {{.Image}}'`. */
+export interface ContainerRead {
+  id: string;
+  image: string;
+}
+
+/**
+ * Parses `podman ps --no-trunc --format '{{.ID}} {{.Image}}'` output for one container:
+ * the line whose id is `id` (the filter matches id prefixes), or `'gone'` when there is none.
+ */
+export function parseContainerLine(stdout: string, id: string): ContainerRead | 'gone' {
+  for (const line of stdout.split('\n')) {
+    const [cid, image, ...rest] = line.trim().split(/\s+/);
+    if (cid === id && image && !rest.length) return { id: cid, image };
+  }
+  return 'gone';
+}
+
+/**
+ * Reads a running container's id and image (Proposal R5.55); `'gone'` once it ended (Job
+ * containers run with `--rm`). The command prints no environment, so no secret can appear.
+ * A failing `podman ps` throws with the command and the end of its output.
+ */
+export async function readContainer(exec: Exec, id: string): Promise<ContainerRead | 'gone'> {
+  const argv = ['podman', 'ps', '--no-trunc', '--filter', `id=${id}`, '--format', '{{.ID}} {{.Image}}'];
+  const r = await exec(argv);
+  if (r.code !== 0) throw new Error(`${argv.join(' ')} exited ${r.code}: ${tail(r)}`);
+  return parseContainerLine(r.stdout, id);
 }
