@@ -58,8 +58,11 @@ export const failurePending: Scenario = {
     } catch (error) {
       c.fail('R4.5', message(error));
     } finally {
-      await deleteFile(gh, repo, '.nibfin.json', 'nibfin-e2e: remove the invalid .nibfin.json');
+      // pause before the configuration becomes valid again: otherwise a wake in between could
+      // start a real Job for this Issue (real delivery is out of scope). If pausing fails, the
+      // invalid file stays and the next run's sandbox reset removes it.
       if (issue !== undefined) await addLabels(gh, repo, issue, ['pause']);
+      await deleteFile(gh, repo, '.nibfin.json', 'nibfin-e2e: remove the invalid .nibfin.json');
     }
     return c.outcome(`#${issue}: each failed Job added pending with a comment, and removing pending dispatched it again`);
   },

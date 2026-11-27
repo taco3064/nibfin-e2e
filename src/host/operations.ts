@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { mustRun } from './exec.ts';
 import type { ExecResult } from './exec.ts';
 import { writeClaudeToken } from './login.ts';
+import { userRuntimeDir } from './hoststate.ts';
 import { CLAUDE_VOLUME, requireEnv } from './config.ts';
 import type { HostServices } from './services.ts';
 
@@ -51,7 +52,8 @@ export function createHostOperations(host: HostServices, platform: string = proc
   const systemctl = (args: string[]): Promise<ExecResult> => {
     // `systemctl --user` needs the user manager's runtime directory; a hosted job's
     // shell may not set it. `runner add` enabled linger, so the manager is running.
-    if (!host.env.XDG_RUNTIME_DIR && typeof process.getuid === 'function') host.env.XDG_RUNTIME_DIR = `/run/user/${process.getuid()}`;
+    const runtime = userRuntimeDir(host.env);
+    if (runtime !== undefined) host.env.XDG_RUNTIME_DIR = runtime;
     return exec(['systemctl', '--user', ...args]);
   };
 

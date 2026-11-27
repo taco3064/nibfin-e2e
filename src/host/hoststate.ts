@@ -83,13 +83,57 @@ export function parseJsonList(stdout: string): string[] {
   return list.filter((x): x is string => typeof x === 'string').sort();
 }
 
+/**
+ * The user manager's runtime directory: `XDG_RUNTIME_DIR`, or `/run/user/<uid>` when the
+ * shell does not set it (a hosted job's shell may not). `systemctl --user` needs it.
+ */
+export function userRuntimeDir(env: Record<string, string | undefined> = process.env, uid: number | undefined = process.getuid?.()): string | undefined {
+  if (env.XDG_RUNTIME_DIR) return env.XDG_RUNTIME_DIR;
+  return uid === undefined ? undefined : `/run/user/${uid}`;
+}
+
+export interface LinuxReadOptions {
+  env?: Record<string, string | undefined>;
+  uid?: number;
+  user?: string;
+  /** Whether a path exists; injectable for tests. */
+  exists?: (path: string) => boolean;
+  /** `/etc/systemd/system`'s file list; injectable for tests. */
+  systemFiles?: () => string[];
+}
+
+/**
+ * Linux host state. Before `runner add` the user manager may not run and the user may be
+ * neither logged in nor lingering, so `systemctl --user` or `loginctl show-user` can fail.
+ * Then the state is recorded as no user units (no manager socket in the runtime directory)
+ * and linger `no` (no file in /var/lib/systemd/linger). Any other failure still throws.
+ */
+export async function readLinuxHostState(run: HostRun, options: LinuxReadOptions = {}): Promise<LinuxHostState> {
+  const exists = options.exists ?? existsSync;
+  const runtime = userRuntimeDir(options.env ?? process.env, options.uid);
+  const env = runtime === undefined ? undefined : { XDG_RUNTIME_DIR: runtime };
+  const user = options.user ?? userInfo().username;
+
+  const unitsArgv = ['systemctl', '--user', 'list-unit-files', '--no-legend', '--plain'];
+  const listed = await run(unitsArgv, env);
+  let units: { name: string; state: string }[];
+  if (listed.code === 0) units = parseUnitFiles(listed.stdout);
+  else if (runtime === undefined || (!exists(join(runtime, 'systemd', 'private')) && !exists(join(runtime, 'bus')))) units = [];
+  else throw fail(unitsArgv, listed);
+
+  const lingerArgv = ['loginctl', 'show-user', user, '-p', 'Linger', '--value'];
+  const shown = await run(lingerArgv, env);
+  let linger: string;
+  if (shown.code === 0) linger = shown.stdout.trim();
+  else if (!exists(join('/var/lib/systemd/linger', user))) linger = 'no';
+  else throw fail(lingerArgv, shown);
+
+  return { platform: 'linux', units, linger, systemFiles: (options.systemFiles ?? (() => listFiles('/etc/systemd/system')))() };
+}
+
 /** The host state the always-on setup changes (Proposal R5.13, R5.15, R5.16, R5.28), read without any product name. */
-export async function readHostState(run: HostRun, platform: Platform): Promise<HostState> {
-  if (platform === 'linux') {
-    const units = parseUnitFiles(await must(run, ['systemctl', '--user', 'list-unit-files', '--no-legend', '--plain']));
-    const linger = (await must(run, ['loginctl', 'show-user', userInfo().username, '-p', 'Linger', '--value'])).trim();
-    return { platform, units, linger, systemFiles: listFiles('/etc/systemd/system') };
-  }
+export async function readHostState(run: HostRun, platform: Platform, linux: LinuxReadOptions = {}): Promise<HostState> {
+  if (platform === 'linux') return readLinuxHostState(run, linux);
   if (platform === 'windows') {
     const path = wslconfigPath();
     const wslconfig = existsSync(path) ? readFileSync(path, 'utf8') : null;
