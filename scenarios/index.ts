@@ -9,6 +9,7 @@ import { failureLogs } from './failure-logs.ts';
 import { hostMemoryCheck } from './host-memory-check.ts';
 import { imageProvenance } from './image-provenance.ts';
 import { jobContainer } from './job-container.ts';
+import { loginVolume } from './login-volume.ts';
 import { modelChoice } from './model-choice.ts';
 import { projectTools } from './project-tools.ts';
 import { roleSkills } from './role-skills.ts';
@@ -20,6 +21,7 @@ export function createScenarios(host: HostServices): Scenario[] {
   return [
     jobContainer,
     agentSetup,
+    loginVolume,
     projectTools,
     roleSkills,
     modelChoice(kitFor),

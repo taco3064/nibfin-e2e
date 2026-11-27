@@ -207,7 +207,7 @@
   {"id": "R6.31", "notE2e": "網站文字"},
   {"id": "R6.10", "platforms": ["linux"], "scenarios": ["agent-setup"]},
   {"id": "R6.11", "platforms": ["linux"], "scenarios": []},
-  {"id": "R6.12", "platforms": ["linux"], "scenarios": []},
+  {"id": "R6.12", "platforms": ["linux"], "scenarios": ["login-volume"]},
   {"id": "R6.13", "platforms": ["linux"], "scenarios": ["login-expiry"]},
   {"id": "R6.14", "notE2e": "無法證明不存在"},
   {"id": "R6.15", "notE2e": "原則，無可觀察行為"},
