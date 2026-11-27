@@ -14,6 +14,7 @@ import { dashboardViews } from '../scenarios/dashboard/views.ts';
 import { dashboard } from '../scenarios/management/dashboard.ts';
 import { failurePending } from '../scenarios/management/failure-pending.ts';
 import { hostRequirements } from '../scenarios/management/host-requirements.ts';
+import { runnerLocation } from '../scenarios/management/runner-location.ts';
 import { extensionReleases, imageDigest } from '../scenarios/management/image-release.ts';
 import { initFiles } from '../scenarios/management/init-files.ts';
 import { initSettings } from '../scenarios/management/init-settings.ts';
@@ -51,6 +52,9 @@ export const scenarios: Scenario[] = [
   runnerAddSetup,
   // Right after runner-add-setup: only this host's Runners are registered and nothing has changed them yet.
   hostRequirements((ctx) => createKit(services, ctx)),
+  // Also there, before podman-machine-detached restarts the machine: where those Runners run,
+  // on the Linux host or inside the podman machine VM (R5.10).
+  runnerLocation((ctx) => createKit(services, ctx)),
   // Alone, before the delivery scenarios and with no fixture Job running: stops and restarts the Windows podman machine.
   podmanMachineDetached,
   initSettings,
