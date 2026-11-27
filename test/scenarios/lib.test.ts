@@ -180,3 +180,20 @@ test('redactDeep redacts every string, key and nested value, and leaves other va
   const out = redactDeep({ a: [`x${secret}`, 1, null], [secret]: { b: secret, c: true } }, [secret]);
   deepEqual(out, { a: ['x[secret value removed by nibfin-e2e]', 1, null], '[secret value removed by nibfin-e2e]': { b: '[secret value removed by nibfin-e2e]', c: true } });
 });
+
+test('a container watch and a remote wait end with the abort reason when the run is aborted', async () => {
+  const { remoteWait } = await import('../../scenarios/lib/waits.ts');
+  const h = setup();
+  const w = watchJobContainers(h.kit, EXEC, 9);
+  const pending = w.started(1, 60 * 60_000, 'the Shape Job container');
+  let reads = 0;
+  const remote = remoteWait(h.kit, 'PR #3 to merge', 60 * 60_000, 30_000, async () => {
+    if (++reads === 3) h.abort();
+    return undefined;
+  });
+  await rejects(remote, /harness budget of 190 min ran out/);
+  equal(reads, 3);
+  await rejects(pending, /harness budget of 190 min ran out/);
+  await rejects(w.died(1, 1000, 'Review'), /harness budget of 190 min ran out/);
+  w.stop();
+});

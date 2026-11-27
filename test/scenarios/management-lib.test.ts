@@ -228,3 +228,13 @@ test('host state: a running user manager and a lingering user are read, and thei
   const lingerFail: HostRun = async (argv) => (argv[0] === 'systemctl' ? { code: 0, stdout: '', stderr: '' } : { code: 1, stdout: '', stderr: 'bad' });
   await rejects(readLinuxHostState(lingerFail, { ...opts, exists: (p) => p === '/var/lib/systemd/linger/runner' }), /loginctl show-user runner exited 1: bad/);
 });
+
+test('waitFor ends with the abort reason once its signal aborts', async () => {
+  const c = new AbortController();
+  let reads = 0;
+  await rejects(
+    waitFor(async () => (++reads === 2 && c.abort(new Error('harness budget of 190 min ran out')), 'busy'), () => false, { what: 'idle', deadlineMs: 60_000, intervalMs: 10, signal: c.signal }),
+    /harness budget of 190 min ran out/,
+  );
+  equal(reads, 2);
+});

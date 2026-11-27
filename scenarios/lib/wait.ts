@@ -1,3 +1,5 @@
+import { throwIfAborted, untilAborted } from '../../src/abort.ts';
+
 export interface WaitOptions {
   /** What is awaited, for the failure reason. */
   what: string;
@@ -5,6 +7,8 @@ export interface WaitOptions {
   intervalMs?: number;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  /** Ends the wait with the abort reason once it aborts (the run's `ctx.signal`). */
+  signal?: AbortSignal;
 }
 
 export const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -25,6 +29,7 @@ export async function waitFor<T>(read: () => Promise<T>, until: (value: T) => bo
   const end = now() + options.deadlineMs;
   let last: unknown;
   for (;;) {
+    throwIfAborted(options.signal);
     try {
       const value = await read();
       if (until(value)) return value;
@@ -33,7 +38,7 @@ export async function waitFor<T>(read: () => Promise<T>, until: (value: T) => bo
       last = `error: ${error instanceof Error ? error.message : String(error)}`;
     }
     if (now() >= end) break;
-    await pause(Math.max(0, Math.min(interval, end - now())));
+    await untilAborted(pause(Math.max(0, Math.min(interval, end - now()))), options.signal);
   }
   throw new Error(`timed out after ${Math.round(options.deadlineMs / 1000)} s waiting for ${options.what}; last seen: ${show(last)}`);
 }

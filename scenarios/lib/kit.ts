@@ -1,3 +1,4 @@
+import { untilAborted } from '../../src/abort.ts';
 import { createStream } from '../../src/host/exec.ts';
 import type { Env, Exec, Stream } from '../../src/host/exec.ts';
 import type { GitHub } from '../../src/host/github.ts';
@@ -28,7 +29,10 @@ export interface Kit {
   /** The sandbox token, only for `gh` as GH_TOKEN. */
   ghToken(): string;
   now(): number;
+  /** Rejects with the abort reason once `signal` aborts. */
   sleep(ms: number): Promise<void>;
+  /** The run's signal; aborted when the harness budget's work limit passes. */
+  signal: AbortSignal;
 }
 
 export function createKit(host: HostServices, ctx: RunContext): Kit {
@@ -45,7 +49,8 @@ export function createKit(host: HostServices, ctx: RunContext): Kit {
     ghToken: () => host.sandboxToken(),
     secrets: () => [host.env.E2E_SANDBOX_TOKEN, host.env.E2E_CLAUDE_TOKEN].map((s) => s?.trim()).filter((s): s is string => !!s),
     now: () => Date.now(),
-    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    sleep: (ms) => untilAborted(new Promise((r) => setTimeout(r, ms)), ctx.signal),
+    signal: ctx.signal,
   };
 }
 

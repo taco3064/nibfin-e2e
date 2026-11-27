@@ -59,6 +59,7 @@ export function setup(opts: { respond?: (argv: string[], o: ExecOptions) => Part
   const events = fakeStream();
   const logs: string[] = [];
   let clock = 0;
+  const controller = new AbortController();
   const kit: Kit = {
     github: createGitHub(() => 'tok', fake.fetch),
     exec: exec.exec,
@@ -73,12 +74,16 @@ export function setup(opts: { respond?: (argv: string[], o: ExecOptions) => Part
     ghToken: () => 'sandbox-token-value',
     now: () => clock,
     sleep: async (ms) => {
+      controller.signal.throwIfAborted();
       clock += ms;
     },
+    signal: controller.signal,
   };
   const repo = (name: string) => fake.repos.get(name) as ReturnType<typeof cleanRepo>;
   repo(EXEC).runners.push(runner(1, 'claude-1'), runner(2, 'claude-2'));
-  return { fake, kit, calls: exec.calls, events, logs, repo };
+  /** Aborts the kit's signal, as the harness budget does at its work limit. */
+  const abort = (reason = 'harness budget of 190 min ran out') => controller.abort(new Error(reason));
+  return { fake, kit, calls: exec.calls, events, logs, repo, abort };
 }
 
 /** main's files in the fake, by path. */

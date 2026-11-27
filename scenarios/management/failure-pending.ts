@@ -36,6 +36,7 @@ export const failurePending: Scenario = {
       const first = await waitFor(failed, (s) => s.labels.includes('pending') && s.comments.length > 0, {
         what: `#${n} to get pending and a comment after its Job failed`,
         deadlineMs: 15 * 60_000,
+        signal: ctx.signal,
         intervalMs: 20_000,
       });
       const removedAt = Date.now();
@@ -44,6 +45,7 @@ export const failurePending: Scenario = {
         const second = await waitFor(failed, (s) => s.labels.includes('pending') && lastWrite(s.comments) > removedAt, {
           what: `#${n} to be dispatched again and get pending with a new or updated comment after pending was removed`,
           deadlineMs: 15 * 60_000,
+          signal: ctx.signal,
           intervalMs: 20_000,
         });
         c.that(second.comments.length >= first.comments.length, 'R4.5', `#${n} lost comments between the two failures`);
@@ -52,6 +54,7 @@ export const failurePending: Scenario = {
         await waitFor(() => registrations(gh, repo), (rs) => rs.length > 0 && rs.every((r) => !r.busy), {
           what: `every Runner on ${repo} to be idle after the failed Jobs`,
           deadlineMs: 10 * 60_000,
+          signal: ctx.signal,
           intervalMs: 15_000,
         });
       });

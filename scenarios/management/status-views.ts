@@ -103,7 +103,7 @@ export const statusViews: Scenario = {
     const run = (await waitFor(
       async () => (await runs(gh, execution, issueA.created_at)).find((r) => r.status === 'completed' && isNibfinRunFor(r.display_title, issueA.number)),
       (r) => r !== undefined,
-      { what: `a completed Nibfin run for #${issueA.number} on ${execution}`, deadlineMs: 10 * 60_000, intervalMs: 15_000 },
+      { what: `a completed Nibfin run for #${issueA.number} on ${execution}`, deadlineMs: 10 * 60_000, intervalMs: 15_000, signal: ctx.signal },
     )) as Run;
     const { data: commits } = await gh.rest<{ sha: string; commit: { committer: { date: string } } }[]>(
       'GET',
@@ -114,7 +114,7 @@ export const statusViews: Scenario = {
     await waitFor(
       async () => (await runs(gh, execution, lastChange.commit.committer.date)).find((r) => r.conclusion === 'success' && r.display_title.startsWith('Nibfin')),
       (r) => r !== undefined,
-      { what: `a successful Nibfin run on ${execution} after ${lastChange.sha.slice(0, 7)}`, deadlineMs: 10 * 60_000, intervalMs: 15_000 },
+      { what: `a successful Nibfin run on ${execution} after ${lastChange.sha.slice(0, 7)}`, deadlineMs: 10 * 60_000, intervalMs: 15_000, signal: ctx.signal },
     );
 
     const before = await snapshot(gh, [execution, peer]);
@@ -176,6 +176,7 @@ export const statusViews: Scenario = {
         await waitFor(() => status<PersonView>(ctx, []), (v) => !(v.nibfinRepos ?? []).some((r) => r.repo === peer), {
           what: `nibfinRepos without ${peer} after deleting its ${ISSUE_WF}`,
           deadlineMs: 2 * 60_000,
+          signal: ctx.signal,
           intervalMs: 15_000,
         });
       });
@@ -185,6 +186,7 @@ export const statusViews: Scenario = {
         await waitFor(() => status<PersonView>(ctx, []), (v) => (v.nibfinRepos ?? []).some((r) => r.repo === peer), {
           what: `nibfinRepos with ${peer} after committing ${ISSUE_WF} by hand`,
           deadlineMs: 2 * 60_000,
+          signal: ctx.signal,
           intervalMs: 15_000,
         });
       });
