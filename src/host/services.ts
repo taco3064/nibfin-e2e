@@ -20,7 +20,7 @@ export interface HostServices {
   /** `<repo root>/.e2e-work/`: deleted and recreated on first use in this process. */
   workDir(): string;
   sandboxToken(): string;
-  /** GitHub REST as the collaborator account (`E2E_PEER_GITHUB_TOKEN`), for its own SSH keys only. */
+  /** GitHub REST as the collaborator account (`E2E_PEER_GITHUB_TOKEN`): its own SSH keys and the `review-events` PR reviews. */
   peerGithub: GitHub;
   peerToken(): string;
   /** Set by the `collaborator` step once the peer user is ready. */
