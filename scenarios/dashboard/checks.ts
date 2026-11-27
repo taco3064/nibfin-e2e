@@ -363,8 +363,12 @@ export function snapshotOpenIssues(snapshot: unknown, repos: string[]): Map<stri
   return out;
 }
 
-/** Repository names a snapshot covers. */
-export function snapshotRepos(snapshot: unknown, candidates: RegExp = /^(?:[\w.-]+\/)?([\w.-]+)$/): string[] {
+/**
+ * Repository names a snapshot covers: the last path segment of each `repos` entry id or `repos` object key,
+ * for ids of the form `REPO`, `OWNER/REPO` or `HOST/OWNER/REPO`. Empty ids, ids with whitespace and ids
+ * ending in `/` are ignored.
+ */
+export function snapshotRepos(snapshot: unknown, candidates: RegExp = /^(?:[\w.-]+\/)*([\w.-]+)$/): string[] {
   const names = new Set<string>();
   walk(snapshot, (key, value) => {
     if (!/^repos$/i.test(key)) return;
