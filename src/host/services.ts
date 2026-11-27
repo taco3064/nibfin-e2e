@@ -36,7 +36,7 @@ export function createServices(repoRoot: string, log: (message: string) => void,
     exec: createExec(env, log),
     start: createStart(env, log),
     fetch,
-    github: createGitHub(sandboxToken),
+    github: createGitHub(sandboxToken, fetch, undefined, { log }),
     repoRoot,
     workDir() {
       const dir = join(repoRoot, '.e2e-work');
@@ -48,7 +48,7 @@ export function createServices(repoRoot: string, log: (message: string) => void,
       return dir;
     },
     sandboxToken,
-    peerGithub: createGitHub(peerToken),
+    peerGithub: createGitHub(peerToken, fetch, undefined, { log }),
     peerToken,
   };
 }
