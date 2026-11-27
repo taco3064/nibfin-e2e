@@ -315,7 +315,8 @@ local Runner and the login volume.
 product component (Proposal R8.13). It turns Notion webhook events for the
 Proposal page into a `repository_dispatch` of type `proposal-updated` on this
 repository. Its `client_payload` carries `event_id`, `type`, `timestamp`,
-`page_id`, `attempt_number`, `updated_blocks` and `updated_properties` (both id
+`page_id`, `attempt_number`, `block_ids` (the changed block ids, which the gate
+reads) and `updated_properties` (both id
 lists are emptied and `ids_omitted: true` is set when they would exceed
 GitHub's payload limit). It carries no content and holds no Notion API token: the
 diff is read later from the page's version history using the event times.

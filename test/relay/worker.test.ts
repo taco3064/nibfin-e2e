@@ -1,5 +1,6 @@
 import { deepEqual, equal, ok } from 'node:assert/strict';
 import { test } from 'node:test';
+import { parseProposalEvent } from '../../src/gate/proposal.ts';
 import { createDispatch, handle, MAX_DISPATCH_BYTES, type DispatchBody, type Env } from '../../relay/worker.ts';
 
 const PAGE = '40006b64-4a20-80da-b1a8-c2e562f95373';
@@ -107,7 +108,7 @@ test('filtering: only Proposal page content and property updates are forwarded',
   const props = await signed(event({ type: 'page.properties_updated', data: { updated_properties: ['title', 7] } }));
   equal(props.status, 200);
   deepEqual(props.dispatched[0]?.body.client_payload.updated_properties, ['title']);
-  deepEqual(props.dispatched[0]?.body.client_payload.updated_blocks, []);
+  deepEqual(props.dispatched[0]?.body.client_payload.block_ids, []);
   equal((await signed({ id: 'x', type: 'page.content_updated' })).status, 400);
   equal((await signed([1, 2])).status, 400);
   const notJson = 'not json';
@@ -129,7 +130,7 @@ test('dispatch payload carries the event ids and time, and drops the id lists wh
         timestamp: '2026-11-27T01:02:03.000Z',
         page_id: PAGE,
         attempt_number: 1,
-        updated_blocks: ['b1', 'b2'],
+        block_ids: ['b1', 'b2'],
         updated_properties: [],
       },
     },
@@ -140,9 +141,28 @@ test('dispatch payload carries the event ids and time, and drops the id lists wh
   const o = await run(env, big, await sign(big));
   equal(o.status, 200);
   const p = o.dispatched[0]?.body.client_payload;
-  deepEqual([p?.updated_blocks, p?.updated_properties, p?.ids_omitted, p?.timestamp], [[], [], true, '2026-11-27T01:02:03.000Z']);
+  deepEqual([p?.block_ids, p?.updated_properties, p?.ids_omitted, p?.timestamp], [[], [], true, '2026-11-27T01:02:03.000Z']);
   ok(JSON.stringify(o.dispatched[0]?.body).length < MAX_DISPATCH_BYTES);
   ok(Object.keys(p ?? {}).length <= 10);
+});
+
+test("contract: every relay dispatch passes the gate's own parser", async () => {
+  // The event as GitHub delivers the dispatch to the proposal-updated job (GITHUB_EVENT_PATH).
+  const gateReads = async (e: unknown) => {
+    const b = JSON.stringify(e);
+    const r = await run(env, b, await sign(b));
+    equal(r.status, 200);
+    equal(r.dispatched.length, 1);
+    const sent = r.dispatched[0]?.body as DispatchBody;
+    return parseProposalEvent(JSON.stringify({ action: sent.event_type, client_payload: sent.client_payload }));
+  };
+  const time = '2026-11-27T01:02:03.000Z';
+
+  deepEqual(await gateReads(event()), { pageId: PAGE, blockIds: ['b1', 'b2'], timestamp: time });
+  deepEqual(await gateReads(event({ type: 'page.properties_updated', data: { updated_properties: ['title'] } })), { pageId: PAGE, blockIds: [], timestamp: time });
+  deepEqual(await gateReads(event({ data: { parent: { id: 'p', type: 'space' } } })), { pageId: PAGE, blockIds: [], timestamp: time });
+  const many = Array.from({ length: 2000 }, (_, i) => ({ id: `${String(i).padStart(8, '0')}-0000-0000-0000-000000000000`, type: 'block' }));
+  deepEqual(await gateReads(event({ data: { updated_blocks: many } })), { pageId: PAGE, blockIds: [], timestamp: time });
 });
 
 test('a failed dispatch returns 502 and logs only the status', async () => {
