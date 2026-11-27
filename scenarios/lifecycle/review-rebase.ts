@@ -44,7 +44,7 @@ export interface RebaseEvidence {
   /** Force pushes to the fixture's branch. */
   forced: Pick<Activity, 'timestamp' | 'before' | 'after'>[];
   /** The fixture's merged PR, if any. */
-  merged?: { number: number; head: string };
+  merged?: { number: number; head: string; merged_at: string | null };
   /** Whether the merged head descends from `sha`. */
   descends: boolean;
   delivered: boolean;
@@ -52,6 +52,16 @@ export interface RebaseEvidence {
 
 const after = (iso: string | null | undefined, at: number) => time(iso) >= at;
 const forcedAfter = (e: RebaseEvidence) => e.forced.filter((a) => after(a.timestamp, e.at));
+
+/**
+ * Why the half's situation did not happen, if it did not: its PR merged before main
+ * advanced, or (behind half) no review run saw the PR after main advanced.
+ */
+export function notExercisedWhy(kind: 'behind' | 'conflict', e: RebaseEvidence): string | undefined {
+  if (e.merged && !after(e.merged.merged_at, e.at)) return `${e.issue}'s PR #${e.merged.number} merged at ${String(e.merged.merged_at)}, before main advanced to ${e.sha}`;
+  if (kind === 'behind' && !e.reviews.some((r) => after(r.created_at, e.at))) return `no review run of ${e.issue} was created after main advanced to ${e.sha}`;
+  return undefined;
+}
 
 /** What breaks R3.54 for a PR that was only behind: any Deliver, force push or rebase after main advanced. */
 export function behindProblems(e: RebaseEvidence): string[] {
@@ -229,10 +239,15 @@ async function heldHalf(k: Kit, c: Checks, spec: HalfSpec, n: number, harness: s
     delivers,
     reviews: k.stages(s, exec, n, ['review']),
     forced: await k.obs.activity(exec, { ref: `refs/heads/${branch}`, type: 'force_push' }),
-    merged: merged ? { number: merged.number, head: merged.head.sha } : undefined,
+    merged: merged ? { number: merged.number, head: merged.head.sha, merged_at: merged.merged_at } : undefined,
     descends: merged ? await k.obs.descends(exec, moved.sha, merged.head.sha) : false,
     delivered: !!k.delivered(s, exec, n),
   };
+  const why = notExercisedWhy(spec.kind, evidence);
+  if (why) {
+    c.notExercised(RULE, `${label}: ${why}`);
+    return undefined;
+  }
   const problems = spec.kind === 'behind' ? behindProblems(evidence) : conflictProblems(evidence);
   c.none(RULE, problems.map((p) => `${label}: ${p}`));
   return spec.kind === 'behind'
