@@ -186,7 +186,7 @@ export class Observer {
 
   /** A completed job's log, line by line. */
   log(repo: string, jobId: number): Promise<LogLine[]> {
-    return this.memo(`log ${repo} ${jobId}`, async () => parseLog(await this.gh.text(`/repos/${repo}/actions/jobs/${jobId}/logs`)), () => true);
+    return this.memo(`log ${repo} ${jobId}`, async () => parseLog((await this.gh.download(`/repos/${repo}/actions/jobs/${jobId}/logs`)).text), () => true);
   }
 
   comments(repo: string, n: number): Promise<Comment[]> {

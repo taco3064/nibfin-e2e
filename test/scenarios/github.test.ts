@@ -66,6 +66,9 @@ function fakeGitHub(seed: Record<string, FakeIssue[]> = {}) {
     graphql: async () => {
       throw new Error('no GraphQL');
     },
+    listByLink: async () => {
+      throw new Error('no listByLink');
+    },
     download: async () => {
       throw new Error('no download');
     },

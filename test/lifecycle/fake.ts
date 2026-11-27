@@ -33,6 +33,7 @@ export function context(github: RunContext['github'], extra: Partial<RunContext>
     target: { ghNibfinCommit: 'a'.repeat(40), platform: 'linux' },
     log: () => {},
     facts: () => undefined,
+    defer: () => {},
     ...extra,
   };
 }
