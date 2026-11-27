@@ -82,6 +82,16 @@ writes no file.
   (`Scenario failed: <id>`, `Provisioning failed: <step>`, `Teardown failed:
   <step>`, merged across legs), per failed, cancelled or timed-out job without a
   result (`Job failed: <job>`) and per plan gap (`Coverage gap: <rule>`).
+- `report --leg --results <dir>`: the final step of one `run` leg, so that
+  leg's failures are filed when it ends instead of after the other leg. It needs
+  `RUNNER_NAME` and takes no `--plan`. It files the root failures of the leg's
+  results with the same titles, or, when the leg has no usable result,
+  `Job failed: <job>` for its own job (found by `RUNNER_NAME`, still in
+  progress) with the steps that failed so far. Other jobs, plan gaps and the
+  coverage check are left to the final `report`, which still runs after both
+  legs and files whatever the legs did not (a leg whose step did not run or
+  crashed, a job that never reached it). It exits `1` only for the leg's own
+  failures or a failed filing.
 - `proposal-updated`: reads the `repository_dispatch` event (`client_payload`:
   `page_id`, `block_ids`, ISO-8601 `timestamp`) and creates or comments on the
   open request titled `Proposal updated`, whose body keeps the earliest and latest
@@ -91,7 +101,14 @@ Every request is created with `NIBFIN_GITHUB_TOKEN` (so it wakes Nibfin),
 labelled `request`, assigned to the token's account and read back. An open
 request with the same title is reused with one comment per run; a hidden
 `<!-- nibfin-e2e:run <id> -->` marker makes a re-run attempt skip what it already
-wrote. `report` and `proposal-updated` need `GITHUB_RUN_ID`, `GITHUB_SERVER_URL`
+wrote. A failure built from leg results also carries one
+`<!-- nibfin-e2e:run <id> leg <platform> -->` marker per leg it contains, so the
+same title from a second leg (or the final report) adds one comment with only
+the legs not yet filed. Before filing, `report` also reads this run's Issues
+in every state (updated since the run started, with its run marker in the body
+or a comment): a request a leg filed and Scope closed meanwhile counts as
+already filed, and a leg not yet filed under a closed request goes on a new one.
+`report` and `proposal-updated` need `GITHUB_RUN_ID`, `GITHUB_SERVER_URL`
 and `GITHUB_REPOSITORY` (`taco3064/nibfin-e2e`); `proposal-updated` also needs
 `GITHUB_EVENT_PATH`.
 
