@@ -154,7 +154,7 @@
   {"id": "R5.27", "platforms": ["linux", "macos", "windows"], "scenarios": ["runner-add-setup"]},
   {"id": "R5.28", "platforms": ["linux", "macos", "windows"], "scenarios": ["runner-add-setup"]},
   {"id": "R5.29", "platforms": ["linux"], "scenarios": ["runner-add-setup"]},
-  {"id": "R5.30", "platforms": ["linux"], "scenarios": []},
+  {"id": "R5.30", "platforms": ["linux"], "scenarios": ["runner-add-login"]},
   {"id": "R5.31", "platforms": ["linux"], "scenarios": ["runner-remove"]},
   {"id": "R5.32", "platforms": ["linux"], "scenarios": ["runner-remove"]},
   {"id": "R5.33", "platforms": ["linux"], "scenarios": []},

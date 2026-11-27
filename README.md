@@ -321,7 +321,9 @@ delivery-lifecycle scenarios so GHCR's main image has little time to move after
 `init`. Their fixture Issues are left paused or without `scope`, and the
 lifecycle scenarios judge only their own tagged fixtures and the runs created
 since they started. Then come the Issue #299 and site scenarios, then the
-Dashboard scenarios, and `runner-remove` comes last because it removes every
+Dashboard scenarios. `runner-add-login` runs alone after them: it starts a Codex
+login through `runner add codex`, abandons it at the guide (Proposal R5.30) and
+removes what the attempt created. `runner-remove` comes last because it removes every
 local Runner and the login volume.
 
 ## Proposal relay
