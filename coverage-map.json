@@ -81,7 +81,7 @@
   {"id": "R3.51", "notE2e": "人工流程"},
   {"id": "R3.52", "notE2e": "Scope 判斷原則"},
   {"id": "R3.53", "notE2e": "組成方式，由 R7.5–R7.8 測"},
-  {"id": "R3.54", "platforms": ["linux"], "scenarios": []},
+  {"id": "R3.54", "platforms": ["linux"], "scenarios": ["review-rebase"]},
   {"id": "R4.1", "platforms": ["linux"], "scenarios": ["init-settings"]},
   {"id": "R4.2", "platforms": ["linux"], "scenarios": ["init-settings"]},
   {"id": "R4.3", "platforms": ["linux"], "scenarios": ["init-settings"]},
