@@ -192,7 +192,14 @@ test('skill-limits: a moved main or a merged PR fails', async () => {
   match(out.reason, /R7\.8: Nibfin commented that a review is missing \(observed: no comment\)/);
 });
 
-function modelSim(opts: { sameRunner?: boolean; failRestore?: boolean; peerLabels?: string[] } = {}) {
+const probe = (...lines: string[]) => '```e2e-probe\n' + lines.join('\n') + '\n```';
+const DEFAULT_PROBE = probe('marker=e2e-override-299', 'first_instruction_line=' + OVERRIDE_MARKER);
+
+/**
+ * `execComments`: the execution fixture's comments at publish time. `later`: runs on the first
+ * job-log fetch of each repo, which comes after runFirstJob captured what it saw at shaped.
+ */
+function modelSim(opts: { sameRunner?: boolean; failRestore?: boolean; peerLabels?: string[]; execComments?: string[]; later?: (repo: string) => void } = {}) {
   const data = mkdtempSync(join(tmpdir(), 'e2e-model-'));
   const dir = join(data, 'nibfin', 'runners', 'claude-1');
   mkdirSync(dir, { recursive: true });
@@ -205,7 +212,7 @@ function modelSim(opts: { sameRunner?: boolean; failRestore?: boolean; peerLabel
   const sim = simulate(
     (repo) =>
       repo === EXEC
-        ? { runner: 'myhost-1a2b3c4d-claude-1', log: init('claude-sonnet-4-5'), comments: ['```e2e-probe\nmarker=e2e-override-299\nfirst_instruction_line=' + OVERRIDE_MARKER + '\n```'], labels: ['shaped'], during: during(repo) }
+        ? { runner: 'myhost-1a2b3c4d-claude-1', log: init('claude-sonnet-4-5'), comments: opts.execComments ?? [DEFAULT_PROBE], labels: ['shaped'], during: during(repo) }
         : { runner: `myhost-1a2b3c4d-claude-${opts.sameRunner ? 1 : 2}`, log: init('claude-opus-4-5'), labels: opts.peerLabels ?? ['shaped'], during: during(repo) },
     {
       respond: (argv) => {
@@ -216,6 +223,22 @@ function modelSim(opts: { sameRunner?: boolean; failRestore?: boolean; peerLabel
     },
   );
   sim.kit.env = { XDG_DATA_HOME: data };
+  if (opts.later) {
+    const later = opts.later;
+    const inner = sim.kit.fetch;
+    const done = new Set<string>();
+    const wrapped: typeof fetch = async (input, init) => {
+      const m = /\/actions\/jobs\/(\d+)\/logs$/.exec(new URL(String(input)).pathname);
+      const repo = m ? sim.runs.get(m[1] as string)?.repo : undefined;
+      if (repo && !done.has(repo)) {
+        done.add(repo);
+        later(repo);
+      }
+      return inner(input, init);
+    };
+    sim.kit.fetch = wrapped;
+    sim.kit.github = createGitHub(() => 'tok', wrapped);
+  }
   return { sim, envFile: join(dir, '.env'), envAtStart, labelsDuringShape };
 }
 
@@ -234,6 +257,69 @@ test('model-choice: the Runner .env model applies to that Runner only, the defau
     deepEqual([issue?.state, issue?.labels?.includes('pause')], ['closed', true]);
   }
   ok(sim.calls.some((c) => c.argv.join(' ') === 'systemctl --user restart nibfin-runner-claude-1.service'));
+});
+
+test('model-choice: with no marked Shape comment, R7.6 falls back to the latest probe comment and says so', async () => {
+  const { sim } = modelSim();
+  const out = await modelChoice(() => sim.kit).run(ctxFor());
+  equal(out.status, 'passed', out.reason);
+  match(out.reason, /R7\.6: [^;]*\(no Shape comment; fallback: comment #1 of 1, the latest with an e2e-probe block: first_instruction_line is the override marker\)/);
+  match(out.reason, /R7\.2: [^(]*\(log read; labels when shaped was observed: scope, shaped; labels now: scope, shaped, pause\)/);
+});
+
+test('model-choice: R7.2 holds when the peer showed shaped at the wait and lost it before the check', async () => {
+  const { sim } = modelSim({
+    later: (repo) => {
+      const issue = sim.repo(repo).issues[0];
+      if (repo === PEER && issue) issue.labels = (issue.labels ?? []).filter((l) => l !== 'shaped');
+    },
+  });
+  const out = await modelChoice(() => sim.kit).run(ctxFor());
+  equal(out.status, 'passed', out.reason);
+  match(out.reason, /R7\.2: [^(]*\(log read; labels when shaped was observed: scope, shaped; labels now: scope, pause\)/);
+});
+
+const SHAPE = (p: string) => `<!-- nibfin:shape -->\n## Goal\n\n${p}`;
+
+test('model-choice: R7.6 reads the Shape comment captured at shaped, not a later probe comment', async () => {
+  const { sim } = modelSim({
+    execComments: ['an earlier note', SHAPE(DEFAULT_PROBE)],
+    later: (repo) => {
+      if (repo === EXEC) sim.repo(repo).issues[0]?.comments?.push(probe('first_instruction_line=other'), SHAPE(probe('first_instruction_line=later')));
+    },
+  });
+  const out = await modelChoice(() => sim.kit).run(ctxFor());
+  equal(out.status, 'passed', out.reason);
+  match(out.reason, /R7\.6: [^;]*\(the Shape comment: first_instruction_line is the override marker\)/);
+  equal(sim.repo(EXEC).issues[0]?.comments?.length, 4);
+});
+
+for (const [name, execComments, expected] of [
+  ['no Shape comment and no probe', ['just text'], /R7\.6: [^;]*\(observed: no Shape comment and no comment with an e2e-probe block \(1 comments\)\)/],
+  ['a Shape comment without a probe block', [DEFAULT_PROBE, SHAPE('no probe here')], /R7\.6: [^;]*\(observed: the Shape comment has no e2e-probe block\)/],
+  ['a probe without first_instruction_line', [SHAPE(probe('marker=e2e-override-299', 'uid=1000', 'marker=again'))], /R7\.6: [^;]*\(observed: the e2e-probe block in the Shape comment has no first_instruction_line; its keys: marker, uid\)/],
+  ['a probe without first_instruction_line in the fallback', [probe('uid=1000')], /R7\.6: [^;]*\(observed: the e2e-probe block in no Shape comment; fallback: comment #1 of 1, the latest with an e2e-probe block has no first_instruction_line; its keys: uid\)/],
+] as const) {
+  test(`model-choice: R7.6 fails naming the case: ${name}`, async () => {
+    const { sim } = modelSim({ execComments: [...execComments] });
+    const out = await modelChoice(() => sim.kit).run(ctxFor());
+    equal(out.status, 'failed');
+    match(out.reason, expected);
+    equal(/R7\.2|R6\.2[678]/.test(out.reason), false, out.reason);
+  });
+}
+
+test('model-choice: R7.6 quotes a wrong first line up to its bound, with secrets removed', async () => {
+  const secret = 'sandbox-token-value';
+  const long = `You are ${secret} ${'x'.repeat(300)}`;
+  const { sim } = modelSim({ execComments: [SHAPE(probe('first_instruction_line=' + long))] });
+  const out = await modelChoice(() => sim.kit).run(ctxFor());
+  equal(out.status, 'failed');
+  const m = /first_instruction_line in the Shape comment is "([^"]*)"/.exec(out.reason);
+  ok(m, out.reason);
+  equal((m[1] ?? '').length, 120);
+  equal(out.reason.includes(secret), false);
+  match(m[1] ?? '', /^You are \[secret value removed by nibfin-e2e\] x+$/);
 });
 
 test('model-choice: both Jobs on one Runner fail saying so, and the Runner is still restored', async () => {
@@ -316,6 +402,17 @@ test('image-provenance: a single-arch image, no attestation or a failed verify f
   const unverified = registry(multiArch, [{ bundle: { dsseEnvelope: { payload: statement } } }], 1);
   const r = await imageProvenance(() => unverified.sim.kit).run(ctxFor({ nibfin: { imageDigest: unverified.digest } }));
   match(r.reason, /gh attestation verify accepts the index .*no matching attestation/);
+});
+
+test('runFirstJob: pauseWhenShaped returns the labels and comments seen at shaped; without it shaped stays undefined', async () => {
+  const sim = simulate(() => ({ labels: ['shaped'], comments: ['published'] }));
+  const job = await runFirstJob(sim.kit, EXEC, { title: 't', file: 'f', deadlineMs: 60_000, stage: 'Shape', pauseWhenShaped: true });
+  deepEqual(job.shaped?.labels, ['scope', 'shaped']);
+  deepEqual(job.shaped?.comments?.map((x) => x.body), ['published']);
+  equal(job.shaped?.commentsError, undefined);
+  equal(typeof job.shaped?.at, 'number');
+  const plain = await runFirstJob(sim.kit, PEER, { title: 't', file: 'f', deadlineMs: 60_000, stage: 'Shape' });
+  equal(plain.shaped, undefined);
 });
 
 test('runFirstJob: pause and pauseWhenShaped cannot be combined, and nothing is opened', async () => {
