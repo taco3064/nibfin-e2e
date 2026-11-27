@@ -216,7 +216,8 @@ async function personView(page: Page, ctx: RunContext, f: Fixtures, notes: strin
   for (const [k, stage] of [['A', 'Shape'], ['B', 'Deliver'], ['D', 'Shape'], ['F', 'Shape'], ['P', 'Shape']] as const) {
     const el = await mustIssue(page, f[k], 'R9.19', 'person view');
     const feats = await issueFeatures(el, f[k]);
-    for (const [name, has] of Object.entries(feats)) check(has, 'R9.19', `fixture ${k} to offer its ${name}`, 'missing');
+    // The element's text is read only for a failure, so a wrong element can be told apart from a missing feature.
+    for (const [name, has] of Object.entries(feats)) if (!has) check(false, 'R9.19', `fixture ${k} to offer its ${name}`, `missing; element text: ${quote(await el.innerText())}`);
     Object.assign(features, feats);
     const cur = await currentStage(el);
     check(cur && new RegExp(stage, 'i').test(cur), 'R9.2', `fixture ${k}'s track at ${stage} (labels only)`, String(cur));
