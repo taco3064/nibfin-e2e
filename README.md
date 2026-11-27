@@ -95,8 +95,11 @@ wrote. `report` and `proposal-updated` need `GITHUB_RUN_ID`, `GITHUB_SERVER_URL`
 and `GITHUB_REPOSITORY` (`taco3064/nibfin-e2e`); `proposal-updated` also needs
 `GITHUB_EVENT_PATH`.
 
-Exit codes: `2` usage or input error (no write), `1` a failure was found, a write
-or read-back failed, or the coverage check failed, `0` otherwise. The harness
+Exit codes: `2` usage or input error (no write), `1` a failure was found, a
+selected rule has a coverage gap, a write or read-back failed, the plan is missing
+or unusable, or the whole-map coverage check failed in an `--all` run, `0`
+otherwise. In other runs (`--delivered`, `--rule`, `--section`) unselected gaps
+are only listed, and the coverage check row notes that it does not fail the run. The harness
 never reads `NIBFIN_GITHUB_TOKEN` and drops it from every child's environment.
 
 ## Host provisioning

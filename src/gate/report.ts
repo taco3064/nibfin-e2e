@@ -138,8 +138,12 @@ interface Occurrence {
   rules: RuleId[];
 }
 
-/** Report's view of the plan: only what filing and the coverage check need. */
+/**
+ * Report's view of the plan: only what filing and the coverage check need, plus the selection,
+ * which decides whether the whole-map coverage check can fail the run (only for `--all`, R8.16).
+ */
 export interface PlanView {
+  selection: { all: boolean };
   gaps: Gap[];
   unselectedGaps: { id: RuleId; missingPlatforms: Platform[] }[];
   coverage: { passed: boolean; covered: number; total: number };
@@ -156,7 +160,8 @@ export function readPlanView(text: string): PlanView | { error: string } {
     return { error: `not JSON: ${(error as Error).message}` };
   }
   if (!isObject(raw)) return { error: 'not a plan object' };
-  const { gaps, unselectedGaps, coverage, source } = raw;
+  const { selection, gaps, unselectedGaps, coverage, source } = raw;
+  if (!isObject(selection) || typeof selection.all !== 'boolean') return { error: 'selection must be {all, ...}' };
   const platforms = (v: unknown) => Array.isArray(v) && v.every((p) => (PLATFORMS as readonly unknown[]).includes(p));
   if (!Array.isArray(gaps) || !gaps.every((g) => isObject(g) && typeof g.id === 'string' && RULE.test(g.id) && (g.missing === NOT_IN_MAP || platforms(g.missing)))) {
     return { error: 'gaps must be a list of {id, missing}' };
@@ -168,7 +173,7 @@ export function readPlanView(text: string): PlanView | { error: string } {
     return { error: 'coverage must be {passed, covered, total}' };
   }
   const src = isObject(source) ? { issue: typeof source.issue === 'string' ? source.issue : undefined, url: typeof source.url === 'string' ? source.url : undefined } : null;
-  return { gaps: gaps as Gap[], unselectedGaps: unselectedGaps as PlanView['unselectedGaps'], coverage: coverage as PlanView['coverage'], source: src };
+  return { selection: { all: selection.all }, gaps: gaps as Gap[], unselectedGaps: unselectedGaps as PlanView['unselectedGaps'], coverage: coverage as PlanView['coverage'], source: src };
 }
 
 const FOOTER =
@@ -322,9 +327,14 @@ export async function report(input: ReportInput): Promise<{ output: ReportOutput
   decisions.push({
     subject: 'coverage check',
     decision: coverage === null ? 'failed: unknown' : coverage.passed ? 'passed' : 'failed',
-    reason: coverage === null ? 'no usable plan' : `${coverage.covered}/${coverage.total} rules covered`,
+    reason: coverage === null ? 'no usable plan' : `${coverage.covered}/${coverage.total} rules covered${plan?.selection.all ? '' : '; fails the run only for --all'}`,
   });
 
-  const failed = failureCount > 0 || filed.some((f) => f.decision === 'failed') || coverage?.passed !== true;
+  // The whole-map coverage check fails only the pre-release `--all` run (R8.16); any other run is
+  // red only for its own selection: failures, selected gaps and failed filings. Without a usable
+  // plan the gate cannot tell whether the run was `--all`, so it fails.
+  const coverageFails = plan === null || (plan.selection.all && plan.coverage.passed !== true);
+  const selectedGaps = plan?.gaps.length ?? 0;
+  const failed = failureCount > 0 || selectedGaps > 0 || filed.some((f) => f.decision === 'failed') || coverageFails;
   return { output: { decisions, filed, coverage, summary: decisionTable('Gate report', decisions) }, failed };
 }
