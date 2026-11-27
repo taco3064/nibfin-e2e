@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import { agentSetup } from '../../scenarios/agent-setup.ts';
 import { codexJobs } from '../../scenarios/codex-jobs.ts';
 import { jobContainer } from '../../scenarios/job-container.ts';
+import { loginVolume } from '../../scenarios/login-volume.ts';
 import { EXTEND_MARKER } from '../../scenarios/lib/files.ts';
 import { missingApprovalLine, runObservedJob } from '../../scenarios/lib/observed.ts';
 import type { ObservedFacts } from '../../scenarios/lib/observed.ts';
@@ -24,6 +25,8 @@ const PROBE = [
   '```e2e-probe',
   'uid=1000',
   'auto_memory=1',
+  'home=/home/nibfin',
+  'claude_config_dir=unset',
   'ancestor=sh',
   'ancestor=claude',
   'ancestor=node',
@@ -42,16 +45,33 @@ async function until(cond: () => boolean) {
   if (!cond()) throw new Error('the simulated step did not reach the expected point');
 }
 
+const MOUNTPOINT = '/home/u/.local/share/containers/storage/volumes/nibfin-home-claude/_data';
+const HOME_MOUNT = { Type: 'volume', Name: 'nibfin-home-claude', Source: MOUNTPOINT, Destination: '/home/nibfin/.claude' };
+/** The login volume listing (`stat -c "%s %Y %n"` from its root) before the Jobs and after Shape. */
+const BEFORE = '120 1000 ./settings.json\n0 1000 ./e2e-decoy-old\n';
+const AFTER_SHAPE = '160 2000 ./settings.json\n0 2000 ./e2e-decoy-login\n0 1000 ./e2e-decoy-old\n4096 2001 ./projects/-workspace/s1.jsonl\n';
+
+interface SimOptions {
+  /** Mounts of every Job container (by container id), replacing the login volume mount. */
+  mounts?: (id: string) => unknown[];
+  volumeInspect?: { code: number; stdout?: string; stderr?: string };
+}
+
 /** Simulates Nibfin around runObservedJob: three stage containers, a branch, a PR and a review comment. */
-async function simulate(probe = PROBE) {
+async function simulate(probe = PROBE, opts: SimOptions = {}) {
   let settings: Record<string, unknown> = { env: { CLAUDE_CODE_OAUTH_TOKEN: TOKEN }, enableAllProjectMcpServers: true, theme: 'dark' };
+  let files = BEFORE;
   const h = setup({
     respond: (argv, o) => {
       const script = argv.at(-1) ?? '';
       if (script.startsWith('umask')) return ((settings = JSON.parse(o.input ?? '{}')), {});
       if (script.startsWith('stat')) return { stdout: `0 755\n0 600\n${JSON.stringify(settings)}` };
+      if (script.startsWith('cd /v')) return { stdout: files };
+      if (argv[1] === 'volume' && argv[2] === 'inspect') return opts.volumeInspect ?? { stdout: JSON.stringify([{ Name: argv[3], Driver: 'local', Mountpoint: MOUNTPOINT }]) };
       if (argv[1] === 'container' && argv[2] === 'inspect') {
-        return { stdout: JSON.stringify([{ ImageName: IMAGE, HostConfig: { Memory: 3e9, NanoCpus: 2e9, PidsLimit: 2048 }, Config: { Env: [`NIBFIN_RUN_ID=${argv[3]?.slice(1)}`, `NIBFIN_RUN_REPO=${EXEC}`] }, Mounts: [{ Source: '/vol/home', Destination: '/home/nibfin' }] }]) };
+        const id = argv[3] ?? '';
+        const mounts = opts.mounts?.(id) ?? [HOME_MOUNT, { Type: 'bind', Source: '/runner/_work', Destination: '/workspace' }];
+        return { stdout: JSON.stringify([{ ImageName: IMAGE, HostConfig: { Memory: 3e9, NanoCpus: 2e9, PidsLimit: 2048 }, Config: { Env: [`NIBFIN_RUN_ID=${id.slice(1)}`, `NIBFIN_RUN_REPO=${EXEC}`] }, Mounts: mounts }]) };
       }
       if (argv[1] === 'info') return { stdout: JSON.stringify({ host: { security: { rootless: true } } }) };
       if (argv[1] === 'images') return { stdout: JSON.stringify([{ Names: ['ghcr.io/taco3064/nibfin'], RepoDigests: [IMAGE] }]) };
@@ -82,6 +102,7 @@ async function simulate(probe = PROBE) {
   await tick();
   issue.comments = [`## Shape\n\n${probe}\n`];
   settings = { ...settings, enableAllProjectMcpServers: true };
+  files = AFTER_SHAPE;
   issue.labels = ['scope', 'shaped'];
   h.events.emit('{"ID":"c1","Status":"died"}');
 
@@ -125,10 +146,31 @@ test('observed-job runs one fixture through Shape, Deliver and Review and record
   deepEqual(h.repo(EXEC).rulesets, []);
   equal(h.repo(EXEC).variableValues.get('NIBFIN_MODEL'), 'haiku');
 
-  for (const s of [jobContainer, agentSetup, projectTools, roleSkills]) {
+  deepEqual(f.jobs?.map((j) => [j.stage, j.id, j.projection?.mounts[0]?.name]), [['Shape', 'c1', 'nibfin-home-claude'], ['Deliver', 'c2', 'nibfin-home-claude'], ['Review', 'c3', 'nibfin-home-claude']]);
+  deepEqual(f.loginVolume, { name: 'nibfin-home-claude', driver: 'local', mountpoint: MOUNTPOINT });
+  equal(f.loginAfterJobs && 'hasToken' in f.loginAfterJobs && f.loginAfterJobs.hasToken, true);
+  // The volume is listed after the login key is removed and before the fixture Issue is opened.
+  const calls = h.calls.map((c) => c.argv.join(' '));
+  ok(calls.findIndex((c) => c.includes('cd /v')) > calls.findIndex((c) => c.includes('umask')));
+  ok(calls.filter((c) => c.includes('cd /v')).every((c) => c.includes('nibfin-home-claude:/v:ro')));
+
+  for (const s of [jobContainer, agentSetup, loginVolume, projectTools, roleSkills]) {
     const r = await s.run(ctxWith(f));
     equal(r.status, 'passed', `${s.id}: ${r.reason}`);
   }
+  match((await loginVolume.run(ctxWith(f))).reason, /R6\.12: the CLI wrote its own files in its home during Shape \(settings\.json and decoys left out\) \(projects\/-workspace\/s1\.jsonl\)/);
+});
+
+test('login-volume fails naming the Job container whose login mount differs, and a volume that cannot be read', async () => {
+  const { out } = await simulate(PROBE, {
+    mounts: (id) => (id === 'c2' ? [{ ...HOME_MOUNT, Name: 'other-volume', Source: '/vol/other' }] : id === 'c3' ? [{ ...HOME_MOUNT, Destination: '/root/.claude' }] : [HOME_MOUNT]),
+    volumeInspect: { code: 125, stderr: 'Error: no such volume nibfin-home-claude' },
+  });
+  equal(out.status, 'passed', 'the new reads do not fail the observed-job step');
+  const r = await loginVolume.run(ctxWith(out.facts as unknown as ObservedFacts));
+  equal(r.status, 'failed');
+  match(r.reason, /R6\.12: nibfin-home-claude is a named Podman volume on the host \(observed: podman volume inspect nibfin-home-claude exited 125: Error: no such volume nibfin-home-claude\)/);
+  match(r.reason, /R6\.12: every Job container mounts nibfin-home-claude once at the CLI's home \(\/home\/nibfin\/\.claude\) \(observed: Deliver c2: other-volume:\/home\/nibfin\/\.claude; Review c3: nibfin-home-claude:\/root\/\.claude\)/);
 });
 
 test('a Shape container that never starts fails the step naming the Issue state', async () => {

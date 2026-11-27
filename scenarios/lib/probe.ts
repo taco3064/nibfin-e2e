@@ -1,8 +1,8 @@
 /**
  * The in-container probe: a POSIX script the fixture commits as `e2e/probe.sh`. The
  * agent runs it in its own shell and pastes the output; it prints `key=value` lines with
- * names, versions and booleans only, never an environment value other than the
- * auto-memory switch.
+ * names, versions, paths and booleans only, never an environment value other than the
+ * auto-memory switch and the two home paths ($HOME and CLAUDE_CONFIG_DIR).
  */
 export const PROBE_SCRIPT = `#!/bin/sh
 # nibfin-e2e probe: prints key=value facts about the Job environment. Never prints secrets.
@@ -13,6 +13,8 @@ done
 if [ -n "\${DOCKER_HOST+x}" ]; then echo "env_set=DOCKER_HOST"; fi
 if [ -n "\${CONTAINER_HOST+x}" ]; then echo "env_set=CONTAINER_HOST"; fi
 echo "auto_memory=\${CLAUDE_CODE_DISABLE_AUTO_MEMORY:-unset}"
+echo "home=$HOME"
+echo "claude_config_dir=\${CLAUDE_CONFIG_DIR:-unset}"
 pid=$$
 while [ -n "$pid" ] && [ "$pid" != 0 ]; do
   echo "ancestor=$(cat /proc/$pid/comm 2>/dev/null)"
