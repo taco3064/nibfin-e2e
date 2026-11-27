@@ -91,10 +91,11 @@ interface Memo {
   private?: Promise<PrivateResult>;
 }
 
+// Keyed by the run's GitHub client: each scenario gets its own context, the client is the run's.
 const memos = new WeakMap<object, Memo>();
 const memo = (ctx: RunContext) => {
-  let m = memos.get(ctx);
-  if (!m) memos.set(ctx, (m = {}));
+  let m = memos.get(ctx.github);
+  if (!m) memos.set(ctx.github, (m = {}));
   return m;
 };
 
@@ -204,7 +205,7 @@ export const publicRegistration = (ctx: RunContext) => (memo(ctx).registration ?
 /**
  * Setup only: deletes the collaborator's registrations as the Owner would in Settings (out
  * of scope), so a later `runner add` meets no registration of the same name and the later
- * Dashboard scenarios (Issue #298) count only the Owner's Runners. Returns what is left.
+ * Dashboard scenarios (Issue #298) count only the Owner's Runners (see `retire`). Returns what is left.
  */
 async function deleteStale(ctx: RunContext, runners: Registration[]): Promise<string[]> {
   const gh = ctx.github;
@@ -266,4 +267,23 @@ export function privatePhase(ctx: RunContext): Promise<PrivateResult> {
       }
     });
   })());
+}
+
+/**
+ * Setup only, after the last collaborator scenario of a run whatever the selection: once the
+ * phases that started have settled, removes the collaborator's local Runners (`no_runners`
+ * counts as done) and deletes its registrations as the Owner would, so the later Dashboard
+ * scenarios (Issue #298) count only the Owner's Runners. Nothing to do when no phase started.
+ * Returns the problems left.
+ */
+export async function retire(ctx: RunContext): Promise<string[]> {
+  const m = memos.get(ctx.github);
+  const started = [m?.registration, m?.removal, m?.private].filter((p) => p !== undefined);
+  if (!started.length) return [];
+  await Promise.allSettled(started);
+  const problems: string[] = [];
+  const r = await ctx.peer().ghNibfin(['runner', 'remove', 'claude', '--yes']);
+  if (r.code !== 0 && !/no_runners/.test(r.stdout + r.stderr)) problems.push(`runner remove claude --yes exited ${r.code}: ${(r.stderr || r.stdout).trim().slice(-500)}`);
+  problems.push(...(await deleteStale(ctx, await registrations(ctx.github, ctx.sandbox.execution))));
+  return problems;
 }

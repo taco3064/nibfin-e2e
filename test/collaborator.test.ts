@@ -4,9 +4,12 @@ import type { HostServices } from '../src/host/services.ts';
 import { createProvisioning } from '../src/provisioning.ts';
 import { run } from '../src/run.ts';
 import { select } from '../src/select.ts';
-import type { ProvisioningStep, RunTarget } from '../src/types.ts';
+import type { GitHub } from '../src/host/github.ts';
+import type { PeerHandle } from '../src/host/peer.ts';
+import type { ProvisioningStep, RunContext, RunTarget } from '../src/types.ts';
 import { collaboratorScenarios } from '../scenarios/collaborator/index.ts';
 import { until } from '../scenarios/collaborator/observe.ts';
+import { retire } from '../scenarios/collaborator/phases.ts';
 import {
   checkStatus,
   classifyJob,
@@ -151,4 +154,100 @@ test('the collaborator step is blocked when nibfin failed, and its scenarios fai
   deepEqual(r.teardown, []);
   const windows = await run({ selection: { all: true }, selected, steps, target: { ...target, platform: 'windows' }, host: fakeHostContext, log: () => {} });
   deepEqual([windows.scenarios, windows.provisioning], [[], []]);
+});
+
+/** A host with a collaborator whose `runner add` registers one online Runner; GitHub calls and peer commands are recorded in order. */
+function retireHost() {
+  const events: string[] = [];
+  const reg = (id: number, name: string, label: string) => ({ id, name, status: 'online', busy: false, labels: [{ name: label }] });
+  let runners = [reg(1, 'owner-1', 'nibfin')];
+  let local = 0;
+  const github: GitHub = {
+    ...fakeHostContext.github,
+    async rest<T>(method: string, path: string) {
+      events.push(`${method} ${path}`);
+      if (method === 'GET' && path.endsWith('/permission')) return { status: 200, data: { permission: 'write' } as T };
+      const m = /\/actions\/runners\/(\d+)$/.exec(path);
+      if (method === 'DELETE' && m) {
+        runners = runners.filter((r) => r.id !== Number(m[1]));
+        return { status: 204, data: undefined as T };
+      }
+      throw new Error(`unexpected ${method} ${path}`);
+    },
+    async list<T>(path: string) {
+      return (path.endsWith('/actions/runners') ? runners : []) as T[];
+    },
+  };
+  const peer: PeerHandle = {
+    login: 'peer-login',
+    id: 42,
+    keyId: 77,
+    home: '/home/e2epeer',
+    dir: '/home/e2epeer/sandbox',
+    dataHome: '/home/e2epeer/.local/share',
+    async ghNibfin(args) {
+      events.push(`peer gh nibfin ${args.join(' ')}`);
+      if (args[0] === 'runner' && args[1] === 'add') {
+        local = 1;
+        runners = [...runners, reg(2, 'peer-1', 'nibfin-42')];
+        return { code: 0, stdout: '', stderr: '' };
+      }
+      if (args[0] === 'runner' && args[1] === 'remove') {
+        if (!local) return { code: 1, stdout: '', stderr: 'no_runners: no claude Runner on this host' };
+        local = 0;
+        return { code: 0, stdout: '', stderr: '' };
+      }
+      return { code: 0, stdout: '{}', stderr: '' };
+    },
+    run: async () => ({ code: 0, stdout: '', stderr: '' }),
+    stat: async () => undefined,
+    list: async () => [],
+    readPublic: async () => '',
+    units: async () => [],
+    github,
+  };
+  const host = { ...fakeHostContext, github, peer: () => peer };
+  return { host, events, runners: () => runners };
+}
+
+async function runCollaborator(rules: string[], host: typeof fakeHostContext) {
+  const entries = [...new Set(collaboratorScenarios.flatMap((s) => s.rules))].map((id) => ({
+    id,
+    platforms: ['linux' as const],
+    scenarios: collaboratorScenarios.filter((s) => s.rules.includes(id)).map((s) => s.id),
+  }));
+  const selection = { all: false as const, rules, sections: [] };
+  const { selected } = select(entries, collaboratorScenarios, selection);
+  const target: RunTarget = { ghNibfinCommit: 'a'.repeat(40), platform: 'linux' };
+  return run({ selection, selected, steps: [step('collaborator', { status: 'passed', reason: 'ok' })], target, host, log: () => {} });
+}
+
+test('a selection without the removal scenarios retires the collaborator once, after its last collaborator scenario', async () => {
+  const { host, events, runners } = retireHost();
+  const r = await runCollaborator(['R5.57', 'R5.64'], host);
+  deepEqual(r.scenarios.map((s) => s.id), ['collaborator-register', 'collaborator-status']);
+  // The registration is shared, so `runner add` ran once; the retirement came after status.
+  equal(events.filter((e) => e.startsWith('peer gh nibfin runner add')).length, 1);
+  const status = events.indexOf('peer gh nibfin status --json');
+  const removes = events.flatMap((e, i) => (e === 'peer gh nibfin runner remove claude --yes' ? [i] : []));
+  const deletes = events.flatMap((e, i) => (e === 'DELETE /repos/o/exec/actions/runners/2' ? [i] : []));
+  equal(removes.length, 1);
+  equal(deletes.length, 1);
+  equal(status >= 0 && status < (removes[0] as number) && (removes[0] as number) < (deletes[0] as number), true);
+  deepEqual(runners().map((x) => x.name), ['owner-1']);
+  for (const s of r.scenarios) equal(/not retired/.test(s.reason), false);
+});
+
+test('a retirement that leaves a registration fails the last collaborator scenario with the reason', async () => {
+  const { host } = retireHost();
+  const github = { ...host.github, rest: async <T,>(method: string, path: string, body?: unknown, allow?: number[]) => (method === 'DELETE' ? { status: 403, data: undefined as T } : host.github.rest<T>(method, path, body, allow)) };
+  const peer = { ...host.peer(), github };
+  const r = await runCollaborator(['R5.57'], { ...host, github, peer: () => peer });
+  equal(r.scenarios[0]?.status, 'failed');
+  match(r.scenarios[0]?.reason ?? '', /setup: the collaborator's Runner was not retired after the collaborator scenarios: registration peer-1 is still on GitHub/);
+});
+
+test('no retirement when no collaborator phase started', async () => {
+  // The fake host has no collaborator and no GitHub: touching either would throw.
+  deepEqual(await retire({ ...fakeHostContext, github: { ...fakeHostContext.github } } as unknown as RunContext), []);
 });

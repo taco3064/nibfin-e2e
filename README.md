@@ -101,6 +101,12 @@ or through another step), in this order:
 | `observed-job` | Runs one agent fixture on the execution sandbox through Shape, Deliver and Review and records what its Jobs ran with (container projection, probe output, log facts, login volume facts, the pushed branch, how the PR ended) for the scenarios that read it |
 | `collaborator` | Linux only. Checks that the second account is a write (not admin) collaborator on the execution sandbox; creates the OS user `e2epeer` (subordinate ids, linger and its user manager); installs the built gh-nibfin for it; clones the execution sandbox into its home; writes its `nibfin-home-claude` volume; generates an ed25519 key as `e2epeer` and adds the public half to the second account as `nibfin-e2e-peer-<time>` |
 
+Whatever the selection, the last collaborator scenario a run starts then retires
+the collaborator: its `runner remove` and the deletion of its registrations on
+the execution sandbox (setup, as the Owner would in Settings), so the later
+Dashboard scenarios count only the Owner's Runners; a retirement that leaves
+something fails that scenario.
+
 After the scenarios, teardown runs for every step that ran, in reverse order:
 the collaborator's `runner remove` and the deletion of every
 `nibfin-e2e-peer-*` SSH key from the second account (read back), the Owner's
@@ -188,7 +194,8 @@ rules, change 不測 marks, and keep ids as they are (they are never reused).
    run long-lived children, `exec` runs one without secrets, `workDir()` and
    `browserEnv()` place and configure a browser, `defer(fn)` registers a
    cleanup for the end of the scenario (each scenario has its own, also when it
-   runs concurrently), and `peer()` gives the collaborator (requires
+   runs concurrently), `upcoming()` lists the scenarios the run still starts
+   after this one, and `peer()` gives the collaborator (requires
    `collaborator`): its login and id, this run's SSH key id, `ghNibfin(args)` in
    its clone, `run`, `stat`, `list`, `readPublic`, `units` and its own `github`
    client.
