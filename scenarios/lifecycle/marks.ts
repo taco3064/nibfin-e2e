@@ -3,8 +3,15 @@
 // patterns are deliberately loose; a log that shows none of them fails the scenario
 // as a product finding ("nothing observable"), not as a harness error.
 
-/** A Shape Validator verdict in a `shape` job log (Proposal R3.13, R3.40). */
-export const VALIDATOR_VERDICT = /\bvalidat(or|ion)\b.*\b(approv\w*|pass\w*|verdict|accept\w*|ok)\b/i;
+const VALIDATOR_SUBJECT = String.raw`\bvalidat(?:or|ion|ed|es|e|ing)s?\b`;
+const VALIDATOR_RESULT = String.raw`\b(?:approv\w*|pass\w*|verdict|accept\w*|ok)\b`;
+/**
+ * A Shape Validator verdict in a `shape` job log (Proposal R3.13, R3.40): a Validator
+ * subject (`validator`, `validation`, `validated`, `validate`, `validating`) and a result
+ * word on one line, in either order. The leading word boundary keeps `invalidate` and
+ * `revalidated` out; a bare subject or a bare result word does not count.
+ */
+export const VALIDATOR_VERDICT = new RegExp(`${VALIDATOR_SUBJECT}.*${VALIDATOR_RESULT}|${VALIDATOR_RESULT}.*${VALIDATOR_SUBJECT}`, 'i');
 
 /** The start and end of the Accept check inside a `deliver` job log (Proposal R3.19, R6.5). */
 export const ACCEPT_START = /\baccept(or|ance)?\b.*\b(start\w*|begin\w*|running|launch\w*|review\w*)\b/i;

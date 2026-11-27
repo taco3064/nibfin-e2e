@@ -294,6 +294,47 @@ export function firstMark(lines: LogLine[], re: RegExp): LogLine | undefined {
   return lines.find((l) => re.test(l.text));
 }
 
+const isoAt = (ms: number) => (Number.isNaN(ms) ? 'unknown' : new Date(ms).toISOString());
+
+/**
+ * The shape job that published (or rewrote) the Shape of `issue`: the one whose window
+ * contains the comment time `at`, the last one if several do (Proposal R3.13, R3.40).
+ */
+export function publishingJob<J extends Job>(jobs: J[], issue: string, at: number): J | undefined {
+  return jobs.filter((j) => {
+    const w = jobWindow(j, issue, 'shape');
+    return !!w && windowAt(at, [w]) !== undefined;
+  }).at(-1);
+}
+
+/** `<id> <started>–<completed or running>` for each job, or `none`. */
+export function describeShapeJobs(jobs: Job[]): string {
+  if (jobs.length === 0) return 'none';
+  return jobs.map((j) => `${j.id} ${isoAt(time(j.started_at))}–${j.completed_at ? isoAt(time(j.completed_at)) : 'running'}`).join(', ');
+}
+
+/** Up to `max` log lines mentioning `validat…` or `Validator`, trimmed, shortened and quoted (Proposal R1.14). */
+export function validationQuote(lines: LogLine[], max = 3): string {
+  const hits = lines.filter((l) => /validat/i.test(l.text)).slice(0, max);
+  if (hits.length === 0) return 'no line mentions validat… or Validator';
+  return hits
+    .map((l) => {
+      const t = l.text.trim();
+      return `\`${t.length > 160 ? `${t.slice(0, 159)}…` : t}\``;
+    })
+    .join('; ');
+}
+
+/** The publishing shape job's log shows no Validator verdict (Proposal R3.13, R3.40). */
+export function noVerdictMessage(o: { job: number; n: number; rewrite: boolean; published: number; lines: LogLine[] }): string {
+  return `shape job ${o.job} of #${o.n}, which ${o.rewrite ? 'rewrote' : 'published'} the Shape at ${isoAt(o.published)}, shows no Validator verdict in its log (nothing observable); its validation lines: ${validationQuote(o.lines)}`;
+}
+
+/** No successful shape job was running when the Shape comment was written (Proposal R3.13, R3.40). */
+export function noPublishingJobMessage(o: { n: number; rewrite: boolean; after: number; published: number; jobs: Job[] }): string {
+  return `#${o.n}: no successful shape job after ${isoAt(o.after)} was running when the Shape was ${o.rewrite ? 'rewritten' : 'published'} (${isoAt(o.published)}); shape jobs seen: ${describeShapeJobs(o.jobs)}`;
+}
+
 /**
  * The window between the first `start` mark and the next `end` mark after it, from
  * the lines' timestamps. Undefined when a mark or a timestamp is missing.
