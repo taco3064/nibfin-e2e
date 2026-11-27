@@ -1,3 +1,4 @@
+import { throwIfAborted } from '../../src/abort.ts';
 import type { Kit } from './kit.ts';
 
 const MIN = 60_000;
@@ -21,11 +22,12 @@ export const DEADLINE = {
  * GitHub-hosted runner, a Job's log after its container ended, a restarted Runner's
  * registration). Re-reads every `intervalMs` until `check` returns a value or the
  * deadline passes, then throws naming `what`. They observe the system under test and
- * drive no Nibfin work.
+ * drive no Nibfin work. They end with the abort reason once `kit.signal` aborts.
  */
 export async function remoteWait<T>(kit: Kit, what: string, deadlineMs: number, intervalMs: number, check: () => Promise<T | undefined>): Promise<T> {
   const end = kit.now() + deadlineMs;
   for (;;) {
+    throwIfAborted(kit.signal);
     const got = await check();
     if (got !== undefined) return got;
     if (kit.now() >= end) throw new Error(`timed out after ${Math.round(deadlineMs / 1000)} s waiting for ${what}`);

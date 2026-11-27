@@ -79,6 +79,7 @@ export const upgrade: Scenario = {
         await waitFor(() => registrations(gh, repo), (rs) => rs.length === 2 && rs.every((r) => r.status === 'online' && r.labels.some((l) => l.name === `nibfin-${me.id}`)), {
           what: `both Runners online with nibfin-${me.id} after upgrade`,
           deadlineMs: 2 * 60_000,
+          signal: ctx.signal,
           intervalMs: 10_000,
         });
       });

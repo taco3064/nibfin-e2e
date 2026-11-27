@@ -1,3 +1,4 @@
+import { abortError } from '../../src/abort.ts';
 import type { Exec } from '../../src/host/exec.ts';
 import type { Kit } from './kit.ts';
 
@@ -82,7 +83,7 @@ export interface Watch {
   readonly events: ContainerEvent[];
   /** The projection taken on each `start`, by container id (undefined when the container was already gone). */
   readonly projections: Map<string, Projection | undefined>;
-  /** Waits until `n` `start` events were seen, or fails at the deadline naming `what`. */
+  /** Waits until `n` `start` events were seen, or fails at the deadline naming `what` (or at once when `kit.signal` aborts). */
   started(n: number, deadlineMs: number, what: string): Promise<ContainerEvent>;
   /** Waits until `n` `died` events were seen, or fails at the deadline naming `what`. */
   died(n: number, deadlineMs: number, what: string): Promise<ContainerEvent>;
@@ -139,11 +140,15 @@ export function watchJobContainers(kit: Kit, repo: string, issue?: number, onSta
         if (ended) return done(() => reject(new Error(`${ended} while waiting for ${what}`)));
       };
       const timer = setTimeout(() => done(() => reject(new Error(`timed out after ${Math.round(deadlineMs / 1000)} s waiting for ${what}`))), deadlineMs);
+      const onAbort = () => done(() => reject(abortError(kit.signal)));
       const done = (f: () => void) => {
         clearTimeout(timer);
+        kit.signal.removeEventListener('abort', onAbort);
         waiters.delete(check);
         f();
       };
+      if (kit.signal.aborted) return onAbort();
+      kit.signal.addEventListener('abort', onAbort, { once: true });
       waiters.add(check);
       check();
     });
