@@ -14,7 +14,7 @@ import { describeLogin, isCliLogin, parseIds, pickLogin, projectLogin } from '..
 import type { LoginContainer } from '../../scenarios/management/login-container.ts';
 import { LABEL_REPO } from '../../scenarios/lib/containers.ts';
 import { claudeLoggedIn, providerLogin } from '../../scenarios/dashboard/support.ts';
-import { readWorkflow } from '../../scenarios/lib/workflows.ts';
+import { readWorkflow, titleStartsWith, triggers, unpinnedImages } from '../../scenarios/lib/workflows.ts';
 
 const D1 = 'sha256:' + '1'.repeat(64);
 const D2 = 'sha256:' + '2'.repeat(64);
@@ -44,6 +44,66 @@ jobs:
   deepEqual(w.images, [`ghcr.io/taco3064/nibfin@${D1}`]);
   deepEqual(w.runsOn, ['[self-hosted, nibfin-42]', 'group: x labels: - nibfin-${{ vars.ID }}']);
   deepEqual(readWorkflow('on: push\n'), { uses: [], images: [], runsOn: [] });
+});
+
+test('workflow reads: block-scalar name and run-name, folded or literal, end at the next top-level key', () => {
+  const folded = readWorkflow(`name: >-
+  Nibfin ·
+  Shared runner
+run-name: >-
+  \${{ inputs.issue != ''
+  && format('Nibfin · {0}#{1}', inputs.repo, inputs.issue)
+  || 'Nibfin · route' }}
+
+on: workflow_dispatch
+`);
+  equal(folded.name, 'Nibfin · Shared runner');
+  equal(folded.runName, "${{ inputs.issue != '' && format('Nibfin · {0}#{1}', inputs.repo, inputs.issue) || 'Nibfin · route' }}");
+  equal(readWorkflow('run-name: |\n  Nibfin\n  · run\njobs: {}\n').runName, 'Nibfin\n· run\n');
+  equal(readWorkflow('run-name: |-\n    Nibfin\n    · run\n\n# c\non: push\n').runName, 'Nibfin\n· run');
+  equal(readWorkflow('run-name: >\n  a\n  b\n\n  c\n').runName, 'a b\nc\n');
+  equal(readWorkflow('run-name: >-   # folded\n  Nibfin x\n').runName, 'Nibfin x');
+  equal(readWorkflow("run-name: '>- not a block'\n").runName, '>- not a block');
+});
+
+test('workflow triggers: scalar, flow list, flow mapping, block mapping and block list', () => {
+  deepEqual(triggers('on: push\n'), ['push']);
+  deepEqual(triggers('on: [push, "issues"]\n'), ['push', 'issues']);
+  deepEqual(triggers('on: { push: {}, workflow_call: {} }\n'), ['push', 'workflow_call']);
+  deepEqual(triggers('name: x\non:\n  workflow_call:\n    inputs:\n      a:\n        type: string\n  # note\n  issues:\n    types: [opened]\njobs: {}\n'), ['workflow_call', 'issues']);
+  deepEqual(triggers('"on":\n  - push\n  - workflow_call\njobs: {}\n'), ['push', 'workflow_call']);
+  deepEqual(triggers('jobs: {}\n'), []);
+});
+
+test('run titles: every title an expression can render must start with the prefix', () => {
+  const shared = "${{ inputs.issue != '' && format('Nibfin · {0}#{1} · {2}', inputs.repo, inputs.issue, inputs.stage) || format('Nibfin · {0}@{1} · route', inputs.repo, inputs.ref) }}";
+  const issue = "${{ github.event.issue && format('Nibfin · {0}#{1} · wake', github.repository, github.event.issue.number) || format('Nibfin · {0}@{1} · wake', github.repository, github.event.workflow_run && (github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.head_branch || github.event.workflow_run.head_sha) || github.event.pull_request.head.ref || github.sha) }}";
+  equal(titleStartsWith(shared, 'Nibfin'), true);
+  equal(titleStartsWith(issue, 'Nibfin'), true);
+  equal(titleStartsWith('Nibfin · ${{ inputs.issue }}', 'Nibfin'), true);
+  equal(titleStartsWith("${{ x && 'Nibfin a' || ('Nibfin b') }}", 'Nibfin'), true);
+  equal(titleStartsWith("${{ x || 'Other' }}", 'Nibfin'), false);
+  equal(titleStartsWith("${{ x && format('Nibfin {0}', y) }}", 'Nibfin'), false);
+  equal(titleStartsWith("${{ x || 'Nibfin' }}", 'Nibfin'), false);
+  equal(titleStartsWith("${{ format('Nibfin {0}', y) == 'z' }}", 'Nibfin'), false);
+  equal(titleStartsWith("${{ format('{0} Nibfin', y) }}", 'Nibfin'), false);
+  equal(titleStartsWith("${{ 'Nibfin' }} and ${{ x }}", 'Nibfin'), false);
+  equal(titleStartsWith('Other', 'Nibfin'), false);
+  equal(titleStartsWith('', 'Nibfin'), false);
+});
+
+test('unpinned images: a bare name passes only next to the digest and when podman never runs it bare', () => {
+  const job = (run: string, env = `  IMAGE: ghcr.io/taco3064/nibfin\n  IMAGE_REF: ghcr.io/taco3064/nibfin@${D1}\n`) =>
+    `on:\n  workflow_call:\nenv:\n${env}jobs:\n  s:\n    runs-on: [self-hosted, nibfin-1]\n    steps:\n      - run: |\n          ${run}\n`;
+  deepEqual(unpinnedImages(job('podman run --rm \\\n            "$IMAGE_REF" nibfin run\n          [ "$r" != "$IMAGE" ]'), D1), []);
+  deepEqual(unpinnedImages(job('podman run --rm \\\n            "$IMAGE" nibfin run'), D1), [{ ref: 'ghcr.io/taco3064/nibfin', why: 'run without a digest' }]);
+  deepEqual(unpinnedImages(job('podman pull ${IMAGE}'), D1), [{ ref: 'ghcr.io/taco3064/nibfin', why: 'run without a digest' }]);
+  deepEqual(unpinnedImages(job('podman create ghcr.io/taco3064/nibfin'), D1), [{ ref: 'ghcr.io/taco3064/nibfin', why: 'run without a digest' }]);
+  deepEqual(unpinnedImages(job('echo', '  IMAGE: ghcr.io/taco3064/nibfin\n'), D1), [{ ref: 'ghcr.io/taco3064/nibfin', why: 'with no expected digest in the file or its caller' }]);
+  deepEqual(unpinnedImages(job('echo', '  IMAGE: ghcr.io/taco3064/nibfin\n'), D1, [`with:\n  digest: ${D1}\n`]), []);
+  deepEqual(unpinnedImages(job('echo', `  IMAGE: ghcr.io/taco3064/nibfin\n  D: ${D1}\n`) + '    container: ghcr.io/taco3064/nibfin\n', D1), [{ ref: 'ghcr.io/taco3064/nibfin', why: 'run without a digest' }]);
+  deepEqual(unpinnedImages(job('podman run ghcr.io/taco3064/nibfin:latest'), D1), [{ ref: 'ghcr.io/taco3064/nibfin:latest' }]);
+  deepEqual(unpinnedImages(job(`podman run ghcr.io/taco3064/nibfin@${D2}`), D1), [{ ref: `ghcr.io/taco3064/nibfin@${D2}` }]);
 });
 
 const HELP = `Add Runners
