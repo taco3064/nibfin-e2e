@@ -1,3 +1,4 @@
+import type { ExecResult } from '../../src/host/exec.ts';
 import { readHostState } from '../../src/host/hoststate.ts';
 import type { HostState } from '../../src/host/hoststate.ts';
 import type { Outcome, RunContext, Scenario } from '../../src/types.ts';
@@ -112,6 +113,10 @@ export function imageSwitch(kitFor: KitFor): Scenario {
       let startPulls: number[] = [];
       let originals = new Map<string, string>();
       let dOld: string | undefined;
+      // `gh nibfin upgrade --yes`, visible to teardown so it ends before the Runner check (R5.40).
+      let up: Promise<ExecResult | undefined> | undefined;
+      let upEnded: string | undefined;
+      let upJudged = false;
       let result: Outcome;
       try {
         result = await (async (): Promise<Outcome> => {
@@ -162,14 +167,14 @@ export function imageSwitch(kitFor: KitFor): Scenario {
           // 5. Upgrade while it runs.
           const moved2 = await requireCurrentImage(dNew, kit.fetch);
           if (moved2) return moved2;
-          let upEnded: string | undefined;
-          const up = ctx.ghNibfin(['upgrade', '--yes']).then(
+          up = ctx.ghNibfin(['upgrade', '--yes']).then(
             (r) => ((upEnded = `exited ${r.code}`), r),
             (error: unknown) => ((upEnded = `failed: ${message(error)}`), undefined),
           );
           const opened = await upgradePr(kit, repo, startPulls, branch, () => upEnded);
           if (!c.that(opened.length === 1, RULE, `gh nibfin upgrade --yes opened ${opened.length} PRs (${opened.map((x) => `#${x}`).join(', ')}), expected 1`)) {
             await up;
+            upJudged = true;
             return c.outcome('');
           }
           const pr = opened[0] as number;
@@ -224,6 +229,7 @@ export function imageSwitch(kitFor: KitFor): Scenario {
 
           // The upgrade: it exits 0 and opened exactly one PR.
           const upResult = await up;
+          upJudged = true;
           c.that(upResult?.code === 0, RULE, `gh nibfin upgrade --yes ${upEnded ?? 'did not end'}${upResult ? `: ${tail(upResult)}` : ''}`);
           const extra = (await openPulls(gh, repo)).filter((p) => !startPulls.includes(p.number) && p.head.ref !== branch).map((p) => `#${p.number}`);
           c.that(!extra.length, RULE, `besides PR #${pr}, gh nibfin upgrade --yes opened ${extra.join(', ')}`);
@@ -346,6 +352,16 @@ export function imageSwitch(kitFor: KitFor): Scenario {
           }
           const odd = otherPins(await nibfinWorkflows(kit, repo), ref(dNew));
           if (odd.length) throw new Error(`main still pins ${odd.join(', ')}`);
+        });
+      }
+      if (up && !upJudged) {
+        // An early return or a throw left the upgrade running: it may still align (restart) an
+        // idle Runner, so wait for it to end before checking that both Runners are online.
+        const pending = up;
+        await step('waiting for gh nibfin upgrade --yes to end', async () => {
+          await remoteWait(kit, 'gh nibfin upgrade --yes to end', DEADLINE.shape, 10 * SECOND, async () => (upEnded === undefined ? undefined : true));
+          const r = await pending;
+          if (r?.code !== 0) throw new Error(`${RULE}: gh nibfin upgrade --yes ${upEnded ?? 'did not end'}${r ? `: ${tail(r)}` : ''}`);
         });
       }
       await step('waiting for both Runners to be online', () =>
