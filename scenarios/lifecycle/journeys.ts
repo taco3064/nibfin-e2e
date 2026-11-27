@@ -293,7 +293,9 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
       sleep: k.sleep,
       signal: k.ctx.signal,
     });
-    if (!names(published).includes('shaped') || published.state !== 'open') {
+    // Closed or `pending` is a fault even when `shaped` is also on: no Deliver can start
+    // while `pending` is on, so the waits after the edit could only end at the stall limit.
+    if (published.state !== 'open' || names(published).includes('pending')) {
       const state = published.state !== 'open' ? 'is closed' : 'has pending';
       throw new Error(`P ${state} while waiting for its Shape to be published after pause was removed: ${await k.summary(await k.obs.fresh(), exec, n)}`);
     }
