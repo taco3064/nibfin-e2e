@@ -153,7 +153,7 @@ async function localJob(ctx: RunContext, secrets: Secrets, markers: Record<strin
     };
     // A live Runner view learns of the Job from podman events (R9.23), so its 20 s count from
     // the container start alone; it is watched while the repo view waits for E to be listed.
-    const runnerBusy = markers.runner === 'live' ? seenWithin(runner, busyWithE, Math.max(0, jobStart + 20_000 - Date.now())) : Promise.resolve(undefined);
+    const runnerBusy = markers.runner === 'live' ? seenWithin(runner, busyWithE, Math.max(0, jobStart + 20_000 - Date.now())).catch(() => undefined) : Promise.resolve(undefined);
     // E reaches the repo view through GitHub (R9.24); its strip counts 20 s from the later
     // of the Job start and E's first appearance, since an unlisted Issue cannot show a strip.
     const listed = await seenWithin(person, async () => (await issueElement(person, issue.title).count()) > 0, POLL_MS + TOLERANCE_MS);
