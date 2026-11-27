@@ -65,6 +65,19 @@ export interface RunInput {
   /** Selected rules that are waiting; a scenario whose selected rules are all waiting is not run. */
   waiting?: WaitingRule[];
   runner?: string | null;
+  /**
+   * The harness budget in ms from `budgetStart`. Its end is the final limit, where
+   * teardown stops and the result is returned. Absent: nothing is bounded.
+   */
+  budgetMs?: number;
+  /** The part of the budget kept for teardown: provisioning and scenarios stop at `budgetMs - teardownReserveMs` (the work limit). */
+  teardownReserveMs?: number;
+  /** How long work cut off at the work limit may take to settle before its cleanups and teardown run (default 2 min). */
+  settleMs?: number;
+  /** Epoch ms the budget counts from (default: when `run` starts). */
+  budgetStart?: number;
+  /** Called when a budget limit cut work or teardown off, so the caller can exit without waiting for it. */
+  onLimit?: () => void;
 }
 
 /** Runs one step, teardown or scenario; a throw or a malformed outcome becomes `failed`. */
@@ -95,6 +108,27 @@ async function runCleanups(cleanups: (() => Promise<unknown>)[], owner: string, 
     if (out.status !== 'passed') log(`cleanup of ${owner}: ${out.reason}`);
   }
 }
+
+/** A timer that resolves at epoch ms `at`; `clear` stops it. */
+function timerAt(at: number): { done: Promise<void>; clear(): void } {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const done = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, Math.max(0, at - Date.now()));
+  });
+  return { done, clear: () => clearTimeout(timer) };
+}
+
+/** `p`'s value, or undefined when epoch ms `at` comes first. */
+async function before<T>(p: Promise<T>, at: number): Promise<{ value: T } | undefined> {
+  const t = timerAt(at);
+  try {
+    return await Promise.race([p.then((value) => ({ value })), t.done.then(() => undefined)]);
+  } finally {
+    t.clear();
+  }
+}
+
+const minutes = (ms: number) => `${Number((ms / 60_000).toFixed(2))} min`;
 
 const plain = ({ status, reason }: Outcome): Outcome => ({ status, reason });
 
@@ -133,11 +167,40 @@ export async function run(input: RunInput): Promise<RunResult> {
   const { target, selected } = input;
   const results = new Map<string, StepResult>();
   const cleanupTimeoutMs = input.cleanupTimeoutMs ?? 60_000;
+
+  // The budget: provisioning and scenarios stop at the work limit, teardown at the final limit.
+  const budgetStart = input.budgetStart ?? Date.now();
+  const finalAt = input.budgetMs === undefined ? undefined : budgetStart + input.budgetMs;
+  const workEndsAt = finalAt === undefined ? undefined : finalAt - (input.teardownReserveMs ?? 0);
+  const settleMs = input.settleMs ?? 2 * 60_000;
+  const workBudget = minutes((workEndsAt ?? 0) - budgetStart);
+  const finalBudget = minutes(input.budgetMs ?? 0);
+  const controller = new AbortController();
+  let settleBy = 0;
+  const pastWork = () => controller.signal.aborted || (workEndsAt !== undefined && Date.now() >= workEndsAt);
+  const notRun = (): Outcome => ({ status: 'failed', reason: `not run: harness budget of ${workBudget} ran out` });
+  /** Runs work until the work limit. When the limit comes first, the run-wide signal aborts (once) and the work gets until the shared settle time to unwind. */
+  const bounded = async (label: string, fn: () => Promise<StepOutcome>, reason: string): Promise<StepOutcome> => {
+    const work = attempt(fn);
+    if (workEndsAt === undefined) return work;
+    const got = await before(work, workEndsAt);
+    if (got) return got.value;
+    if (!controller.signal.aborted) {
+      input.log(`harness budget of ${workBudget} ran out during ${label}`);
+      settleBy = Date.now() + settleMs;
+      controller.abort(new Error(`harness budget of ${workBudget} ran out`));
+      input.onLimit?.();
+    }
+    if (!(await before(work, settleBy))) input.log(`${label} did not settle within ${Math.round(settleMs / 1000)} s after the budget ran out`);
+    return { status: 'failed', reason };
+  };
+
   /** A context whose deferred cleanups and started children go to `cleanups`; each scenario gets its own, so concurrent ones never run each other's. */
-  const contextWith = (cleanups: (() => Promise<unknown>)[], next: () => number): RunContext => {
+  const contextWith = (cleanups: (() => Promise<unknown>)[], next: () => number, signal: AbortSignal = controller.signal): RunContext => {
     const defer = (fn: () => Promise<unknown>) => void cleanups.push(fn);
     return {
       ...input.host,
+      signal,
       target,
       log: input.log,
       facts: (id) => results.get(id)?.facts,
@@ -187,10 +250,11 @@ export async function run(input: RunInput): Promise<RunResult> {
     const blocked = blocker(step.requires ?? [], results);
     let outcome: StepOutcome;
     if (blocked) outcome = blocked;
+    else if (pastWork()) outcome = notRun();
     else {
       input.log(`provisioning ${step.id}`);
       ran.push(step);
-      outcome = await attempt(() => step.run(ctx));
+      outcome = await bounded(`step ${step.id}`, () => step.run(ctx), `harness budget of ${workBudget} ran out during this step`);
       await runCleanups(cleanups, `step ${step.id}`, cleanupTimeoutMs, input.log);
     }
     const r = { id: step.id, ...outcome };
@@ -200,10 +264,11 @@ export async function run(input: RunInput): Promise<RunResult> {
 
   const runScenario = async (s: Scenario, next: number): Promise<ScenarioResult> => {
     let outcome: (Outcome & { blockedBy?: string }) | undefined = blocker(s.requires ?? [], results);
+    if (!outcome && pastWork()) outcome = notRun();
     if (!outcome) {
       input.log(`scenario ${s.id}`);
       const own: (() => Promise<unknown>)[] = [];
-      outcome = plain(await attempt(() => s.run(contextWith(own, () => next))));
+      outcome = plain(await bounded(`scenario ${s.id}`, () => s.run(contextWith(own, () => next)), `harness budget of ${workBudget} ran out during this scenario`));
       await runCleanups(own, `scenario ${s.id}`, cleanupTimeoutMs, input.log);
     }
     return { id: s.id, rules: s.rules, ...outcome };
@@ -221,13 +286,32 @@ export async function run(input: RunInput): Promise<RunResult> {
     return w ? { id: s.id, rules: s.rules, ...w } : (ranResults.get(s.id) as ScenarioResult);
   });
 
+  // Teardown is not stopped by the work limit's abort: it gets a signal of its own and is bounded only by the final limit.
   const teardown: TeardownResult[] = [];
+  const tearCleanups: (() => Promise<unknown>)[] = [];
+  const tearCtx = contextWith(tearCleanups, () => started, new AbortController().signal);
+  let cut = false;
   for (const step of [...ran].reverse()) {
     const fn = step.teardown;
     if (!fn) continue;
+    if (finalAt !== undefined && (cut || Date.now() >= finalAt)) {
+      teardown.push({ id: step.id, status: 'failed', reason: `not run: the harness's final limit of ${finalBudget} ran out` });
+      continue;
+    }
     input.log(`teardown ${step.id}`);
-    teardown.push({ id: step.id, ...plain(await attempt(() => fn.call(step, ctx))) });
-    await runCleanups(cleanups, `teardown ${step.id}`, cleanupTimeoutMs, input.log);
+    const work = (async () => {
+      const out = plain(await attempt(() => fn.call(step, tearCtx)));
+      await runCleanups(tearCleanups, `teardown ${step.id}`, cleanupTimeoutMs, input.log);
+      return out;
+    })();
+    const got = finalAt === undefined ? { value: await work } : await before(work, finalAt);
+    if (got) teardown.push({ id: step.id, ...got.value });
+    else {
+      cut = true;
+      input.log(`teardown ${step.id} did not finish before the harness's final limit of ${finalBudget}`);
+      input.onLimit?.();
+      teardown.push({ id: step.id, status: 'failed', reason: `did not finish before the harness's final limit of ${finalBudget}` });
+    }
   }
 
   const digest = provisioning.map((p) => p.facts?.imageDigest).find((d) => typeof d === 'string');

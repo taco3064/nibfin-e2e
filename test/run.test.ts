@@ -321,3 +321,105 @@ test('upcoming lists the scenarios still to start: all for a step, the later gro
   await runAll([probe('a'), probe('b', true), probe('c', true), probe('d')], steps);
   deepEqual(seen, { step: ['a', 'b', 'c', 'd'], a: ['b', 'c', 'd'], b: ['d'], c: ['d'], d: [], teardown: [] });
 });
+
+// ---- the harness budget (Issue #334) ----
+
+/** Work limit at 200 ms, final limit at 300 ms, 50 ms to settle. */
+const BUDGET = { budgetMs: 300, teardownReserveMs: 100, settleMs: 50 };
+const never = () => new Promise<never>(() => {});
+
+async function runBudget(list: Scenario[], steps: ProvisioningStep[], logs: string[] = []) {
+  const { selected } = select(entriesFor(list), list, { all: true });
+  let limits = 0;
+  const start = Date.now();
+  const r = await run({ selection: { all: true }, selected, steps, target, host, log: (m) => logs.push(m), ...BUDGET, budgetStart: start, onLimit: () => limits++ });
+  return { r, limits, took: Date.now() - start };
+}
+
+test('a provisioning step cut off by the budget fails; its dependants are blocked by it, later work is not run, and teardown runs', async () => {
+  const calls: string[] = [];
+  const steps: ProvisioningStep[] = [
+    { id: 'stuck', run: never, teardown: async () => (calls.push('down:stuck'), passed) },
+    step('later', passed, calls),
+  ];
+  const { r, limits } = await runBudget([scenario('a', ['R1.1'], ['linux'], passed, ['stuck']), scenario('b', ['R1.2'], ['linux'], passed, ['later'])], steps);
+  deepEqual(r.provisioning, [
+    { id: 'stuck', status: 'failed', reason: 'harness budget of 0 min ran out during this step' },
+    { id: 'later', status: 'failed', reason: 'not run: harness budget of 0 min ran out' },
+  ]);
+  deepEqual(r.scenarios.map((s) => [s.id, s.status, s.blockedBy]), [['a', 'failed', 'stuck'], ['b', 'failed', 'later']]);
+  deepEqual(calls, ['down:stuck']);
+  deepEqual(r.teardown, [{ id: 'stuck', status: 'passed', reason: 'ok' }]);
+  equal(limits, 1);
+});
+
+test('a scenario cut off by the budget fails, later scenarios are not run, and its finally runs before teardown', async () => {
+  const calls: string[] = [];
+  let signalled: AbortSignal | undefined;
+  const stuck: Scenario = {
+    id: 'stuck',
+    rules: ['R1.1'],
+    platforms: ['linux'],
+    requires: ['host'],
+    run: (ctx) =>
+      new Promise((_resolve, reject) => {
+        signalled = ctx.signal;
+        ctx.signal.addEventListener('abort', () => setTimeout(() => (calls.push('finally'), reject(ctx.signal.reason as Error)), 10));
+      }),
+  };
+  const steps = [step('host', passed, calls, { teardown: async (ctx: RunContext) => (calls.push(`down:host aborted=${String(ctx.signal.aborted)}`), passed) })];
+  const { r } = await runBudget([stuck, scenario('later', ['R1.2'], ['linux'], passed)], steps);
+  deepEqual(r.scenarios.map((s) => [s.id, s.status, s.reason]), [
+    ['stuck', 'failed', 'harness budget of 0 min ran out during this scenario'],
+    ['later', 'failed', 'not run: harness budget of 0 min ran out'],
+  ]);
+  equal(signalled?.aborted, true);
+  deepEqual(calls, ['host', 'finally', 'down:host aborted=false']);
+  equal(r.gate?.passed, false);
+});
+
+test('a scenario that ignores the abort is logged after the settle time and teardown still starts', async () => {
+  const calls: string[] = [];
+  const logs: string[] = [];
+  const ignoring: Scenario = { id: 'deaf', rules: ['R1.1'], platforms: ['linux'], requires: ['host'], run: never };
+  const steps = [step('host', passed, calls, { teardown: async () => (calls.push('down:host'), passed) })];
+  const { r } = await runBudget([ignoring], steps, logs);
+  equal(r.scenarios[0]?.status, 'failed');
+  deepEqual(calls, ['host', 'down:host']);
+  equal(logs.some((l) => /scenario deaf did not settle within 0 s after the budget ran out/.test(l)), true, logs.join('\n'));
+});
+
+test('every scenario of a concurrent group cut off by the budget gets the budget reason', async () => {
+  const c = (id: string, out: Outcome | 'never'): Scenario => ({ id, rules: [`R1.${id.length}`], platforms: ['linux'], concurrent: true, run: out === 'never' ? never : async () => out });
+  const { r } = await runBudget([c('x', passed), c('yy', 'never'), c('zzz', 'never')], []);
+  deepEqual(r.scenarios.map((s) => [s.id, s.status, s.reason]), [
+    ['x', 'passed', 'ok'],
+    ['yy', 'failed', 'harness budget of 0 min ran out during this scenario'],
+    ['zzz', 'failed', 'harness budget of 0 min ran out during this scenario'],
+  ]);
+});
+
+test('a teardown step still running at the final limit fails, the ones after it are not run, and the result comes by the final limit', async () => {
+  const calls: string[] = [];
+  const steps = [
+    step('first', passed, calls, { teardown: async () => (calls.push('down:first'), passed) }),
+    step('second', passed, calls, { teardown: never }),
+  ];
+  const { r, limits, took } = await runBudget([scenario('a', ['R1.1'], ['linux'], passed, ['first', 'second'])], steps);
+  deepEqual(r.teardown, [
+    { id: 'second', status: 'failed', reason: "did not finish before the harness's final limit of 0.01 min" },
+    { id: 'first', status: 'failed', reason: "not run: the harness's final limit of 0.01 min ran out" },
+  ]);
+  deepEqual(calls, ['first', 'second']);
+  equal(limits, 1);
+  equal(took < 1000, true, `took ${took} ms`);
+  equal(r.scenarios[0]?.status, 'passed');
+});
+
+test('without a budget nothing is bounded and the signal never aborts', async () => {
+  let aborted: boolean | undefined;
+  const s: Scenario = { id: 'a', rules: ['R1.1'], platforms: ['linux'], run: async (ctx) => (await new Promise((res) => setTimeout(res, 20)), (aborted = ctx.signal.aborted), passed) };
+  const r = await runAll([s]);
+  equal(r.scenarios[0]?.status, 'passed');
+  equal(aborted, false);
+});

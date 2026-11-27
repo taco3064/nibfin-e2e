@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { NEVER } from '../abort.ts';
 import { SANDBOX } from './config.ts';
 import { childEnv } from './exec.ts';
 import { readClaudeSettings } from './login.ts';
@@ -15,6 +16,7 @@ export function createHostContext(host: HostServices, platform: string = process
   return {
     ...createHostOperations(host, platform),
     sandbox: { ...SANDBOX },
+    signal: NEVER,
     executionDir,
     ghNibfin: (args, options = {}) => host.exec(['gh', 'nibfin', ...args], { ...options, cwd: executionDir, ghToken: host.sandboxToken() }),
     gh: (args, options = {}) => host.exec(['gh', ...args], { ...options, ghToken: host.sandboxToken() }),
