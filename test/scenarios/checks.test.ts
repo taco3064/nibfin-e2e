@@ -1,7 +1,8 @@
-import { deepEqual, equal, ok } from 'node:assert/strict';
+import { deepEqual, equal, ok, throws } from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   commandInputs,
+  commandSchemaFrom,
   dateTexts,
   deployProblems,
   fieldProblems,
@@ -17,6 +18,7 @@ import {
   pauseResumePreconditions,
   quietProblems,
   redact,
+  sessionFrom,
   shiftedBy,
   snapshotOpenIssues,
   snapshotRepos,
@@ -192,4 +194,22 @@ test('health lights agree with the state status --json reports', () => {
   ok(lightProblem('image', 'Image: up to date', 'bad'));
   ok(lightProblem('Workflows', 'Workflows: not installed', 'good'));
   ok(lightProblem('Workflows', 'Workflows', undefined)?.includes('no readable state'));
+});
+
+test('the session comes from the exchange response body or header', () => {
+  equal(sessionFrom({ status: 200, body: '{"session":"s1"}', headers: {} }), 's1');
+  equal(sessionFrom({ status: 200, body: '', headers: { 'x-nibfin-session': 's2' } }), 's2');
+  equal(sessionFrom({ status: 200, body: '{"ok":true}', headers: {} }), undefined);
+});
+
+test('the command schema comes from a 2xx JSON /api/commands reply; anything else fails R9.13 with the cause', () => {
+  const command = { name: 'init', flags: [{ name: 'repo', param: 'repo', required: false }] };
+  const expected = new Map([['init', [{ name: 'repo', required: false, values: [] }]]]);
+  deepEqual(commandSchemaFrom({ status: 200, body: JSON.stringify({ commands: [command] }) }), expected);
+  deepEqual(commandSchemaFrom({ status: 200, body: JSON.stringify([command]) }), expected);
+  throws(() => commandSchemaFrom({ status: 401, body: 'missing session' }), /^Error: R9\.13 \(R5\.23\): .*HTTP 401: missing session/);
+  throws(() => commandSchemaFrom({ status: 404, body: '' }), /R9\.13.*HTTP 404/);
+  throws(() => commandSchemaFrom({ status: 200, body: '<html>Dashboard</html>' }), /R9\.13.*not JSON \(/);
+  throws(() => commandSchemaFrom({ status: 200, body: '{"ok":true}' }), /R9\.13.*no commands/);
+  throws(() => commandSchemaFrom({ status: 500, body: 'x'.repeat(1000) }), (e: Error) => /HTTP 500/.test(e.message) && e.message.length < 400);
 });
