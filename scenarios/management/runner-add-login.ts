@@ -9,7 +9,7 @@ import { tail } from '../lib/check.ts';
 import { registrations } from '../lib/github.ts';
 import type { Registration } from '../lib/github.ts';
 import { listVolume } from '../lib/volume.ts';
-import { guideTail, loginGuide, statusRunners, SUCCESS_LINE, waitForOutput } from './login-guide.ts';
+import { guideTail, loginGuide, statusRunners, SUCCESS_LINE, volumeContainers, volumeExists, waitForOutput } from './login-guide.ts';
 
 const PROVIDER = 'codex';
 /** Allows for the first pull of the login image. */
@@ -17,21 +17,6 @@ const GUIDE_MS = 10 * 60_000;
 const CODE_MS = 30_000;
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
-
-/** `podman volume exists`: true, false, or throws on another error (exit 125). */
-async function volumeExists(ctx: RunContext): Promise<boolean> {
-  const r = await ctx.exec(['podman', 'volume', 'exists', CODEX_VOLUME]);
-  if (r.code === 0) return true;
-  if (r.code === 1) return false;
-  throw new Error(`podman volume exists ${CODEX_VOLUME} exited ${r.code}: ${tail(r, 300)}`);
-}
-
-/** IDs of every container (running or not) that mounts the Codex login volume. */
-async function volumeContainers(ctx: RunContext): Promise<string[]> {
-  const r = await ctx.exec(['podman', 'ps', '-a', '--filter', `volume=${CODEX_VOLUME}`, '--format', '{{.ID}}']);
-  if (r.code !== 0) throw new Error(`podman ps -a --filter volume=${CODEX_VOLUME} exited ${r.code}: ${tail(r, 300)}`);
-  return r.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
-}
 
 /** Every failure here is the run's state, never R5.30. */
 async function precondition(ctx: RunContext): Promise<void> {
@@ -41,7 +26,7 @@ async function precondition(ctx: RunContext): Promise<void> {
   const runners = statusRunners(status, PROVIDER);
   if (!runners) throw new Error('gh nibfin status --json has no .host.runners.runners list to check for codex Runners');
   if (runners.length) throw new Error(`gh nibfin status --json lists ${runners.length} codex Runner(s) before runner add`);
-  if (await volumeExists(ctx)) {
+  if (await volumeExists(ctx, CODEX_VOLUME)) {
     const files = await listVolume(ctx.exec, CODEX_VOLUME);
     if (files.length) throw new Error(`the Codex login volume ${CODEX_VOLUME} already holds ${files.length} file(s)`);
   }
@@ -64,11 +49,11 @@ async function cleanup(ctx: RunContext, before: Registration[], stop: () => Prom
     if (r.code !== 0) ctx.log(`runner remove codex --delete-login --yes exited ${r.code} (noted, not fatal): ${tail(r, 300)}`);
   });
   await step(`removing ${CODEX_VOLUME}`, async () => {
-    if (await volumeExists(ctx)) {
+    if (await volumeExists(ctx, CODEX_VOLUME)) {
       const r = await ctx.exec(['podman', 'volume', 'rm', '--force', CODEX_VOLUME]);
       if (r.code !== 0) throw new Error(`podman volume rm --force exited ${r.code}: ${tail(r, 300)}`);
     }
-    const left = await volumeContainers(ctx);
+    const left = await volumeContainers(ctx, CODEX_VOLUME);
     if (left.length) await ctx.exec(['podman', 'rm', '--force', ...left]);
   });
   const known = new Set(before.map((r) => r.id));
@@ -78,8 +63,8 @@ async function cleanup(ctx: RunContext, before: Registration[], stop: () => Prom
     }
   });
   await step('read-back', async () => {
-    if (await volumeExists(ctx)) problems.push(`${CODEX_VOLUME} still exists`);
-    const containers = await volumeContainers(ctx);
+    if (await volumeExists(ctx, CODEX_VOLUME)) problems.push(`${CODEX_VOLUME} still exists`);
+    const containers = await volumeContainers(ctx, CODEX_VOLUME);
     if (containers.length) problems.push(`${containers.length} container(s) still mount ${CODEX_VOLUME}`);
     const extra = (await registrations(ctx.github, execution)).filter((r) => !known.has(r.id));
     if (extra.length) problems.push(`${execution} still lists new registrations [${extra.map((r) => r.name).join(', ')}]`);

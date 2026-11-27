@@ -9,7 +9,7 @@ import { isNibfinRunFor, leafCommands, parseHelp, parseRemaining } from '../../s
 import { mainDigest, requireCurrentImage } from '../../scenarios/lib/image.ts';
 import { schemaValidator } from '../../scenarios/lib/schema.ts';
 import { waitFor } from '../../scenarios/lib/wait.ts';
-import { guideTail, GUIDE_LINE, loginGuide, statusRunners, SUCCESS_LINE, waitForOutput } from '../../scenarios/management/login-guide.ts';
+import { guideTail, GUIDE_LINE, loginGuide, loginRefusal, PASTE_PROMPT, statusRunners, SUCCESS_LINE, volumeContainers, volumeExists, waitForOutput } from '../../scenarios/management/login-guide.ts';
 import { claudeLoggedIn, providerLogin } from '../../scenarios/dashboard/support.ts';
 import { readWorkflow } from '../../scenarios/lib/workflows.ts';
 
@@ -376,4 +376,45 @@ test('providerLogin: true, false and undefined; claudeLoggedIn keeps its results
   equal(claudeLoggedIn({ claude: { login: 'logged-in' } }), true);
   equal(claudeLoggedIn({ providers: [{ provider: 'codex', loggedIn: true }] }), false);
   equal(claudeLoggedIn({}), false);
+});
+
+// ---- login-command (Proposal R5.34) ----------------------------------------------
+
+test('loginGuide: a Claude re-login guide, with the paste prompt left without a newline', () => {
+  const url = 'https://claude.ai/oauth/authorize?code=true&client_id=abc-123&state=xyz789';
+  const out = `Preview:\n  login claude: logs in again when already logged in\n\x1b[1mopen ${url}\x1b[0m\npaste the code shown in your browser: `;
+  const g = loginGuide(out);
+  equal(g.url, url);
+  equal(g.secrets.includes(url), true);
+  equal(PASTE_PROMPT.test(out), true);
+  equal(guideTail(out).includes('claude.ai/oauth'), false);
+});
+
+test('loginRefusal: the no_runners refusal for the named provider, with a non-zero exit and no guide', () => {
+  const refusal = 'no_runners: no codex runners on gate-host; add runners first: gh nibfin runner add codex\n';
+  deepEqual(loginRefusal(1, refusal, 'codex'), { refused: true, guide: false });
+  deepEqual(loginRefusal(0, refusal, 'codex'), { refused: false, guide: false });
+  deepEqual(loginRefusal(1, 'podman_failed: podman run exited 125: image not known\n', 'codex'), { refused: false, guide: false });
+  deepEqual(loginRefusal(1, `${refusal}open https://auth.openai.com/codex/device\n`, 'codex'), { refused: false, guide: true });
+  deepEqual(loginRefusal(1, `${refusal}paste the code shown in your browser: `, 'codex'), { refused: false, guide: true });
+  deepEqual(loginRefusal(1, `\x1b[31mno_runners: no codex runners on h;\x1b[0m\r\n`, 'codex'), { refused: true, guide: false });
+  deepEqual(loginRefusal(1, 'see: gh nibfin runner add codex\r\n', 'codex'), { refused: true, guide: false });
+  // The provider argument counts: a claude refusal is no codex refusal.
+  deepEqual(loginRefusal(1, 'no_runners: no claude runners on h; add runners first: gh nibfin runner add claude\n', 'codex'), { refused: false, guide: false });
+  // "codexx" is another word.
+  deepEqual(loginRefusal(1, 'no codexx runners\n', 'codex'), { refused: false, guide: false });
+});
+
+test('volumeExists and volumeContainers read podman through exec', async () => {
+  const calls: string[][] = [];
+  const ctx = (code: number, stdout = '') => ({
+    exec: async (argv: string[]) => (calls.push(argv), { code, stdout, stderr: code === 125 ? 'boom' : '' }),
+  }) as unknown as Parameters<typeof volumeExists>[0];
+  equal(await volumeExists(ctx(0), 'v1'), true);
+  equal(await volumeExists(ctx(1), 'v1'), false);
+  await rejects(volumeExists(ctx(125), 'v1'), /podman volume exists v1 exited 125: boom/);
+  deepEqual(calls[0], ['podman', 'volume', 'exists', 'v1']);
+  deepEqual(await volumeContainers(ctx(0, 'aaa\n bbb \n\n'), 'v2'), ['aaa', 'bbb']);
+  deepEqual(calls.at(-1), ['podman', 'ps', '-a', '--filter', 'volume=v2', '--format', '{{.ID}}']);
+  await rejects(volumeContainers(ctx(125), 'v2'), /podman ps -a --filter volume=v2 exited 125/);
 });
