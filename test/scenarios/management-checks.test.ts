@@ -69,6 +69,10 @@ test('host diffs: new enabled units and changed .wslconfig keys', () => {
   const before = { platform: 'linux' as const, units: [{ name: 'a.service', state: 'enabled' }], linger: 'no', systemFiles: [] };
   const now = { ...before, units: [...before.units, { name: 'n-1.service', state: 'enabled' }, { name: 'x.service', state: 'disabled' }] };
   deepEqual(newEnabledUnits(before, now), ['n-1.service']);
+  // An image that already enables a global user unit before runner add (read without a manager): it is not new.
+  const image = { ...before, units: [{ name: 'gpg-agent.socket', state: 'enabled' }, { name: 'late.service', state: 'disabled' }] };
+  const after = { ...image, units: [{ name: 'gpg-agent.socket', state: 'enabled' }, { name: 'late.service', state: 'enabled' }, { name: 'n-1.service', state: 'enabled' }] };
+  deepEqual(newEnabledUnits(image, after), ['late.service', 'n-1.service']);
   const w = wslconfigChanges('[wsl2]\nnestedVirtualization=true\nmemory=4GB\n', '[wsl2]\nnestedVirtualization=true\nvmIdleTimeout=-1\n');
   deepEqual([w.changed, w.added, w.now.wsl2?.vmidletimeout], [['[wsl2] memory'], ['[wsl2] vmidletimeout'], '-1']);
 });

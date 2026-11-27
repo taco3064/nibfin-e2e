@@ -200,8 +200,10 @@ rules, change 不測 marks, and keep ids as they are (they are never reused).
      settings.json, compared in memory only);
    - `facts('nibfin')`: the command results, init PR numbers, image digest and
      `hostBefore`, the host state read just before `runner add` (Linux: user
-     unit files, linger and `/etc/systemd/system`; Windows: `.wslconfig` and
-     the scheduled tasks), so a scenario can see what the setup changed;
+     unit files, linger and `/etc/systemd/system`; without a running user
+     manager the units are the globally enabled ones plus the user's own
+     `.wants`/`.requires` entries; Windows: `.wslconfig` and the scheduled
+     tasks), so a scenario can see what the setup changed;
    - `withExecutionVisibility('private', fn)` for scenarios that need a
      private execution repository; it restores public afterwards;
    - the host operations below (Linux only);
