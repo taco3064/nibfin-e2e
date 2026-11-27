@@ -148,7 +148,8 @@ export class FakeGate implements GitHub {
     if (method === 'GET' && n === undefined) {
       const state = q.get('state') ?? 'open';
       const labels = (q.get('labels') ?? '').split(',').filter(Boolean);
-      let out = list.filter((i) => (state === 'all' || i.state === state) && labels.every((l) => i.labels.includes(l)));
+      const since = q.get('since');
+      let out = list.filter((i) => (state === 'all' || i.state === state) && labels.every((l) => i.labels.includes(l)) && (!since || i.updated_at >= since));
       if (q.get('sort') === 'updated') out = [...out].sort((a, b) => (q.get('direction') === 'asc' ? 1 : -1) * a.updated_at.localeCompare(b.updated_at));
       else out = [...out].sort((a, b) => b.number - a.number);
       return out.map((i) => this.view(repo, i));

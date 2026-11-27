@@ -36,11 +36,13 @@ export interface GateDeps {
 export const USAGE = `usage: npm run gate -- <subcommand>
   select (--delivered <owner/repo>#<n> | --rule R<s>.<n> ... --section <n> ... | --all)
   report [--plan <path>] --results <dir>
+  report --leg --results <dir>
   proposal-updated`;
 
 /**
  * Runs one gate subcommand: 0 ok; 1 a failure, a selected gap, a failed write or read-back, no usable
- * plan, or a failed coverage check in an `--all` run; 2 usage or input error.
+ * plan, or a failed coverage check in an `--all` run (with `--leg`: only the leg's own failures or a
+ * failed filing); 2 usage or input error.
  */
 export async function main(argv: string[], deps: GateDeps): Promise<number> {
   const print = (doc: unknown) => deps.stdout(JSON.stringify(doc, null, 2) + '\n');
@@ -53,7 +55,7 @@ export async function main(argv: string[], deps: GateDeps): Promise<number> {
   const [sub, ...rest] = argv;
   const options = {
     select: { delivered: { type: 'string' }, rule: { type: 'string', multiple: true }, section: { type: 'string', multiple: true }, all: { type: 'boolean' } },
-    report: { plan: { type: 'string' }, results: { type: 'string' } },
+    report: { plan: { type: 'string' }, results: { type: 'string' }, leg: { type: 'boolean' } },
     'proposal-updated': {},
   } as const;
   if (sub !== 'select' && sub !== 'report' && sub !== 'proposal-updated') return fail('usage', [`unknown subcommand ${JSON.stringify(sub ?? '')}`]);
@@ -108,11 +110,15 @@ export async function main(argv: string[], deps: GateDeps): Promise<number> {
   const runEnv = readRunEnv(deps.env, usage);
   if (sub === 'report') {
     const resultsDir = values.results as string | undefined;
-    if (resultsDir === undefined) usage.push('report needs --results <dir>');
-    if (usage.length || !runEnv || resultsDir === undefined) return fail('usage', usage);
     const planPath = values.plan as string | undefined;
+    const runner = deps.env.RUNNER_NAME?.trim();
+    if (resultsDir === undefined) usage.push('report needs --results <dir>');
+    if (values.leg && planPath !== undefined) usage.push('report --leg cannot take --plan: the final report files plan gaps');
+    if (values.leg && !runner) usage.push('report --leg needs RUNNER_NAME, the runner of this leg');
+    if (usage.length || !runEnv || resultsDir === undefined) return fail('usage', usage);
     let plan: { text: string } | { error: string };
-    if (planPath === undefined) plan = { error: 'no --plan given' };
+    if (values.leg) plan = { error: 'not read in leg mode' };
+    else if (planPath === undefined) plan = { error: 'no --plan given' };
     else {
       try {
         plan = { text: deps.readFile(planPath) };
@@ -127,6 +133,7 @@ export async function main(argv: string[], deps: GateDeps): Promise<number> {
         plan,
         results: deps.readResults(resultsDir),
         registry: { entries: map.entries, scenarios: deps.scenarios, steps: deps.steps },
+        ...(values.leg && runner ? { leg: { runner } } : {}),
       });
       print(output);
       return failed ? 1 : 0;
