@@ -77,12 +77,15 @@ export interface Ruleset {
   name: string;
 }
 
+/** Whether a 403 message from the rules API means the plan has no rulesets (Proposal R3.55). */
+export const planHasNoRulesets = (message: string): boolean => /Upgrade to GitHub Pro/i.test(message);
+
 /** Rulesets of the repository; a private repository on a plan without rulesets has none (Proposal R3.55). */
 export async function rulesets(gh: GitHub, repo: string): Promise<Ruleset[]> {
   const r = await gh.rest<Ruleset[] | { message?: string }>('GET', `/repos/${repo}/rulesets?per_page=100`, undefined, [403]);
   if (r.status === 403) {
     const message = (r.data as { message?: string }).message ?? '';
-    if (/Upgrade to GitHub Pro/i.test(message)) return [];
+    if (planHasNoRulesets(message)) return [];
     throw new Error(`GitHub GET /repos/${repo}/rulesets returned 403: ${message}`);
   }
   return r.data as Ruleset[];

@@ -60,7 +60,7 @@
   {"id": "R3.31", "platforms": ["linux"], "scenarios": ["delivery-lifecycle", "delivery-blocked-by-chain", "fix-loops"]},
   {"id": "R3.32", "platforms": ["linux"], "scenarios": ["delivery-blocked-by-chain"]},
   {"id": "R3.33", "platforms": ["linux"], "scenarios": ["delivery-lifecycle", "peer-dispatch"]},
-  {"id": "R3.55", "platforms": ["linux"], "scenarios": []},
+  {"id": "R3.55", "platforms": ["linux"], "scenarios": ["peer-dispatch"]},
   {"id": "R3.34", "platforms": ["linux"], "scenarios": ["delivery-lifecycle"]},
   {"id": "R3.35", "platforms": ["linux"], "scenarios": ["delivery-lifecycle"]},
   {"id": "R3.36", "platforms": ["linux"], "scenarios": ["delivery-lifecycle"]},

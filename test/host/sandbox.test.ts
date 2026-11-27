@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { createHostContext } from '../../src/host/context.ts';
 import { createGitHub } from '../../src/host/github.ts';
-import { readTemplate, resetSandbox, setVisibility, treeSha } from '../../src/host/sandbox.ts';
+import { planHasNoRulesets, readTemplate, resetSandbox, setVisibility, treeSha } from '../../src/host/sandbox.ts';
 import type { HostServices } from '../../src/host/services.ts';
 import { FakeGitHub, cleanRepo, fakeExec } from './fakes.ts';
 
@@ -69,6 +69,12 @@ test('a private peer whose rules API answers "Upgrade to GitHub Pro" has no rule
   repo.rulesets = 'upgrade';
   deepEqual(await resetSandbox(deps, 'o/exec', 'private'), []);
   deepEqual(fake.writes, []);
+});
+
+test('only the "Upgrade to GitHub Pro" 403 means a plan without rulesets', () => {
+  equal(planHasNoRulesets('Upgrade to GitHub Pro or make this repository public to enable this feature.'), true);
+  equal(planHasNoRulesets('Resource not accessible by integration'), false);
+  equal(planHasNoRulesets(''), false);
 });
 
 test('a write that does not stick is reported by the read-back', async () => {
