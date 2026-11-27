@@ -100,13 +100,47 @@ export interface LinuxReadOptions {
   exists?: (path: string) => boolean;
   /** `/etc/systemd/system`'s file list; injectable for tests. */
   systemFiles?: () => string[];
+  /** The units the user's own config enables (see {@link userEnabledUnits}); injectable for tests. */
+  userEnabled?: () => string[];
+}
+
+/**
+ * The units the user's own unit directory enables without a running manager: every entry of
+ * `${XDG_CONFIG_HOME:-~/.config}/systemd/user/<unit>.wants|.requires/`, which is what
+ * `systemctl --user enable` creates there.
+ */
+export function userEnabledUnits(env: Record<string, string | undefined> = process.env, home: string = homedir()): string[] {
+  const dir = join(env.XDG_CONFIG_HOME || join(home, '.config'), 'systemd', 'user');
+  if (!existsSync(dir)) return [];
+  const names = new Set<string>();
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (!e.isDirectory() || !/\.(wants|requires)$/.test(e.name)) continue;
+    for (const u of readdirSync(join(dir, e.name))) names.add(u);
+  }
+  return [...names].sort();
+}
+
+/**
+ * The user units enabled without a running manager: the globally enabled ones
+ * (`systemctl --global list-unit-files`, which reads unit files only) with the user's own
+ * enabled units set to `enabled` over them.
+ */
+async function offlineUserUnits(run: HostRun, userEnabled: string[]): Promise<{ name: string; state: string }[]> {
+  const argv = ['systemctl', '--global', 'list-unit-files', '--no-legend', '--plain'];
+  const listed = await run(argv);
+  if (listed.code !== 0) throw fail(argv, listed);
+  const units = new Map(parseUnitFiles(listed.stdout).map((u) => [u.name, u.state]));
+  for (const name of userEnabled) units.set(name, 'enabled');
+  return [...units].map(([name, state]) => ({ name, state }));
 }
 
 /**
  * Linux host state. Before `runner add` the user manager may not run and the user may be
  * neither logged in nor lingering, so `systemctl --user` or `loginctl show-user` can fail.
- * Then the state is recorded as no user units (no manager socket in the runtime directory)
- * and linger `no` (no file in /var/lib/systemd/linger). Any other failure still throws.
+ * Then, when the runtime directory has no manager socket, the user units are read from the
+ * unit files alone (the globally enabled ones and the user's own `.wants` entries), so that
+ * units the image already enables are not taken for new ones; linger reads `no` when
+ * /var/lib/systemd/linger has no file for the user. Any other failure still throws.
  */
 export async function readLinuxHostState(run: HostRun, options: LinuxReadOptions = {}): Promise<LinuxHostState> {
   const exists = options.exists ?? existsSync;
@@ -118,7 +152,7 @@ export async function readLinuxHostState(run: HostRun, options: LinuxReadOptions
   const listed = await run(unitsArgv, env);
   let units: { name: string; state: string }[];
   if (listed.code === 0) units = parseUnitFiles(listed.stdout);
-  else if (runtime === undefined || (!exists(join(runtime, 'systemd', 'private')) && !exists(join(runtime, 'bus')))) units = [];
+  else if (runtime === undefined || (!exists(join(runtime, 'systemd', 'private')) && !exists(join(runtime, 'bus')))) units = await offlineUserUnits(run, (options.userEnabled ?? (() => userEnabledUnits(options.env ?? process.env)))());
   else throw fail(unitsArgv, listed);
 
   const lingerArgv = ['loginctl', 'show-user', user, '-p', 'Linger', '--value'];

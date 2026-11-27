@@ -9,9 +9,9 @@ import { nibfinFacts, registrations, whoami } from '../lib/github.ts';
 
 export const hostRun = (ctx: RunContext): HostRun => (argv, env) => ctx.exec(argv, { env });
 
-/** Enabled user units that were not there before runner add. */
+/** User units enabled now that were not enabled before runner add. */
 export function newEnabledUnits(before: LinuxHostState, now: LinuxHostState): string[] {
-  const had = new Set(before.units.map((u) => u.name));
+  const had = new Set(before.units.filter((u) => u.state === 'enabled').map((u) => u.name));
   return now.units.filter((u) => u.state === 'enabled' && !had.has(u.name)).map((u) => u.name);
 }
 

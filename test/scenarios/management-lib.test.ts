@@ -1,6 +1,8 @@
 import { deepEqual, equal, match, rejects, throws } from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseIni, parseUnitFiles, readLinuxHostState, userRuntimeDir } from '../../src/host/hoststate.ts';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { parseIni, parseUnitFiles, readLinuxHostState, userEnabledUnits, userRuntimeDir } from '../../src/host/hoststate.ts';
 import type { HostRun } from '../../src/host/hoststate.ts';
 import { Check, precondition, redact, tail } from '../../scenarios/lib/check.ts';
 import { isNibfinRunFor, leafCommands, parseHelp, parseRemaining } from '../../scenarios/lib/gh.ts';
@@ -162,19 +164,56 @@ test('host state: the user manager runtime directory defaults to /run/user/<uid>
   equal(userRuntimeDir({}, 1001), '/run/user/1001');
 });
 
-test('host state before runner add: no user manager and no linger read as no units and linger no', async () => {
+test('host state before runner add: without a user manager the units come from the unit files, and no linger reads no', async () => {
   const seen: { argv: string[]; env?: Record<string, string> }[] = [];
   const run: HostRun = async (argv, env) => {
     seen.push({ argv, env });
+    if (argv[0] === 'systemctl' && argv[1] === '--global') return { code: 0, stdout: 'gpg-agent.socket enabled enabled\nmine.service disabled enabled\nx.timer static -\n', stderr: '' };
     if (argv[0] === 'systemctl') return { code: 1, stdout: '', stderr: 'Failed to connect to bus: No medium found' };
     return { code: 1, stdout: '', stderr: 'Failed to get user: User runner is not logged in or lingering.' };
   };
-  const state = await readLinuxHostState(run, { env: {}, uid: 1001, user: 'runner', exists: () => false, systemFiles: () => ['a.service'] });
-  deepEqual(state, { platform: 'linux', units: [], linger: 'no', systemFiles: ['a.service'] });
+  const state = await readLinuxHostState(run, { env: {}, uid: 1001, user: 'runner', exists: () => false, systemFiles: () => ['a.service'], userEnabled: () => ['mine.service', 'own.timer'] });
+  deepEqual(state, {
+    platform: 'linux',
+    units: [
+      { name: 'gpg-agent.socket', state: 'enabled' },
+      { name: 'mine.service', state: 'enabled' },
+      { name: 'x.timer', state: 'static' },
+      { name: 'own.timer', state: 'enabled' },
+    ],
+    linger: 'no',
+    systemFiles: ['a.service'],
+  });
   deepEqual(
-    seen.map((s) => s.env),
-    [{ XDG_RUNTIME_DIR: '/run/user/1001' }, { XDG_RUNTIME_DIR: '/run/user/1001' }],
+    seen.map((s) => [s.argv.slice(0, 3).join(' '), s.env]),
+    [
+      ['systemctl --user list-unit-files', { XDG_RUNTIME_DIR: '/run/user/1001' }],
+      ['systemctl --global list-unit-files', undefined],
+      ['loginctl show-user runner', { XDG_RUNTIME_DIR: '/run/user/1001' }],
+    ],
   );
+
+  const noGlobal: HostRun = async (argv) => (argv[0] === 'systemctl' ? { code: 1, stdout: '', stderr: argv[1] === '--global' ? 'unreadable' : 'no bus' } : { code: 0, stdout: 'no\n', stderr: '' });
+  await rejects(readLinuxHostState(noGlobal, { env: {}, uid: 1001, user: 'runner', exists: () => false, systemFiles: () => [], userEnabled: () => [] }), /systemctl --global list-unit-files exited 1: unreadable/);
+});
+
+test('host state: the user\'s own enabled units are the entries of its .wants and .requires directories', () => {
+  const work = join(import.meta.dirname, '..', '..', '.e2e-work');
+  mkdirSync(work, { recursive: true });
+  const home = mkdtempSync(join(work, 'test-units-'));
+  try {
+    deepEqual(userEnabledUnits({}, home), []);
+    const dir = join(home, '.config', 'systemd', 'user');
+    for (const d of ['default.target.wants', 'sockets.target.requires', 'other.d']) mkdirSync(join(dir, d), { recursive: true });
+    writeFileSync(join(dir, 'default.target.wants', 'b.service'), '');
+    writeFileSync(join(dir, 'sockets.target.requires', 'a.socket'), '');
+    writeFileSync(join(dir, 'other.d', 'override.conf'), '');
+    writeFileSync(join(dir, 'b.service'), '');
+    deepEqual(userEnabledUnits({}, home), ['a.socket', 'b.service']);
+    deepEqual(userEnabledUnits({ XDG_CONFIG_HOME: join(home, 'none') }, home), []);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test('host state: a running user manager and a lingering user are read, and their failures still throw', async () => {
