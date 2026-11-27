@@ -1,19 +1,37 @@
 import { createHash } from 'node:crypto';
 import { existsSync, writeFileSync } from 'node:fs';
-import { delimiter, join } from 'node:path';
+import { delimiter, join, win32 } from 'node:path';
 import { PODMAN_MSI } from './config.ts';
 import { envKey, mustRun } from './exec.ts';
 import type { Platform } from '../types.ts';
 import type { HostServices } from './services.ts';
 
-/** Where the Podman MSI installs, machine-wide and per-user. */
+/**
+ * Where the pinned Podman MSI installs `podman.exe`. Its WiX source at v6.2.1
+ * (`contrib/win-installer/wix/podman-main.wxs`) puts `INSTALLDIR` "Podman" under
+ * `ProgramFiles6432Folder`: `%ProgramFiles%` for a machine-wide install and
+ * `%LocalAppData%\Programs` for a per-user one. The package is `perUserOrMachine`, so a
+ * default `/quiet` install is per-user.
+ */
 export function podmanDirs(env: HostServices['env']): string[] {
   const get = (name: string) => env[envKey(env, name, 'win32')];
   const dirs: string[] = [];
-  for (const base of [get('ProgramFiles'), get('LOCALAPPDATA') && join(get('LOCALAPPDATA') as string, 'Programs')]) {
-    if (base) dirs.push(join(base, 'RedHat', 'Podman'));
-  }
+  const programFiles = get('ProgramFiles');
+  const localAppData = get('LOCALAPPDATA');
+  if (programFiles) dirs.push(win32.join(programFiles, 'Podman'));
+  if (localAppData) dirs.push(win32.join(localAppData, 'Programs', 'Podman'));
   return dirs;
+}
+
+/**
+ * The `podmanDirs` folders that hold `podman.exe` after the install. Throws, naming every
+ * folder searched and the MSI log, when none does.
+ */
+export function findPodman(env: HostServices['env'], log: string, exists: (path: string) => boolean = existsSync): string[] {
+  const dirs = podmanDirs(env);
+  const installed = dirs.filter((d) => exists(win32.join(d, 'podman.exe')));
+  if (!installed.length) throw new Error(`podman.exe not found after install in ${dirs.join(' or ')}; see the MSI log ${log}`);
+  return installed;
 }
 
 /**
@@ -35,10 +53,10 @@ export async function preparePodman(host: HostServices, platform: Platform): Pro
   const work = host.workDir();
   const msi = join(work, 'podman-installer-windows-amd64.msi');
   writeFileSync(msi, bytes);
-  await mustRun(exec, ['msiexec', '/i', msi, '/quiet', '/norestart', '/l*v', join(work, 'podman-msi.log')]);
+  const log = join(work, 'podman-msi.log');
+  await mustRun(exec, ['msiexec', '/i', msi, '/quiet', '/norestart', '/l*v', log]);
 
-  const installed = podmanDirs(host.env).filter((d) => existsSync(join(d, 'podman.exe')));
-  if (!installed.length) throw new Error(`podman.exe not found after install in ${podmanDirs(host.env).join(' or ')}`);
+  const installed = findPodman(host.env, log);
   const key = envKey(host.env, 'PATH', 'win32');
   host.env[key] = [...installed, host.env[key] ?? ''].join(delimiter);
 
