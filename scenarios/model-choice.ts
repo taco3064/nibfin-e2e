@@ -1,12 +1,15 @@
 import type { KitFor } from './lib/kit.ts';
 import type { Outcome, Scenario } from '../src/types.ts';
-import { Checks } from './lib/checks.ts';
+import { markerOf } from './lifecycle/analysis.ts';
+import { SHAPE_MARKER } from './lifecycle/marks.ts';
+import { Checks, excerpt } from './lib/checks.ts';
 import { OVERRIDE_MARKER, OVERRIDE_TEXT, PROBE_FILE, json } from './lib/files.ts';
 import { close, comments, labels, prepareFixture } from './lib/fixture.ts';
+import type { Comment } from './lib/fixture.ts';
 import { initEvents, stageJob } from './lib/joblog.ts';
 import { message } from './lib/kit.ts';
 import type { Kit } from './lib/kit.ts';
-import { parseProbe } from './lib/probe.ts';
+import { first, parseProbe } from './lib/probe.ts';
 import { localRunners } from './lib/runners.ts';
 import { editRunnerEnv } from './lib/runner-env.ts';
 import { runFirstJob } from './lib/single.ts';
@@ -32,6 +35,30 @@ async function slotOf(kit: Kit, job: FirstJob): Promise<string> {
   const p = job.projection;
   if (!p?.runId) throw new Error(`fixture #${job.issue}: ${job.logError ?? 'no run id'}`);
   return (await stageJob(kit, p.runRepo ?? kit.sandbox.execution, p.runId)).slot;
+}
+
+/**
+ * Judges Proposal R7.6 from the comments as read when `shaped` was observed: the probe's
+ * first_instruction_line in the Nibfin Shape comment (marker `<!-- nibfin:shape… -->`),
+ * or, without one, in the latest comment with an e2e-probe block, saying so. A failure
+ * names the comment read and which case happened; only a bounded, redacted excerpt of the
+ * line or of the key names is quoted.
+ */
+export function shapeProbeLine(cs: Comment[], secrets: string[]): { ok: boolean; detail: string } {
+  const shapeAt = cs.findLastIndex((x) => SHAPE_MARKER.test(markerOf(x.body) ?? ''));
+  let at = shapeAt;
+  let source = 'the Shape comment';
+  if (shapeAt < 0) {
+    at = cs.findLastIndex((x) => parseProbe(x.body) !== undefined);
+    if (at < 0) return { ok: false, detail: `no Shape comment and no comment with an e2e-probe block (${cs.length} comments)` };
+    source = `no Shape comment; fallback: comment #${at + 1} of ${cs.length}, the latest with an e2e-probe block`;
+  }
+  const probe = parseProbe(cs[at]?.body ?? '');
+  if (!probe) return { ok: false, detail: 'the Shape comment has no e2e-probe block' };
+  const line = first(probe, 'first_instruction_line');
+  if (line === undefined) return { ok: false, detail: `the e2e-probe block in ${source} has no first_instruction_line; its keys: ${excerpt([...probe.keys()].join(', ') || 'none', 200, secrets)}` };
+  if (line.trim() === OVERRIDE_MARKER) return { ok: true, detail: `${source}: first_instruction_line is the override marker` };
+  return { ok: false, detail: `first_instruction_line in ${source} is "${excerpt(line, 120, secrets)}"` };
 }
 
 /** Proposal R6.26, R6.27, R6.28, R7.2 (absent), R7.6 (override). */
@@ -76,10 +103,28 @@ export function modelChoice(kitFor: KitFor): Scenario {
         c.hold('R6.27', 'the Runner without NIBFIN_MODEL ran the Claude default, Opus', /opus/i.test(m2 ?? ''), m2 ?? 'no init event');
         c.hold('R6.28', 'the repository variable NIBFIN_MODEL=haiku chose no model', ![m1, m2].some((m) => /haiku/i.test(m ?? '')), `${m1 ?? '-'}, ${m2 ?? '-'}`);
 
-        const line = parseProbe((await comments(kit, execution, ex.issue)).map((x) => x.body).join('\n'))?.get('first_instruction_line')?.[0];
-        c.hold('R7.6', 'override replaces the built-in Shape text entirely', line?.trim() === OVERRIDE_MARKER, line ?? 'no first_instruction_line');
-        const peerLabels = await labels(kit, peer, pe.issue);
-        c.hold('R7.2', 'without .nibfin.json the Job ran its agent with the defaults', initEvents(pe.log?.text ?? '').length > 0 && peerLabels.includes('shaped'), `${pe.logError ?? 'log read'}; labels ${peerLabels.join(', ')}`);
+        // R7.6 reads the comments as they were when shaped was observed; later comments do not count.
+        let atShaped = ex.shaped?.comments;
+        let readNow = '';
+        if (!atShaped) {
+          readNow = `comments at shaped unreadable (${ex.shaped?.commentsError ?? 'not captured'}); read now: `;
+          atShaped = await comments(kit, execution, ex.issue);
+        }
+        const r76 = shapeProbeLine(atShaped, kit.secrets());
+        c.hold('R7.6', 'override replaces the built-in Shape text entirely', r76.ok, readNow + r76.detail);
+        // R7.2 uses the shaped the wait saw; Deliver may lawfully remove it later (Proposal R4.10, R3.39).
+        const seen = pe.shaped?.labels ?? [];
+        const now = await labels(kit, peer, pe.issue).then(
+          (l) => l.join(', ') || 'none',
+          (error: unknown) => `unreadable: ${message(error)}`,
+        );
+        const seenText = seen.join(', ') || 'none';
+        c.hold(
+          'R7.2',
+          'without .nibfin.json the Job ran its agent with the defaults',
+          initEvents(pe.log?.text ?? '').length > 0 && seen.includes('shaped'),
+          `${pe.logError ?? 'log read'}; labels when shaped was observed: ${seenText}${now === seenText ? '' : `; labels now: ${now}`}`,
+        );
         return c.outcome();
       };
       const outcome = await body().catch((error: unknown): Outcome => ({ status: 'failed', reason: message(error) }));
