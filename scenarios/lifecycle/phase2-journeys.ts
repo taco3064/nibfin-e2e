@@ -7,6 +7,10 @@ import {
   issueKey,
   parseStageTitle,
   concurrentPair,
+  describeJob,
+  githubHosted,
+  jobWindow,
+  windowAt,
   firstMark,
   isIssueBranch,
   markWindow,
@@ -18,7 +22,7 @@ import {
 } from './analysis.ts';
 import type { Activity, Window } from './analysis.ts';
 import { holdJourney, journey } from './journeys.ts';
-import { DEADLINE, lifecycle } from './kit.ts';
+import { DEADLINE, finishAt, finishRunProblems, finishSeen, lifecycle } from './kit.ts';
 import type { Kit } from './kit.ts';
 import { ACCEPT_END, ACCEPT_START, BLOCKER_REPORT, NO_ASSIGNEE_REPORT, SHAPE_MARKER, VALIDATOR_VERDICT } from './marks.ts';
 import type { Snapshot } from './observe.ts';
@@ -51,7 +55,7 @@ async function validatorProblems(k: Kit, s: Snapshot, repo: string, n: number, a
 export const deliveryLifecycle: Scenario = lifecycle({
   id: 'delivery-lifecycle',
   concurrent: true,
-  rules: ['R1.11', 'R3.13', 'R3.15', 'R3.16', 'R3.17', 'R3.19', 'R3.22', 'R3.23', 'R3.24', 'R3.25', 'R3.31', 'R3.33', 'R3.34', 'R3.35', 'R3.36', 'R4.7', 'R4.9', 'R4.10', 'R4.18', 'R4.34', 'R4.35', 'R6.5'],
+  rules: ['R1.11', 'R3.13', 'R3.15', 'R3.16', 'R3.17', 'R3.19', 'R3.22', 'R3.23', 'R3.24', 'R3.25', 'R3.31', 'R3.33', 'R3.34', 'R3.35', 'R3.36', 'R4.7', 'R4.9', 'R4.10', 'R4.18', 'R4.34', 'R4.35', 'R5.7', 'R5.72', 'R5.74', 'R6.5'],
   async run(k) {
     const j = await journey(k);
     const c = new Checks();
@@ -157,6 +161,46 @@ export const deliveryLifecycle: Scenario = lifecycle({
     const strays = agentJobs.filter((x) => !x.labels.includes(label));
     c.check('R4.18', agentJobs.length > 0, 'A has no agent jobs');
     c.check('R4.18', strays.length === 0, `A's agent jobs ran on ${strays.map((x) => x.labels.join('+')).join(', ')}, not ${label}`);
+
+    // R5.7: the agent jobs ran on the sandbox's own Runners with the Owner's label.
+    const sandboxRunners = (await k.obs.runners(exec)).map((r) => r.name);
+    const offHost = agentJobs.filter((x) => x.runner_name && (!sandboxRunners.includes(x.runner_name) || !x.labels.includes(label)));
+    c.check('R5.7', agentJobs.length > 0 && offHost.length === 0, `A's agent jobs ran outside the sandbox's Runners (${sandboxRunners.join(', ')}) with ${label}: ${offHost.map((x) => describeJob(x.run, x)).join('; ') || 'A has no agent jobs'}`);
+
+    // R5.72, R5.74: no finish job of A ran on a self-hosted or sandbox Runner (so none started an agent).
+    const finish = await k.finishJobs(s, exec, n);
+    const finishProblems = finishRunProblems(finish, sandboxRunners);
+    c.none('R5.72', finishProblems);
+    c.none('R5.74', finishProblems.map((p) => `the finish Job runs no agent, but ${p}`));
+
+    // R5.74 closing clause: the close, `delivered` and the closing comment happen inside a hosted finish job.
+    const closer = finishAt(finish, closedAt);
+    c.check('R5.74', !!closer, `A has no hosted finish job whose window contains its close ${String(a?.closed_at)}; ${finishSeen(finish)}`);
+    const anyCloser = finishAt(finish, closedAt, false);
+    for (const rule of ['R5.72', 'R5.7'] as const) {
+      c.check(rule, !!anyCloser && githubHosted(anyCloser), anyCloser ? `the finish job that closed A did not run GitHub-hosted: ${describeJob(anyCloser.run, anyCloser)}` : `no finish job's window contains A's close ${String(a?.closed_at)}; ${finishSeen(finish)}`);
+    }
+    const deliveredAt = await k.labeledAt(exec, n, 'delivered');
+    c.check('R5.74', deliveredAt !== undefined && !!finishAt(finish, deliveredAt), `\`delivered\` was added to A at ${deliveredAt === undefined ? 'no time seen' : iso(deliveredAt)}, outside every hosted finish job; ${finishSeen(finish)}`);
+    const closing = (await k.obs.comments(exec, n)).filter((x) => markerOf(x.body)).at(-1);
+    if (!closing) c.fail('R5.74', 'A has no marked closing comment');
+    else {
+      for (const at of new Set([closing.created_at, closing.updated_at])) {
+        c.check('R5.74', !!finishAt(finish, time(at)), `the closing comment ${closing.html_url} was written at ${at}, outside every hosted finish job; ${finishSeen(finish)}`);
+      }
+    }
+
+    // R5.74 (a head that still needs review goes to Review), R3.24: the clean review on the Owner's Runner merged it.
+    if (lastReview) {
+      c.check('R5.74', lastReview.labels.includes(label) && sandboxRunners.includes(lastReview.runner_name ?? ''), `the review before the merge did not run on the Owner's Runner with ${label}: ${describeJob(lastReview.run, lastReview)}`);
+      const w = jobWindow(lastReview, issueKey(exec, n), 'review');
+      const mergedIn = !!w && !!windowAt(time(pr.merged_at), [w]);
+      const why = `PR #${pr.number} merged at ${String(pr.merged_at)}, outside the review job ${describeJob(lastReview.run, lastReview)} (${lastReview.started_at ?? '?'}–${lastReview.completed_at ?? 'running'})`;
+      c.check('R3.24', mergedIn, why);
+      c.check('R5.74', mergedIn, why);
+    }
+    // Every finish run of A, those before the merge included, is held to hosted-only above, so no agent reviewed A in finish.
+    c.note('delivery-lifecycle does not drive R5.74\'s changes-request clause or its wake-redo-after-delivered-close clause');
     return c.outcome(`#${n} went Shape → Deliver → PR CI → review → merge → CD → delivered (PR #${pr.number}, ${j.mergeSha.slice(0, 7)})`);
   },
 });
@@ -215,7 +259,7 @@ async function reported(k: Kit, s: Snapshot, n: number, pattern: RegExp, before 
 export const blockedByChain: Scenario = lifecycle({
   id: 'delivery-blocked-by-chain',
   concurrent: true,
-  rules: ['R3.31', 'R3.32', 'R4.11', 'R4.28', 'R4.29', 'R4.30'],
+  rules: ['R3.31', 'R3.32', 'R4.11', 'R4.28', 'R4.29', 'R4.30', 'R5.74'],
   async run(k) {
     const j = await journey(k);
     const c = new Checks();
@@ -242,7 +286,17 @@ export const blockedByChain: Scenario = lifecycle({
       c.check('R4.29', !!start && time(start.created_at) >= upClosed, `${name}'s first agent stage run (${String(start?.created_at)}) is not after ${upName} closed`);
       c.check('R4.30', lastWrite < upClosed && !!start, `${name} was not woken without a harness write after ${upName} closed`);
       c.check('R3.31', !!k.delivered(s, exec, up) && !!start, `${upName}'s closure did not lead to ${name}`);
+
+      // R5.74: the upstream's delivered close came from a hosted finish job, and the downstream woke after it.
+      const upFinish = await k.finishJobs(s, exec, up);
+      const closer = finishAt(upFinish, upClosed);
+      c.check('R5.74', !!closer, `${upName} (#${up}) has no hosted finish job whose window contains its close ${String(k.issue(s, exec, up)?.closed_at)}; ${finishSeen(upFinish)}`);
+      const woken = k.stages(s, exec, n).filter((r) => time(r.created_at) >= upClosed);
+      const seen = k.stages(s, exec, n).map((r) => `${r.display_title} (${r.id}) ${r.stage} ${r.created_at}`).join(', ') || 'none';
+      const by = closer ? `${closer.run.display_title} (run ${closer.run.id}) job ${closer.name} (${closer.id})` : 'no hosted finish job';
+      c.check('R5.74', woken.length > 0, `${name} has no stage run created at or after ${upName}'s close ${String(k.issue(s, exec, up)?.closed_at)} by ${by}; ${name}'s stage runs: ${seen}`);
     }
+    c.note('R5.74 downstream wake: only its timing is observable, not that the finish Job itself sent it');
 
     // R3.32: no Assignee is reported, with no stage.
     const u = j.u.number;

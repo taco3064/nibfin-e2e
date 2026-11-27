@@ -31,6 +31,8 @@ export interface Job {
   conclusion: string | null;
   labels: string[];
   runner_name: string | null;
+  /** `GitHub Actions` for a GitHub-hosted runner; null while no runner took the job. */
+  runner_group_name?: string | null;
   created_at?: string;
   started_at: string | null;
   completed_at: string | null;
@@ -154,15 +156,59 @@ export const issueKey = (repo: string, n: number) => `${repo}#${n}`;
  * cancelled or skipped while it waited (its timestamps are set but it never ran).
  */
 export function jobWindow(job: Job, issue: string, stage: Stage): Window | undefined {
+  if (!ranOnRunner(job)) return undefined;
   const start = time(job.started_at);
-  if (Number.isNaN(start) || job.status === 'queued' || job.status === 'waiting' || job.status === 'pending') return undefined;
-  if (!job.runner_name) return undefined;
   const end = job.completed_at ? time(job.completed_at) : Infinity;
   return { issue, stage, jobId: job.id, runner: job.runner_name, start, end };
 }
 
 /** Whether a job ran on a self-hosted Runner (the agent job of an agent stage). */
 export const selfHosted = (job: Job) => job.labels.includes('self-hosted') || job.labels.some((l) => /^nibfin-\d+$/.test(l));
+
+/** Whether a runner took the job: it has a runner and a start and is not waiting in the queue. */
+export function ranOnRunner(job: Job): boolean {
+  if (Number.isNaN(time(job.started_at)) || job.status === 'queued' || job.status === 'waiting' || job.status === 'pending') return false;
+  return !!job.runner_name;
+}
+
+/** The runner group GitHub reports for its hosted runners. */
+export const HOSTED_GROUP = 'GitHub Actions';
+
+/**
+ * Whether a job ran on a GitHub-hosted runner: a runner took it, its runner group is
+ * `GitHub Actions` (labels alone decide when the API gives no group), and its labels
+ * carry neither `self-hosted` nor a `nibfin-<id>` routing label (Proposal R5.70, R5.72).
+ */
+export function githubHosted(job: Job): boolean {
+  if (!ranOnRunner(job) || selfHosted(job)) return false;
+  return job.runner_group_name === undefined || job.runner_group_name === null || job.runner_group_name === HOSTED_GROUP;
+}
+
+/** Run, job, status, runner, runner group and labels of a job, for failure messages. */
+export function describeJob(run: Pick<Run, 'id' | 'display_title'>, job: Job): string {
+  const st = `${job.status}${job.conclusion ? `/${job.conclusion}` : ''}`;
+  return `${run.display_title} (run ${run.id}) job ${job.name} (${job.id}) ${st} on runner ${String(job.runner_name)} in group ${String(job.runner_group_name)} with labels [${job.labels.join(', ')}]`;
+}
+
+/**
+ * R5.72, R5.74: every job a runner took in one finish run ran GitHub-hosted and not on
+ * one of the sandbox's registered Runners. Jobs no runner took (the skipped `stage` job,
+ * or a run cancelled while it waited) are not judged.
+ */
+export function hostedOnlyProblems(run: Pick<Run, 'id' | 'display_title'>, jobs: Job[], sandboxRunners: string[]): string[] {
+  const out: string[] = [];
+  for (const j of jobs) {
+    if (!ranOnRunner(j)) continue;
+    if (!githubHosted(j)) out.push(`${describeJob(run, j)} did not run on a GitHub-hosted runner`);
+    else if (sandboxRunners.includes(j.runner_name ?? '')) out.push(`${describeJob(run, j)} ran on the sandbox's registered Runner ${String(j.runner_name)}`);
+  }
+  return out;
+}
+
+/** The first window that contains `t`, both bounds included (GitHub's timestamps are whole seconds). */
+export function windowAt<W extends { start: number; end: number }>(t: number, windows: W[]): W | undefined {
+  return Number.isNaN(t) ? undefined : windows.find((w) => w.start <= t && t <= w.end);
+}
 
 export const overlap = (a: { start: number; end: number }, b: { start: number; end: number }) => a.start < b.end && b.start < a.end;
 

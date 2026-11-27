@@ -5,6 +5,9 @@ import {
   concurrentPair,
   duplicateMarkers,
   fixPushProblems,
+  githubHosted,
+  hostedOnlyProblems,
+  windowAt,
   isIssueBranch,
   jobWindow,
   markWindow,
@@ -170,4 +173,43 @@ test('R3.20: a fix Deliver that pushed nothing to the PR branch is not exercised
   deepEqual(fixPushProblems({ branch: 'nibfin/issue-5', prNumber: 11, windows: [w], activity: [], headsAfter: [], pullsForBranch: [11] }), [
     'not exercised: the ci-failure Deliver pushed nothing to refs/heads/nibfin/issue-5',
   ]);
+});
+
+// The shapes the public sandbox's job API reports (read 2026-11-27).
+const hosted = (id: number, extra: Partial<Job> = {}): Job =>
+  job(id, { name: 'finish', labels: ['ubuntu-24.04'], runner_name: 'GitHub Actions 1000030032', runner_group_name: 'GitHub Actions', ...extra });
+const skipped = (id: number, extra: Partial<Job> = {}): Job =>
+  job(id, { status: 'completed', conclusion: 'skipped', runner_name: null, runner_group_name: null, started_at: '2026-11-26T10:00:00Z', completed_at: '2026-11-26T10:00:00Z', ...extra });
+
+test('githubHosted takes the hosted shape and rejects self-hosted, untaken and wrong-group jobs', () => {
+  equal(githubHosted(hosted(1)), true);
+  equal(githubHosted(job(2, { runner_name: 'host-claude-1', runner_group_name: 'Default' })), false);
+  equal(githubHosted(skipped(3, { labels: ['self-hosted', 'nibfin-42'] })), false);
+  equal(githubHosted(skipped(4, { labels: ['ubuntu-24.04'] })), false);
+  equal(githubHosted(hosted(5, { runner_group_name: undefined })), true);
+  equal(githubHosted(hosted(6, { runner_group_name: 'Default' })), false);
+  equal(githubHosted(hosted(7, { labels: ['ubuntu-24.04', 'nibfin-42'] })), false);
+  equal(githubHosted(hosted(8, { status: 'queued', runner_name: null })), false);
+});
+
+test('hostedOnlyProblems judges only the jobs a runner took', () => {
+  const fin = run(9, 'Nibfin · o/exec#5 · finish');
+  deepEqual(hostedOnlyProblems(fin, [skipped(1, { name: 'route', labels: ['ubuntu-24.04'], conclusion: 'cancelled' }), skipped(2, { name: 'finish', labels: ['ubuntu-24.04'], conclusion: 'cancelled' })], ['claude-1']), []);
+  deepEqual(hostedOnlyProblems(fin, [skipped(1, { name: 'route', labels: ['ubuntu-24.04'] }), hosted(2), skipped(3, { name: 'stage' })], ['claude-1']), []);
+  const onSandbox = hostedOnlyProblems(fin, [hosted(2, { runner_name: 'claude-1' })], ['claude-1', 'claude-2']);
+  equal(onSandbox.length, 1);
+  match(onSandbox[0] as string, /Nibfin · o\/exec#5 · finish \(run 9\) job finish \(2\).*runner claude-1 in group GitHub Actions/);
+  const selfRun = hostedOnlyProblems(fin, [job(4, { name: 'finish', runner_name: 'host-claude-1', runner_group_name: 'Default' })], []);
+  equal(selfRun.length, 1);
+  match(selfRun[0] as string, /job finish \(4\).*runner host-claude-1 in group Default with labels \[self-hosted, nibfin-42\] did not run on a GitHub-hosted runner/);
+});
+
+test('windowAt includes both bounds and returns nothing outside every window', () => {
+  const ws = [{ start: 10, end: 20 }, { start: 30, end: Infinity }];
+  equal(windowAt(10, ws), ws[0]);
+  equal(windowAt(20, ws), ws[0]);
+  equal(windowAt(25, ws), undefined);
+  equal(windowAt(1e15, ws), ws[1]);
+  equal(windowAt(NaN, ws), undefined);
+  equal(windowAt(5, []), undefined);
 });
