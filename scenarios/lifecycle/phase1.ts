@@ -24,7 +24,13 @@ export function closingProblems(comments: Comment[], prs: { number: number; html
   return out;
 }
 
-const APPROVAL_RULE = {
+/** The marked PR comment saying the merge waits for an approving review (Proposal R3.26), written or updated at or after `since`. */
+export function awaitingReview(comments: Comment[], since: number): Comment | undefined {
+  return comments.find((x) => markerOf(x.body) && AWAITS_REVIEW.test(x.body ?? '') && time(x.updated_at) >= since);
+}
+
+/** A ruleset rule requiring one approving review; an approval stays valid after a push. */
+export const APPROVAL_RULE = {
   type: 'pull_request',
   parameters: {
     required_approving_review_count: 1,
@@ -300,7 +306,7 @@ export const interruptedDeliver: Scenario = lifecycle({
           const reviewed = (await k.agentJobs(s, exec, n, ['review'])).map((j) => time(j.started_at)).filter((t) => !Number.isNaN(t));
           if (!reviewed.length) return undefined;
           const first = Math.min(...reviewed);
-          const cm = (await k.obs.comments(exec, pr.number)).find((x) => markerOf(x.body) && AWAITS_REVIEW.test(x.body ?? '') && time(x.updated_at) >= first);
+          const cm = awaitingReview(await k.obs.comments(exec, pr.number), first);
           return cm ? s : undefined;
         },
         DEADLINE.stage,
