@@ -314,7 +314,7 @@ test('nibfin: the periodic baseline is part of the host state before runner add;
 });
 
 test('readPeriodicBaseline on Windows: start, read the VM, stop even when the read fails; a failed start is an error; a failed stop throws', async () => {
-  const win = () => ({ platform: 'windows' as const, wslconfig: null, tasks: [] });
+  const win = () => ({ platform: 'windows' as const, wslconfig: null, tasks: [], requestsOverride: { ok: true, output: '' } });
   const run = (exec: Exec) => (argv: string[], env?: Record<string, string>) => exec(argv, { env });
 
   const failing = fakeExec((argv) => (argv[2] === 'ssh' ? { code: 255, stderr: 'ssh: connect to host localhost port 2222: Connection refused' } : undefined));
