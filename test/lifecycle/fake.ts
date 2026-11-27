@@ -34,6 +34,7 @@ export function context(github: RunContext['github'], extra: Partial<RunContext>
     log: () => {},
     facts: () => undefined,
     defer: () => {},
+    upcoming: () => [],
     ...extra,
   };
 }
