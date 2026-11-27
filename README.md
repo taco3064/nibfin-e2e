@@ -44,6 +44,16 @@ or the `--all` gate did not pass, `0` otherwise.
 reported `waiting` and not run. A step or scenario held back by a required step
 names it in `blockedBy`, and `meta.runner` records `RUNNER_NAME`.
 
+`--budget-minutes <n>` (default 220, below the 240-minute job timeout) bounds a
+run from the harness's start. Provisioning and scenarios stop 30 minutes before
+it: the step or scenarios in progress fail with `harness budget of N min ran out
+during this step` (or `scenario`), get 2 minutes to unwind, and later ones are
+`failed` with `not run: …`. Teardown then runs until the budget ends; a teardown
+step it cuts off fails. The result is always written, so `report` can file
+requests with the rules. A lifecycle wait also fails as soon as the sandboxes
+show its goal is out of reach (`gave up waiting for …`), and after 20 minutes
+without sandbox activity (`no sandbox activity for N min while waiting for …`).
+
 ## Gate
 
 `npm run gate -- <subcommand>` decides what to rerun and files `request` Issues
