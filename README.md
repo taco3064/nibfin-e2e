@@ -52,11 +52,16 @@ runs in it and it never reads the Proposal. Each subcommand prints one JSON
 document to stdout (with a Markdown `summary` for `$GITHUB_STEP_SUMMARY`) and
 writes no file.
 
-- `select --delivered <owner/repo>#<n>` (nibfin-core or gh-nibfin), `select --rule …
+- `select --delivered <owner/repo>#<n>` (nibfin-core, gh-nibfin or nibfin-e2e), `select --rule …
   --section …` or `select --all`: prints the plan. A delivered Issue selects the
   ids of its approved Shape's `Proposal rules:` line; a Shape without the line,
   with a malformed line, or no single Shape falls back to the `R` ids, ranges and
-  `§` sections under the Issue's `## Authority`, and the decisions say so. An
+  `§` sections under the Issue's `## Authority`, and the decisions say so. A
+  nibfin-e2e Issue also selects from the files its merged PRs (branches
+  `nibfin/issue-<n>` and `nibfin/issue-<n>-cd-<k>`) changed: a `scenarios/**`
+  file selects the rules of the scenarios defined in it or in a file importing
+  it; `src/**` outside `src/gate/`, or `sandbox-template/**`, selects every rule;
+  docs, tests, gate code and configuration select nothing. An
   Issue not closed with `delivered` selects nothing. A rule cited by an open
   `scope` Issue in nibfin-core or gh-nibfin is `waiting`. Selected rules without a
   scenario are `gaps`; other uncovered rules (every one in `--all`) are

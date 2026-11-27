@@ -22,6 +22,15 @@ export interface FakeJob {
   steps?: { name: string; conclusion: string | null }[];
 }
 
+export interface FakePull {
+  number: number;
+  head: string;
+  state: 'open' | 'closed';
+  merged_at: string | null;
+  base: string;
+  files: { filename: string; status: string; previous_filename?: string }[];
+}
+
 /**
  * In-memory GitHub for the gate: Issues, comments, runs and jobs per repository. It records
  * every write and can throw before any call (`crash`) to simulate an interrupted run.
@@ -31,6 +40,8 @@ export class FakeGate implements GitHub {
   issues = new Map<string, FakeIssue[]>();
   runs = new Map<string, { created_at: string; run_attempt: number }>();
   jobs = new Map<string, FakeJob[]>();
+  /** Pull requests per repository; every repository's default branch is `main`. */
+  pulls = new Map<string, FakePull[]>();
   writes: string[] = [];
   reads: string[] = [];
   /** Throws before the call whose "METHOD path" (without query) matches, once. */
@@ -60,6 +71,14 @@ export class FakeGate implements GitHub {
       updated_at: this.now(),
       ...issue,
     };
+    list.push(full);
+    return full;
+  }
+
+  addPull(repo: string, pull: Partial<FakePull> & { number: number; head: string }): FakePull {
+    const full: FakePull = { state: 'closed', merged_at: '2026-11-27T08:00:00Z', base: 'main', files: [], ...pull };
+    let list = this.pulls.get(repo);
+    if (!list) this.pulls.set(repo, (list = []));
     list.push(full);
     return full;
   }
@@ -101,6 +120,22 @@ export class FakeGate implements GitHub {
       const run = this.runs.get(m[2] as string);
       if (!run) throw new GitHubError(method, path, 404, 'Not Found');
       return m[3] ? { total_count: 0, jobs: this.jobs.get(m[2] as string) ?? [] } : run;
+    }
+    m = /^\/repos\/([^/]+\/[^/]+)\/pulls(?:\/(\d+)\/files)?$/.exec(path);
+    if (m && method === 'GET') {
+      const repo = m[1] as string;
+      const list = this.pulls.get(repo) ?? [];
+      if (m[2]) {
+        const pull = list.find((p) => p.number === Number(m?.[2]));
+        if (!pull) throw new GitHubError(method, path, 404, 'Not Found');
+        return pull.files;
+      }
+      const state = q.get('state') ?? 'open';
+      const head = q.get('head');
+      const owner = repo.split('/')[0];
+      return list
+        .filter((p) => (state === 'all' || p.state === state) && (!head || head === `${owner}:${p.head}`))
+        .map((p) => ({ number: p.number, html_url: `https://github.com/${repo}/pull/${p.number}`, state: p.state, merged_at: p.merged_at, base: { ref: p.base, repo: { default_branch: 'main' } } }));
     }
     m = /^\/repos\/([^/]+\/[^/]+)\/issues(?:\/(\d+))?(\/comments)?$/.exec(path);
     if (!m) throw new GitHubError(method, path, 404, 'Not Found');
