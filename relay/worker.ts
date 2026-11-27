@@ -71,12 +71,12 @@ function payloadFor(event: Record<string, unknown>, entity: Record<string, unkno
     timestamp: event.timestamp,
     page_id: entity.id,
     attempt_number: typeof event.attempt_number === 'number' ? event.attempt_number : null,
-    updated_blocks: blocks.flatMap((b) => (isObject(b) && typeof b.id === 'string' ? [b.id] : [])),
+    block_ids: blocks.flatMap((b) => (isObject(b) && typeof b.id === 'string' ? [b.id] : [])),
     updated_properties: props.filter((p): p is string => typeof p === 'string'),
   };
   const body: DispatchBody = { event_type: 'proposal-updated', client_payload };
   if (new TextEncoder().encode(JSON.stringify(body)).length > MAX_DISPATCH_BYTES) {
-    client_payload.updated_blocks = [];
+    client_payload.block_ids = [];
     client_payload.updated_properties = [];
     client_payload.ids_omitted = true;
   }
