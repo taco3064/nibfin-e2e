@@ -145,9 +145,9 @@ test('the collaborator step is blocked when nibfin failed, and its scenarios fai
   const { selected } = select(entries, collaboratorScenarios, { all: true });
   const target: RunTarget = { ghNibfinCommit: 'a'.repeat(40), platform: 'linux' };
   const r = await run({ selection: { all: true }, selected, steps, target, host: fakeHostContext, log: () => {} });
-  deepEqual(r.provisioning.find((p) => p.id === 'collaborator'), { id: 'collaborator', status: 'failed', reason: 'provisioning step nibfin failed: init failed' });
+  deepEqual(r.provisioning.find((p) => p.id === 'collaborator'), { id: 'collaborator', status: 'failed', reason: 'provisioning step nibfin failed: init failed', blockedBy: 'nibfin' });
   equal(r.scenarios.length, 5);
-  for (const s of r.scenarios) equal(s.reason, 'provisioning step collaborator failed: provisioning step nibfin failed: init failed');
+  for (const s of r.scenarios) deepEqual([s.reason, s.blockedBy], ['provisioning step collaborator failed: provisioning step nibfin failed: init failed', 'collaborator']);
   deepEqual(r.teardown, []);
   const windows = await run({ selection: { all: true }, selected, steps, target: { ...target, platform: 'windows' }, host: fakeHostContext, log: () => {} });
   deepEqual([windows.scenarios, windows.provisioning], [[], []]);
