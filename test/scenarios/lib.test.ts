@@ -100,7 +100,7 @@ test('the stage Job is the one on a local Runner; its runner_name maps to a slot
     if (url.host === 'logs.example') return ((logAuth = new Headers(init?.headers).get('authorization')), new Response(logBody));
     return original(input, init);
   });
-  deepEqual(await stageJob(h.kit, EXEC, '42'), { id: 2, name: 'stage', runnerName: 'myhost-1a2b3c4d-claude-2', slot: 'claude-2', status: 'completed' });
+  deepEqual(await stageJob(h.kit, EXEC, '42'), { id: 2, name: 'stage', runnerName: 'myhost-1a2b3c4d-claude-2', slot: 'claude-2', status: 'completed', conclusion: null });
   const work = mkdtempSync(join(tmpdir(), 'e2e-joblog-'));
   const got = await jobLog({ ...h.kit, workDir: work }, EXEC, '42', 'case-1');
   equal(got.text, 'the log\n');

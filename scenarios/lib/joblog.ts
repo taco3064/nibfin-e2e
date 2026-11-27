@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { parseStageTitle } from '../lifecycle/analysis.ts';
 import { freeOfSecrets, redact } from './checks.ts';
 import type { Kit } from './kit.ts';
 import { runnerSlot } from './runners.ts';
@@ -12,6 +13,8 @@ export interface StageJob {
   /** The Runner slot (`claude-<n>`), from the registration name. */
   slot: string;
   status: string;
+  /** The Job's conclusion once completed; null while it runs. */
+  conclusion: string | null;
 }
 
 interface ApiJob {
@@ -19,6 +22,7 @@ interface ApiJob {
   name: string;
   runner_name: string | null;
   status: string;
+  conclusion?: string | null;
 }
 
 /**
@@ -33,7 +37,7 @@ export async function stageJob(kit: Kit, runRepo: string, runId: string): Promis
     const seen = jobs.map((j) => `${j.name} on ${j.runner_name ?? 'no runner'}`).join(', ') || 'none';
     throw new Error(`${runRepo} run ${runId}: expected one Job on a local Runner (a registration ending in -claude-<n>); saw ${seen}`);
   }
-  return { id: job.id, name: job.name, runnerName: job.runner_name as string, slot: runnerSlot(job.runner_name as string) as string, status: job.status };
+  return { id: job.id, name: job.name, runnerName: job.runner_name as string, slot: runnerSlot(job.runner_name as string) as string, status: job.status, conclusion: job.conclusion ?? null };
 }
 
 /**
@@ -93,4 +97,27 @@ export function buildOutput(log: string): string | undefined {
 /** Upper-snake cause codes such as `TOOL_INSTALL_FAILED`. */
 export function causeCodes(text: string): string[] {
   return [...new Set(text.match(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/g) ?? [])];
+}
+
+/** The fields of a workflow run `stageRunsAround` reads. */
+export interface RunRef {
+  id: number;
+  display_title: string;
+  created_at: string;
+}
+
+/**
+ * The agent stage runs of one Issue around a merge (Proposal R5.55): `before` lists those
+ * created before `mergedAt`, `next` is the first created at or after it. Route and finish
+ * runs (GitHub-hosted in a public execution repository) and other Issues' runs are left out.
+ */
+export function stageRunsAround<R extends RunRef>(runs: R[], repo: string, issue: number, mergedAt: string): { before: R[]; next?: R } {
+  const merged = Date.parse(mergedAt);
+  const stage = runs
+    .filter((r) => {
+      const t = parseStageTitle(r.display_title);
+      return t !== undefined && t.repo === repo && t.issue === issue && t.stage !== 'route' && t.stage !== 'finish';
+    })
+    .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at) || a.id - b.id);
+  return { before: stage.filter((r) => Date.parse(r.created_at) < merged), next: stage.find((r) => Date.parse(r.created_at) >= merged) };
 }

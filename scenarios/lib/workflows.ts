@@ -42,3 +42,13 @@ export function readWorkflow(text: string): WorkflowRead {
   for (const m of text.matchAll(/ghcr\.io\/taco3064\/nibfin[^\s"'`]*/g)) out.images.push(m[0]);
   return out;
 }
+
+/**
+ * Replaces each exact `ghcr.io/taco3064/nibfin@<from>` reference with `@<to>` and nothing
+ * else (Proposal R5.55: the workflow before an upgrade differs only by its image).
+ */
+export function repin(text: string, from: string, to: string): { text: string; count: number } {
+  const ref = `ghcr.io/taco3064/nibfin@${from}`;
+  const parts = text.split(ref);
+  return { text: parts.join(`ghcr.io/taco3064/nibfin@${to}`), count: parts.length - 1 };
+}
