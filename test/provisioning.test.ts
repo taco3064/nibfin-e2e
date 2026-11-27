@@ -9,7 +9,7 @@ import type { Exec } from '../src/host/exec.ts';
 import { createGitHub } from '../src/host/github.ts';
 import { readTemplate, treeSha } from '../src/host/sandbox.ts';
 import type { HostServices } from '../src/host/services.ts';
-import { claudeRunnersLeft, createProvisioning } from '../src/provisioning.ts';
+import { claudeRunnersLeft, createProvisioning, readPeriodicBaseline } from '../src/provisioning.ts';
 import type { Platform, RunContext, StepOutcome } from '../src/types.ts';
 import { FakeGitHub, cleanRepo, fakeExec, fakeStart } from './host/fakes.ts';
 
@@ -283,4 +283,52 @@ test('nibfin: the host state before runner add is a fact', async () => {
   deepEqual([before.platform, before.units, before.linger], ['linux', [{ name: 'a.service', state: 'enabled' }, { name: 'b.timer', state: 'static' }], 'no']);
   equal(typeof before.readAt, 'number');
   equal(Array.isArray(before.pathDirs), true);
+});
+
+test('nibfin: the periodic baseline is part of the host state before runner add; a failed read is kept as an error and runner add still runs', async () => {
+  const { exec } = fakeExec((argv) => {
+    const words = argv.join(' ');
+    if (words === 'systemctl --user list-unit-files --no-legend --plain') return { stdout: 'a.timer static -\n' };
+    if (words.startsWith('systemctl --user list-timers')) return { stdout: 'n/a n/a n/a n/a a.timer a.service\n' };
+    if (argv[0] === 'sh') return { stdout: 'nibfin-e2e:crontab=present\n' };
+    if (words === 'crontab -l') return { code: 1, stderr: 'no crontab for runner' };
+    if (argv[0] === 'loginctl') return { stdout: 'no\n' };
+    return undefined;
+  });
+  const h = harness({ exec });
+  initPr(h.repo(EXEC), 5, { 'nibfin-issue.yml': image(DIGEST) });
+  initPr(h.repo(PEER), 3, { 'nibfin-issue.yml': 'on: issues\n' });
+  const out = await h.runStep('nibfin');
+  equal(out.status, 'passed', out.reason);
+  deepEqual((out.facts?.hostBefore as { periodic: unknown }).periodic, { units: [{ name: 'a.timer', state: 'static' }], timers: ['a.timer'], cron: { available: true, entries: [] }, manager: true });
+
+  // fakeExec answers the probe with no output, so the baseline cannot be read.
+  const failed = fakeExec((argv) => (argv[1] === '--user' && argv[2] === 'list-unit-files' ? { stdout: 'a.service enabled enabled\n' } : undefined));
+  const f = harness({ exec: failed.exec });
+  initPr(f.repo(EXEC), 5, { 'nibfin-issue.yml': image(DIGEST) });
+  initPr(f.repo(PEER), 3, { 'nibfin-issue.yml': 'on: issues\n' });
+  const out2 = await f.runStep('nibfin');
+  equal(out2.status, 'passed', out2.reason);
+  match(String((out2.facts?.hostBefore as { periodic: { error: string } }).periodic.error), /the crontab probe printed no single marker/);
+  equal(failed.calls.some((c) => c.argv.slice(2, 4).join(' ') === 'runner add'), true);
+});
+
+test('readPeriodicBaseline on Windows: start, read the VM, stop even when the read fails; a failed start is an error; a failed stop throws', async () => {
+  const win = () => ({ platform: 'windows' as const, wslconfig: null, tasks: [] });
+  const run = (exec: Exec) => (argv: string[], env?: Record<string, string>) => exec(argv, { env });
+
+  const failing = fakeExec((argv) => (argv[2] === 'ssh' ? { code: 255, stderr: 'ssh: connect to host localhost port 2222: Connection refused' } : undefined));
+  const a = win();
+  await readPeriodicBaseline(run(failing.exec), { env: {}, exec: failing.exec }, a);
+  match(String((a as { vm?: { error?: string } }).vm?.error), /systemctl --user list-unit-files --no-legend --plain exited 255: ssh: connect to host/);
+  deepEqual(failing.calls.map((c) => c.argv.slice(0, 3).join(' ')), ['podman machine start', 'podman machine ssh', 'podman machine stop']);
+
+  const noStart = fakeExec((argv) => (argv[2] === 'start' ? { code: 125, stderr: 'machine is broken' } : undefined));
+  const b = win();
+  await readPeriodicBaseline(run(noStart.exec), { env: {}, exec: noStart.exec }, b);
+  deepEqual(b, { ...win(), vm: { error: 'podman machine start exited 125: machine is broken' } });
+  deepEqual(noStart.calls.map((c) => c.argv.join(' ')), ['podman machine start']);
+
+  const noStop = fakeExec((argv) => (argv[2] === 'stop' ? { code: 125, stderr: 'cannot stop' } : undefined));
+  await rejects(readPeriodicBaseline(run(noStop.exec), { env: {}, exec: noStop.exec }, win()), /podman machine stop after reading the VM baseline exited 125: cannot stop/);
 });
