@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { requireEnv } from './config.ts';
 import { createExec, createStart } from './exec.ts';
 import type { Env, Exec, Start } from './exec.ts';
-import { createGitHub } from './github.ts';
+import { createGitHub, HARNESS_RATE_LIMIT } from './github.ts';
 import type { GitHub } from './github.ts';
 import type { PeerHandle } from './peer.ts';
 
@@ -36,7 +36,7 @@ export function createServices(repoRoot: string, log: (message: string) => void,
     exec: createExec(env, log),
     start: createStart(env, log),
     fetch,
-    github: createGitHub(sandboxToken),
+    github: createGitHub(sandboxToken, fetch, undefined, { rateLimit: HARNESS_RATE_LIMIT, log }),
     repoRoot,
     workDir() {
       const dir = join(repoRoot, '.e2e-work');
@@ -48,7 +48,7 @@ export function createServices(repoRoot: string, log: (message: string) => void,
       return dir;
     },
     sandboxToken,
-    peerGithub: createGitHub(peerToken),
+    peerGithub: createGitHub(peerToken, fetch, undefined, { rateLimit: HARNESS_RATE_LIMIT, log }),
     peerToken,
   };
 }

@@ -5,7 +5,7 @@ import { parseArgs } from 'node:util';
 import { crossCheck, loadMap, validateRegistry } from '../coverage.ts';
 import { E2E_REPO, requireEnv } from '../host/config.ts';
 import type { Env } from '../host/exec.ts';
-import { createGitHub } from '../host/github.ts';
+import { createGitHub, GATE_RATE_LIMIT } from '../host/github.ts';
 import type { GitHub } from '../host/github.ts';
 import { select } from '../select.ts';
 import type { MapEntry, ProvisioningStep, Scenario } from '../types.ts';
@@ -208,7 +208,8 @@ if (import.meta.main) {
   const { scenarios, provisioning } = await import('../registry.ts');
   process.exitCode = await main(process.argv.slice(2), {
     env: process.env,
-    github: (token) => createGitHub(token),
+    github: (token) =>
+      createGitHub(token, fetch, undefined, { rateLimit: GATE_RATE_LIMIT, log: (m) => process.stderr.write(m + '\n') }),
     loadMap: () => loadMap(new URL('../../coverage-map.json', import.meta.url)),
     scenarios,
     steps: provisioning,
