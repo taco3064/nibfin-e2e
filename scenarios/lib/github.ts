@@ -7,6 +7,8 @@ export interface Registration {
   name: string;
   status: string;
   busy: boolean;
+  /** The runner's operating system as GitHub reports it (for example `Linux`). */
+  os: string;
   labels: { name: string }[];
 }
 

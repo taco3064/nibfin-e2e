@@ -15,7 +15,7 @@ export interface FakeRepo {
   /** Values of `variables` by name (missing means ''). */
   variableValues: Map<string, string>;
   keys: { id: number; title: string }[];
-  runners: { id: number; name: string; status: string; busy?: boolean }[];
+  runners: { id: number; name: string; status: string; busy?: boolean; os?: string }[];
   /** `'upgrade'` answers the rules API with GitHub's 403 for free private repositories. */
   rulesets: { id: number; name: string; rules?: { type: string }[] }[] | 'upgrade';
   tags: string[];
