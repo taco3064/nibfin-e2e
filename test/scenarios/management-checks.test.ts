@@ -4,6 +4,7 @@ import { flagDiff, normalDefault } from '../../scenarios/management/dashboard.ts
 import { releaseSteps } from '../../scenarios/management/image-release.ts';
 import { checkInitFiles } from '../../scenarios/management/init-files.ts';
 import { newEnabledUnits, wslconfigChanges } from '../../scenarios/management/runner-add-setup.ts';
+import { newCronEntries, newTimerUnits, newTimers, newVmUnits, periodicTriggers } from '../../scenarios/management/runner-no-periodic.ts';
 import { changedKeys, withoutProvider } from '../../scenarios/management/upgrade.ts';
 import { poolLines } from '../../scenarios/management/wording.ts';
 import { Check } from '../../scenarios/lib/check.ts';
@@ -92,4 +93,40 @@ test('upgrade helpers: the provider line is dropped alone; settings changes name
 
 test('wording: Pool as a whole word, any case', () => {
   deepEqual(poolLines('Add Runners\nmanage the Pool\npools of runners\nspool file\n'), ['manage the Pool', 'pools of runners']);
+});
+
+// ---- runner-no-periodic (Proposal R5.17) ----------------------------------------
+
+const u = (name: string, state = 'enabled') => ({ name, state });
+
+test('newTimerUnits: new .timer unit files in any state; other new units and old timers are not counted', () => {
+  deepEqual(newTimerUnits([u('a.timer', 'static'), u('x.service')], [u('a.timer', 'enabled'), u('b.timer', 'disabled'), u('nibfin-1.service'), u('x.service')]), [u('b.timer', 'disabled')]);
+});
+
+test('newTimers: a transient timer is new; an image timer only loaded later is not', () => {
+  deepEqual(newTimers({ timers: [], units: [u('logrotate.timer', 'static')] }, ['logrotate.timer', 'run-u7.timer']), ['run-u7.timer']);
+  deepEqual(newTimers({ timers: ['run-u1.timer'], units: [] }, ['run-u1.timer']), []);
+});
+
+test('newCronEntries: all four availability transitions', () => {
+  deepEqual(newCronEntries({ available: true, entries: ['@daily a'] }, { available: true, entries: ['@daily a', '*/5 * * * * b'] }).problems, ['the crontab gained the entry "*/5 * * * * b"']);
+  const absent = newCronEntries({ available: false, evidence: 'e1' }, { available: false, evidence: 'e2' });
+  deepEqual(absent, { problems: [], evidence: 'cron not installed before (e1) or after (e2)' });
+  match(newCronEntries({ available: false, evidence: 'e1' }, { available: true, entries: ['@hourly c'] }).problems.join(), /cron was not installed before runner add \(e1\) and is now, with the entries \["@hourly c"\]/);
+  match(newCronEntries({ available: true, entries: [] }, { available: false, evidence: 'e2' }).problems.join(), /readable before runner add but cron now reads as not installed \(e2\); the reads disagree/);
+});
+
+test('newVmUnits: the units runner add added in the VM; none is the positive-control failure', () => {
+  deepEqual(newVmUnits([u('a.service')], [u('a.service'), u('nibfin-runner-1.service')]), ['nibfin-runner-1.service']);
+  deepEqual(newVmUnits([u('a.service')], [u('a.service')]), []);
+});
+
+test('periodicTriggers: logon and event triggers without repetition pass; time, daily, idle, unknown and repeating ones are flagged', () => {
+  const t = (triggers: string[], repetitions = triggers.map(() => '')) => periodicTriggers({ actions: [], triggers, repetitions });
+  deepEqual(t(['MSFT_TaskLogonTrigger', 'MSFT_TaskEventTrigger'], ['', 'PT0S']), []);
+  for (const k of ['MSFT_TaskTimeTrigger', 'MSFT_TaskDailyTrigger', 'MSFT_TaskIdleTrigger', 'MSFT_TaskSomethingNew']) {
+    deepEqual(t([k]), [`trigger ${k} is neither a logon nor an event trigger`]);
+  }
+  deepEqual(t(['MSFT_TaskLogonTrigger'], ['PT5M']), ['trigger MSFT_TaskLogonTrigger repeats every PT5M']);
+  match(t(['MSFT_TaskLogonTrigger'], []).join(), /trigger repetitions could not be read \(0 for 1 triggers\)/);
 });
