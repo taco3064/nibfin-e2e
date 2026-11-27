@@ -1,6 +1,6 @@
 import { mkdirSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseIni, readHostState, readTask } from '../../src/host/hoststate.ts';
+import { parseIni, readHostState, readTask, userRuntimeDir } from '../../src/host/hoststate.ts';
 import type { HostRun, LinuxHostState, WindowsHostState } from '../../src/host/hoststate.ts';
 import type { RunContext, Scenario } from '../../src/types.ts';
 import { Check, tail } from '../lib/check.ts';
@@ -77,7 +77,8 @@ export const runnerAddSetup: Scenario = {
       const units = newEnabledUnits(before, now);
       c.that(units.length >= 2, 'R5.15', `expected at least 2 new enabled systemd user units after runner add, found ${units.length} (${units.join(', ') || 'none'})`);
       for (const u of units) {
-        const a = await ctx.exec(['systemctl', '--user', 'is-active', u]);
+        const runtime = userRuntimeDir();
+        const a = await ctx.exec(['systemctl', '--user', 'is-active', u], runtime === undefined ? {} : { env: { XDG_RUNTIME_DIR: runtime } });
         c.that(a.stdout.trim() === 'active', 'R5.15', `user unit ${u} is ${a.stdout.trim() || `not active (${tail(a, 100)})`}`);
       }
       c.that(now.linger === 'yes', 'R5.15', `Linger is "${now.linger}" for the host user, expected yes`);
