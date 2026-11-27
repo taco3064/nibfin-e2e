@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { flagDiff, normalDefault } from '../../scenarios/management/dashboard.ts';
 import { releaseSteps } from '../../scenarios/management/image-release.ts';
 import { checkInitFiles } from '../../scenarios/management/init-files.ts';
+import { namesRebaseOnly } from '../../scenarios/management/init-settings.ts';
 import { newEnabledUnits, wslconfigChanges } from '../../scenarios/management/runner-add-setup.ts';
 import { newCronEntries, newTimerUnits, newTimers, newVmUnits, periodicTriggers } from '../../scenarios/management/runner-no-periodic.ts';
 import { changedKeys, withoutProvider } from '../../scenarios/management/upgrade.ts';
@@ -129,4 +130,15 @@ test('periodicTriggers: logon and event triggers without repetition pass; time, 
   }
   deepEqual(t(['MSFT_TaskLogonTrigger'], ['PT5M']), ['trigger MSFT_TaskLogonTrigger repeats every PT5M']);
   match(t(['MSFT_TaskLogonTrigger'], []).join(), /trigger repetitions could not be read \(0 for 1 triggers\)/);
+});
+
+test("init settings: the merge-method change to rebase only passes in init's own words", () => {
+  equal(namesRebaseOnly('ruleset e2e-init-settings: turn off require branches to be up to date\nallow merge methods rebase only\nbranch protection on main: strict off\n'), true);
+  equal(namesRebaseOnly('Merge methods: rebase only'), true);
+});
+
+test('init settings: output naming no merge-method change fails the rebase-only check', () => {
+  equal(namesRebaseOnly('ruleset e2e-init-settings: turn off require branches to be up to date\nbranch protection on main: strict off\n'), false);
+  equal(namesRebaseOnly(''), false);
+  equal(namesRebaseOnly('delete branch on merge: off'), false);
 });

@@ -123,14 +123,21 @@ function compareProtection(c: Check, repo: string, before: Record<string, unknow
   }
 }
 
-/** The changes the drift step makes `init` apply, each of which its preview must name (Proposal R5.21, R5.68). */
+/** The ruleset and branch-protection changes the drift step makes `init` apply, each of which its preview must name (Proposal R5.68). */
 const PREVIEW_TERMS: [string, (out: string) => boolean][] = [
   [`the ruleset ${SEED}`, (o) => o.includes(SEED)],
   ['branch protection on main', (o) => /branch[ -]protection/i.test(o) && /\bmain\b/.test(o)],
   ['the up-to-date requirement', (o) => /up[ -]to[ -]date|strict/i.test(o)],
-  ['squash merge', (o) => /squash/i.test(o)],
-  ['merge commit', (o) => /merge[ -]commit/i.test(o)],
 ];
+
+/**
+ * Whether init's output names the change of merge methods to rebase only (Proposal R5.67), in whatever words init
+ * uses (for example `allow merge methods rebase only`): some single line mentions `rebase` together with `merge`
+ * or `only`.
+ */
+export function namesRebaseOnly(out: string): boolean {
+  return out.split(/\r?\n/).some((line) => /\brebase\b/i.test(line) && /\b(?:merge|only)\b/i.test(line));
+}
 
 export const initSettings: Scenario = {
   id: 'init-settings',
@@ -243,6 +250,7 @@ export const initSettings: Scenario = {
       });
       const out = again.stdout + again.stderr;
       for (const [change, named] of PREVIEW_TERMS) c.that(named(out), 'R5.68', `the output of init --yes on ${execution} does not name the change to ${change}: ${tail(again)}`);
+      c.that(namesRebaseOnly(out), 'R5.67', `the output of init --yes on ${execution} does not name the change of merge methods to rebase only: ${tail(again)}`);
     } catch (error) {
       failure = error;
     }
