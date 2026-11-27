@@ -102,9 +102,10 @@ never reads `NIBFIN_GITHUB_TOKEN` and drops it from every child's environment.
 ## Host provisioning
 
 Execution runs on a fresh GitHub-hosted runner (`ubuntu-24.04` or
-`windows-2025`; macOS is not supported yet) with Git, Go, Node and `gh`
-installed. The steps run only when a selected scenario `requires` them (directly
-or through another step), in this order:
+`windows-2025`) with Git, Go, Node and `gh` installed. e2e does not verify
+macOS (Proposal R8.24); macOS support is checked by hand outside e2e (R6.30).
+The steps run only when a selected scenario `requires` them (directly or
+through another step), in this order:
 
 | Step | What it does |
 |---|---|
