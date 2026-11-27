@@ -358,7 +358,7 @@ export const pauseAndPending: Scenario = lifecycle({
     const s = await k.obs.fresh();
     const n = h.p.number;
     if (h.pauseLate) c.notExercised('R4.12', h.pauseLate);
-    else c.check('R4.12', h.shapedWhilePaused && h.deliverWhilePaused === 0, `with pause on, P had shaped=${h.shapedWhilePaused} and ${h.deliverWhilePaused} deliver runs`);
+    else c.check('R4.12', h.deliverWhilePaused === 0, `with pause on (Shape ${h.pauseOutcome === 'published' ? 'published, then held' : 'held before publishing'}), P had ${h.deliverWhilePaused} deliver runs`);
     c.check('R3.38', h.deliverWhilePaused === 0, 'pause did not hold P');
     if (h.pendingLate) c.notExercised('R4.13', h.pendingLate);
     else c.check('R4.13', h.reviewWhilePending === 0, `${h.reviewWhilePending} review runs started while P had pending`);
@@ -369,7 +369,7 @@ export const pauseAndPending: Scenario = lifecycle({
     const reviewed = k.stages(s, k.exec, n, ['review']).some((r) => time(r.created_at) >= h.unpendedAt);
     c.check('R4.13', reviewed, 'no review after pending was removed');
     c.check('R4.13', !!k.delivered(s, k.exec, n), `P is not delivered: ${await k.summary(s, k.exec, n)}`);
-    return c.outcome(`#${n}: pause held it after Shape, pending held it before review, and it was delivered once both were removed`);
+    return c.outcome(`#${n}: pause held it (Shape ${h.pauseOutcome === 'published' ? 'published, then held' : 'held before publishing, redone after pause was removed'}), pending held it before review, and it was delivered once both were removed`);
   },
 });
 

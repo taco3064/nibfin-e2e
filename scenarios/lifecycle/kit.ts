@@ -126,6 +126,8 @@ export class Kit {
   /** Unique per run: fixture titles, files and tags carry it. */
   readonly tag: string;
   readonly start: number;
+  /** The kit's sleep, for waits outside the observer (`waitFor`); undefined means real time. */
+  readonly sleep: ((ms: number) => Promise<void>) | undefined;
   private lock: Promise<unknown> = Promise.resolve();
   private readonly memos = new Map<string, Promise<unknown>>();
 
@@ -137,6 +139,7 @@ export class Kit {
     const now = opts.now ?? (() => Date.now());
     // Runs created a minute before the start still count, so a clock skew loses nothing.
     this.start = now() - MIN;
+    this.sleep = opts.sleep;
     this.tag = opts.tag ?? `r${randomBytes(3).toString('hex')}`;
     this.obs = new Observer(this.gh, [this.exec, this.peer], { since: this.start, now, sleep: opts.sleep, intervalMs: opts.intervalMs, log: ctx.log, signal: ctx.signal, stallMs: opts.stallMs ?? STALL });
   }
