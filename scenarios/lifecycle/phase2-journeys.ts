@@ -15,6 +15,9 @@ import {
   isIssueBranch,
   markWindow,
   markerOf,
+  noPublishingJobMessage,
+  noVerdictMessage,
+  publishingJob,
   pushWakeSha,
   pushesWithin,
   ranOnRunner,
@@ -34,9 +37,10 @@ import { closingProblems } from './phase1.ts';
 const iso = (ms: number) => new Date(ms).toISOString();
 
 /**
- * R3.13 / R3.40: the shape job's log shows a Validator verdict before the Shape comment
- * and `shaped`. A first Shape is published when the comment is created; a rewrite
- * (`rewrite`) when the existing comment is updated.
+ * R3.13 / R3.40: the log of the shape job that published the Shape shows a Validator
+ * verdict before the Shape comment and `shaped`. A first Shape is published when the
+ * comment is created; a rewrite (`rewrite`) when the existing comment is updated. The
+ * judged job is the one whose window holds that time, never a later shape job.
  */
 async function validatorProblems(k: Kit, s: Snapshot, repo: string, n: number, after: number, rewrite = false): Promise<string[]> {
   const comment = (await k.obs.comments(repo, n)).find((x) => SHAPE_MARKER.test(markerOf(x.body) ?? ''));
@@ -44,10 +48,11 @@ async function validatorProblems(k: Kit, s: Snapshot, repo: string, n: number, a
   const published = time(rewrite ? comment.updated_at : comment.created_at);
   const shapedAt = await k.labeledAt(repo, n, 'shaped', after);
   const jobs = (await k.agentJobs(s, repo, n, ['shape'])).filter((j) => j.status === 'completed' && j.conclusion === 'success' && time(j.started_at) >= after);
-  const job = jobs.at(-1);
-  if (!job) return [`#${n} has no successful shape job after ${iso(after)}`];
-  const verdict = firstMark(await k.obs.log(k.exec, job.id), VALIDATOR_VERDICT);
-  if (!verdict) return [`shape job ${job.id} of #${n} shows no Validator verdict in its log (nothing observable)`];
+  const job = publishingJob(jobs, issueKey(repo, n), published);
+  if (!job) return [noPublishingJobMessage({ n, rewrite, after, published, jobs })];
+  const lines = await k.obs.log(k.exec, job.id);
+  const verdict = firstMark(lines, VALIDATOR_VERDICT);
+  if (!verdict) return [noVerdictMessage({ job: job.id, n, rewrite, published, lines })];
   if (verdict.at === undefined) return [`the Validator verdict line of job ${job.id} has no timestamp`];
   const out: string[] = [];
   if (verdict.at > published) out.push(`the Validator verdict (${iso(verdict.at)}) comes after the Shape comment was written (${iso(published)})`);
