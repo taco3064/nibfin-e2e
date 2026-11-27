@@ -21,7 +21,9 @@ import {
   lightProblem,
   stateOf,
   statusValue,
+  pauseAppeared,
   pauseResumePreconditions,
+  describePauseView,
   quietProblems,
   redact,
   sessionFrom,
@@ -366,4 +368,17 @@ test('a stage track needs Shape, Deliver and Done and the label-given current st
   ok(trackProblem(steps, undefined, 'Done')?.includes('current step none'));
   equal(trackProblem(steps, undefined, undefined), undefined);
   equal(trackProblem(steps, 'Scope (current)', undefined), undefined);
+});
+
+test('pauseAppeared: only a new Resume control or a new pause marker shows the pause', () => {
+  const B = { present: true, text: 'D Shape Deliver Done pending Pause', pauseControls: 1, resumeControls: 0 };
+  ok(pauseAppeared(B, { present: true, text: 'D Shape Deliver Done pending paused Resume', pauseControls: 0, resumeControls: 1 }));
+  equal(pauseAppeared(B, B), false);
+  equal(pauseAppeared(B, { ...B, text: `${B.text} e2e-plain` }), false);
+  equal(pauseAppeared(B, { present: false, text: '', pauseControls: 0, resumeControls: 0 }), false);
+  equal(pauseAppeared(B, { present: true, text: '  ', pauseControls: 0, resumeControls: 1 }), false);
+  equal(pauseAppeared(B, { present: true, text: 'D Shape Deliver Done pending', pauseControls: 0, resumeControls: 0 }), false);
+  ok(pauseAppeared(B, { ...B, text: 'D Shape Deliver Done pending paused Pause' }));
+  equal(describePauseView({ present: false, text: '', pauseControls: 0, resumeControls: 0 }), 'not listed');
+  ok(describePauseView({ ...B, text: `a\n${'x'.repeat(300)}` }).endsWith('…"'));
 });
