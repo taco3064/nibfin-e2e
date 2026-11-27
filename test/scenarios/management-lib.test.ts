@@ -72,6 +72,7 @@ test('workflow triggers: scalar, flow list, flow mapping, block mapping and bloc
   deepEqual(triggers('on: { push: {}, workflow_call: {} }\n'), ['push', 'workflow_call']);
   deepEqual(triggers('name: x\non:\n  workflow_call:\n    inputs:\n      a:\n        type: string\n  # note\n  issues:\n    types: [opened]\njobs: {}\n'), ['workflow_call', 'issues']);
   deepEqual(triggers('"on":\n  - push\n  - workflow_call\njobs: {}\n'), ['push', 'workflow_call']);
+  deepEqual(triggers('on: [workflow_call, # reusable\n  issues]\njobs: {}\n'), ['workflow_call', 'issues']);
   deepEqual(triggers('jobs: {}\n'), []);
 });
 
@@ -104,6 +105,15 @@ test('unpinned images: a bare name passes only next to the digest and when podma
   deepEqual(unpinnedImages(job('echo', `  IMAGE: ghcr.io/taco3064/nibfin\n  D: ${D1}\n`) + '    container: ghcr.io/taco3064/nibfin\n', D1), [{ ref: 'ghcr.io/taco3064/nibfin', why: 'run without a digest' }]);
   deepEqual(unpinnedImages(job('podman run ghcr.io/taco3064/nibfin:latest'), D1), [{ ref: 'ghcr.io/taco3064/nibfin:latest' }]);
   deepEqual(unpinnedImages(job(`podman run ghcr.io/taco3064/nibfin@${D2}`), D1), [{ ref: `ghcr.io/taco3064/nibfin@${D2}` }]);
+  // Options before the subcommand, another container tool, a variable copied from the bare one, a folded run block.
+  const bare = [{ ref: 'ghcr.io/taco3064/nibfin', why: 'run without a digest' }];
+  deepEqual(unpinnedImages(job('podman --log-level debug run "$IMAGE"'), D1), bare);
+  deepEqual(unpinnedImages(job('docker run ghcr.io/taco3064/nibfin'), D1), bare);
+  deepEqual(unpinnedImages(job('IMG="$IMAGE"\n          podman run "$IMG"'), D1), bare);
+  deepEqual(unpinnedImages(job('IMG="${IMAGE}@x"\n          podman run "$IMAGE_REF"'), D1), []);
+  const folded = (arg: string) => job('x').replace('      - run: |\n          x\n', `      - run: >\n          podman run\n          ${arg}\n      - run: echo "$IMAGE"\n`);
+  deepEqual(unpinnedImages(folded('"$IMAGE"'), D1), bare);
+  deepEqual(unpinnedImages(folded('"$IMAGE_REF"'), D1), []);
 });
 
 const HELP = `Add Runners
