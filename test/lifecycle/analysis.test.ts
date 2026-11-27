@@ -18,6 +18,7 @@ import {
   pushesWithin,
   queuedHoldProblems,
   reasonOf,
+  routePodmanProblems,
   sameIssueOverlaps,
   selfHosted,
   stageRuns,
@@ -212,4 +213,31 @@ test('windowAt includes both bounds and returns nothing outside every window', (
   equal(windowAt(1e15, ws), ws[1]);
   equal(windowAt(NaN, ws), undefined);
   equal(windowAt(5, []), undefined);
+});
+
+test('routePodmanProblems takes the image line and podman run … nibfin route, and names what is missing', () => {
+  const r = run(7, 'Nibfin · o/exec#5 · route');
+  const j = hosted(70, { name: 'job / route' });
+  const digest = 'a'.repeat(64);
+  const log = (...xs: string[]) => parseLog(xs.map((x) => `2026-11-26T10:00:01.0000000Z ${x}`).join('\n'));
+  const image = `Nibfin image: ghcr.io/taco3064/nibfin@sha256:${digest}`;
+  const ok = log('##[group]Run podman pull "$IMAGE_REF"', image, '##[group]Run podman run --rm \\', '  "$IMAGE_REF" nibfin route --repo "$REPO"');
+  deepEqual(routePodmanProblems(r, j, ok, 'ghcr.io/taco3064/nibfin'), []);
+
+  const noImage = routePodmanProblems(r, j, log('podman run --rm x nibfin route'), 'ghcr.io/taco3064/nibfin');
+  equal(noImage.length, 1);
+  match(noImage[0] as string, /Nibfin · o\/exec#5 · route \(run 7\) job job \/ route \(70\).*has no `Nibfin image: ghcr\.io\/taco3064\/nibfin@sha256:<digest>` line/);
+
+  for (const bad of ['Nibfin image: ghcr.io/taco3064/nibfin:latest', `Nibfin image: ghcr.io/other/nibfin@sha256:${digest}`, `Nibfin image: ghcr.io/taco3064/nibfin@sha256:${'a'.repeat(63)}`, `Nibfin image: ghcr.io/taco3064/nibfinx@sha256:${digest}`]) {
+    deepEqual(routePodmanProblems(r, j, log(bad, 'podman run x', 'nibfin route'), 'ghcr.io/taco3064/nibfin').length, 1, bad);
+  }
+
+  const noPodman = routePodmanProblems(r, j, log(image, 'nibfin route --repo o/exec'), 'ghcr.io/taco3064/nibfin');
+  deepEqual(noPodman.length, 1);
+  match(noPodman[0] as string, /has no `podman run` line in its log$/);
+
+  const routeFirst = routePodmanProblems(r, j, log(image, 'nibfin route --repo o/exec', 'podman run --rm x'), 'ghcr.io/taco3064/nibfin');
+  deepEqual(routeFirst.length, 1);
+  match(routeFirst[0] as string, /has no `nibfin route` line at or after its `podman run` line$/);
+  equal(routeFirst.some((p) => p.includes('--repo')), false, 'messages quote no log text');
 });

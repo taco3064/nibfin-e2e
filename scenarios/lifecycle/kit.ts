@@ -38,7 +38,9 @@ export interface FixtureSpec {
   assignees?: string[];
 }
 
-export type FinishJob = Job & { stage: Stage; run: Run; window: Window | undefined };
+/** A route or finish job with its window (`undefined` when no runner took it). */
+export type WindowedJob = Job & { stage: Stage; run: Run; window: Window | undefined };
+export type FinishJob = WindowedJob;
 
 /** The finish job whose window contains `t`; with `hostedOnly`, only GitHub-hosted ones count (Proposal R5.72, R5.74). */
 export function finishAt(jobs: FinishJob[], t: number, hostedOnly = true): (FinishJob & { window: Window }) | undefined {
@@ -46,8 +48,8 @@ export function finishAt(jobs: FinishJob[], t: number, hostedOnly = true): (Fini
   return windowAt(t, ran.map((j) => ({ ...j.window, job: j })))?.job;
 }
 
-/** R5.72, R5.74: problems of every finish run among the jobs, each run judged by `hostedOnlyProblems`. */
-export function finishRunProblems(jobs: FinishJob[], sandboxRunners: string[]): string[] {
+/** R5.70, R5.72, R5.74: problems of every route or finish run among the jobs, each run judged by `hostedOnlyProblems`. */
+export function hostedRunProblems(jobs: WindowedJob[], sandboxRunners: string[]): string[] {
   const runs = new Map<number, { run: Run; jobs: Job[] }>();
   for (const j of jobs) {
     const e = runs.get(j.run.id) ?? { run: j.run, jobs: [] };
@@ -57,11 +59,11 @@ export function finishRunProblems(jobs: FinishJob[], sandboxRunners: string[]): 
   return [...runs.values()].flatMap((e) => hostedOnlyProblems(e.run, e.jobs, sandboxRunners));
 }
 
-/** The finish runs and jobs seen, for failure messages. */
-export function finishSeen(jobs: FinishJob[]): string {
-  if (!jobs.length) return 'no finish job was seen';
-  const win = (j: FinishJob) => (j.window ? ` window ${new Date(j.window.start).toISOString()}–${j.window.end === Infinity ? 'running' : new Date(j.window.end).toISOString()}` : ' no window');
-  return `finish jobs seen: ${jobs.map((j) => `${describeJob(j.run, j)}${win(j)}`).join('; ')}`;
+/** The runs and jobs of `stage` seen, for failure messages. */
+export function stageSeen(jobs: WindowedJob[], stage: 'route' | 'finish' = 'finish'): string {
+  if (!jobs.length) return `no ${stage} job was seen`;
+  const win = (j: WindowedJob) => (j.window ? ` window ${new Date(j.window.start).toISOString()}–${j.window.end === Infinity ? 'running' : new Date(j.window.end).toISOString()}` : ' no window');
+  return `${stage} jobs seen: ${jobs.map((j) => `${describeJob(j.run, j)}${win(j)}`).join('; ')}`;
 }
 
 export const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -288,9 +290,14 @@ export class Kit {
     return out;
   }
 
+  /** Jobs of the Issue's runs of these stages, each with its window (`undefined` when no runner took it). */
+  async windowedJobs(s: Snapshot, repo: string, n: number, stages: readonly Stage[]): Promise<WindowedJob[]> {
+    return (await this.stageJobs(s, repo, n, stages)).map((j) => ({ ...j, window: jobWindow(j, issueKey(repo, n), j.stage) }));
+  }
+
   /** Jobs of the Issue's finish runs, each with its window (`undefined` when no runner took it). */
   async finishJobs(s: Snapshot, repo: string, n: number): Promise<FinishJob[]> {
-    return (await this.stageJobs(s, repo, n, ['finish'])).map((j) => ({ ...j, window: jobWindow(j, issueKey(repo, n), j.stage) }));
+    return this.windowedJobs(s, repo, n, ['finish']);
   }
 
   /** The agent job (self-hosted) of the Issue's runs of these stages. */

@@ -3,7 +3,7 @@
 import type { Scenario } from '../../src/types.ts';
 import { AGENT_STAGES, Checks, describeJob, duplicateMarkers, githubHosted, markerOf, overlap, queuedHoldProblems, selfHosted, startedBefore, time } from './analysis.ts';
 import type { Comment, Issue, Job, Run } from './analysis.ts';
-import { DEADLINE, changeRequest, finishAt, finishRunProblems, finishSeen, lifecycle, message } from './kit.ts';
+import { DEADLINE, changeRequest, finishAt, hostedRunProblems, stageSeen, lifecycle, message } from './kit.ts';
 import type { Kit } from './kit.ts';
 import { AWAITS_REVIEW, RELOGIN, SHAPE_MARKER } from './marks.ts';
 import type { Snapshot } from './observe.ts';
@@ -303,10 +303,10 @@ export const interruptedDeliver: Scenario = lifecycle({
         const afterWake = finish.filter((j) => time(j.run.created_at) >= unblockedAt);
         const merger = finishAt(afterWake, mergedAt, false);
         const wake = new Date(unblockedAt).toISOString();
-        c.check('R5.74', !!merger, `I has no finish job after the wake ${wake} whose window contains the merge ${String(merged.merged_at)}; ${finishSeen(finish)}`);
+        c.check('R5.74', !!merger, `I has no finish job after the wake ${wake} whose window contains the merge ${String(merged.merged_at)}; ${stageSeen(finish)}`);
         if (merger) c.check('R5.72', githubHosted(merger), `the finish job that merged PR #${merged.number} did not run GitHub-hosted: ${describeJob(merger.run, merger)}`);
-        else c.fail('R5.72', `no finish job after the wake ${wake} merged PR #${merged.number}; ${finishSeen(finish)}`);
-        c.none('R5.72', finishRunProblems(finish, names));
+        else c.fail('R5.72', `no finish job after the wake ${wake} merged PR #${merged.number}; ${stageSeen(finish)}`);
+        c.none('R5.72', hostedRunProblems(finish, names));
         const agents = (await k.windows(s, exec, n)).filter((w) => overlap(w, { start: unblockedAt, end: mergedAt }));
         c.check('R5.74', agents.length === 0, `agent jobs of I ran between the wake ${wake} and the merge ${String(merged.merged_at)}: ${agents.map((w) => `${w.stage} job ${w.jobId} on ${String(w.runner)}`).join(', ')}`);
       }

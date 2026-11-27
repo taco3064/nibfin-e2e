@@ -1,6 +1,6 @@
 import { deepEqual, equal, match, rejects } from 'node:assert/strict';
 import { test } from 'node:test';
-import { Kit, lifecycle, redact } from '../../scenarios/lifecycle/kit.ts';
+import { Kit, hostedRunProblems, lifecycle, redact, stageSeen } from '../../scenarios/lifecycle/kit.ts';
 import { Observer } from '../../scenarios/lifecycle/observe.ts';
 import { closingProblems } from '../../scenarios/lifecycle/phase1.ts';
 import { isProtected, writeConflict } from '../../scenarios/lifecycle/phase2-fixtures.ts';
@@ -240,4 +240,28 @@ test('a failed read during a wait is logged and the wait goes on; the deadline n
   const broken = routes({ ...empty, 'GET /repos/o/exec/issues': { status: 502, data: { message: 'Bad Gateway' } } });
   const obs2 = new Observer(broken.github, ['o/exec'], { since: c.now(), now: c.now, sleep: c.sleep });
   await rejects(obs2.until('B', () => true, 3 * 60_000), /timed out after 3 min waiting for B; last read error: GitHub GET \/repos\/o\/exec\/issues.* returned 502: Bad Gateway/);
+});
+
+test('route jobs: skipped stage and finish jobs of a route run give no problems; a route job on a sandbox Runner gives one', async () => {
+  const run = (id: number) => ({ id, display_title: 'Nibfin · o/exec#5 · route', status: 'completed', created_at: '2026-11-26T10:01:00Z' });
+  const skipped = (id: number, name: string, labels: string[]) => ({ id, name, status: 'completed', conclusion: 'skipped', labels, runner_name: null, runner_group_name: null, started_at: '2026-11-26T10:02:00Z', completed_at: '2026-11-26T10:02:00Z' });
+  const routeJob = (id: number, runner: string, group: string) => ({ id, name: 'job / route', status: 'completed', conclusion: 'success', labels: ['ubuntu-24.04'], runner_name: runner, runner_group_name: group, started_at: '2026-11-26T10:02:00Z', completed_at: '2026-11-26T10:03:00Z' });
+  const f = routes({
+    ...empty,
+    'GET /repos/o/exec/actions/runs': { data: { workflow_runs: [run(1), run(2), run(3)] } },
+    'GET /repos/o/exec/actions/runs/1/jobs': { jobs: [routeJob(11, 'GitHub Actions 1000030606', 'GitHub Actions'), skipped(12, 'job / stage', ['self-hosted', 'nibfin-']), skipped(13, 'job / finish', ['ubuntu-24.04'])] },
+    'GET /repos/o/exec/actions/runs/2/jobs': { jobs: [{ ...skipped(21, 'job / route', ['ubuntu-24.04']), conclusion: 'cancelled' }] },
+    'GET /repos/o/exec/actions/runs/3/jobs': { jobs: [routeJob(31, 'claude-1', 'GitHub Actions')] },
+  });
+  const c = clock();
+  const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
+  const s = await k.obs.next();
+  const route = await k.windowedJobs(s, 'o/exec', 5, ['route']);
+  deepEqual(route.filter((j) => j.window).map((j) => j.id), [11, 31]);
+  deepEqual(hostedRunProblems(route.filter((j) => j.run.id !== 3), ['claude-1']), []);
+  const problems = hostedRunProblems(route, ['claude-1']);
+  equal(problems.length, 1);
+  match(problems[0] as string, /Nibfin · o\/exec#5 · route \(run 3\) job job \/ route \(31\).*runner claude-1 in group GitHub Actions.*ran on the sandbox's registered Runner claude-1/);
+  match(stageSeen([], 'route'), /^no route job was seen$/);
+  match(stageSeen(route, 'route'), /^route jobs seen: .*job \/ route \(11\).* window .*job \/ route \(21\) completed\/cancelled.* no window/);
 });

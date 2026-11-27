@@ -191,9 +191,9 @@ export function describeJob(run: Pick<Run, 'id' | 'display_title'>, job: Job): s
 }
 
 /**
- * R5.72, R5.74: every job a runner took in one finish run ran GitHub-hosted and not on
- * one of the sandbox's registered Runners. Jobs no runner took (the skipped `stage` job,
- * or a run cancelled while it waited) are not judged.
+ * R5.70, R5.72, R5.74: every job a runner took in one route or finish run ran
+ * GitHub-hosted and not on one of the sandbox's registered Runners. Jobs no runner took
+ * (the skipped `stage` job, or a run cancelled while it waited) are not judged.
  */
 export function hostedOnlyProblems(run: Pick<Run, 'id' | 'display_title'>, jobs: Job[], sandboxRunners: string[]): string[] {
   const out: string[] = [];
@@ -202,6 +202,23 @@ export function hostedOnlyProblems(run: Pick<Run, 'id' | 'display_title'>, jobs:
     if (!githubHosted(j)) out.push(`${describeJob(run, j)} did not run on a GitHub-hosted runner`);
     else if (sandboxRunners.includes(j.runner_name ?? '')) out.push(`${describeJob(run, j)} ran on the sandbox's registered Runner ${String(j.runner_name)}`);
   }
+  return out;
+}
+
+/**
+ * R5.70: what one route job a runner took must show in its log to have run the Nibfin
+ * image under Podman: the `Nibfin image: <image>@sha256:<digest>` line its pull step
+ * prints once `podman pull` succeeded, and its `Route` step's echoed script with a
+ * `podman run` line and, at or after it, a `nibfin route` line. The messages name the job
+ * and the missing piece and quote no log text.
+ */
+export function routePodmanProblems(run: Pick<Run, 'id' | 'display_title'>, job: Job, lines: LogLine[], image: string): string[] {
+  const out: string[] = [];
+  const imageRe = new RegExp(`Nibfin image: ${image.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}@sha256:[0-9a-f]{64}(?:\\s|$)`);
+  if (!lines.some((l) => imageRe.test(l.text))) out.push(`${describeJob(run, job)} has no \`Nibfin image: ${image}@sha256:<digest>\` line in its log`);
+  const podman = lines.findIndex((l) => l.text.includes('podman run'));
+  if (podman < 0) out.push(`${describeJob(run, job)} has no \`podman run\` line in its log`);
+  else if (!lines.slice(podman).some((l) => l.text.includes('nibfin route'))) out.push(`${describeJob(run, job)} has no \`nibfin route\` line at or after its \`podman run\` line`);
   return out;
 }
 
