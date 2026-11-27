@@ -22,6 +22,20 @@ export const DEADLINE = {
   quiet: 5 * MIN,
 } as const;
 
+/** A wait not expecting silence fails once the sandboxes showed no activity for this long (the last resort before its deadline). */
+export const STALL = 20 * MIN;
+/** How long an Issue may show closed without `delivered` before a wait counts it as closed: Nibfin may label and close in either order. */
+const CLOSE_GRACE = 2 * MIN;
+
+export interface GoneOptions {
+  /** Only the stage's jobs created at or after this epoch ms count (default: when the check is made, minus one minute). */
+  since?: number;
+  /** `pending` does not end the wait (the harness adds it itself). */
+  allowPending?: boolean;
+  /** Whether a completed job of the stage followed by another agent stage ends the wait (default true). */
+  jobs?: boolean;
+}
+
 export interface Hook {
   when: string;
   event?: 'push' | 'pull_request';
@@ -90,6 +104,8 @@ export interface KitOptions {
   sleep?: (ms: number) => Promise<void>;
   intervalMs?: number;
   tag?: string;
+  /** The stall limit of the observer's waits (default `STALL`). */
+  stallMs?: number;
 }
 
 export class Kit {
@@ -113,7 +129,7 @@ export class Kit {
     // Runs created a minute before the start still count, so a clock skew loses nothing.
     this.start = now() - MIN;
     this.tag = opts.tag ?? `r${randomBytes(3).toString('hex')}`;
-    this.obs = new Observer(this.gh, [this.exec, this.peer], { since: this.start, now, sleep: opts.sleep, intervalMs: opts.intervalMs, log: ctx.log });
+    this.obs = new Observer(this.gh, [this.exec, this.peer], { since: this.start, now, sleep: opts.sleep, intervalMs: opts.intervalMs, log: ctx.log, signal: ctx.signal, stallMs: opts.stallMs ?? STALL });
   }
 
   now(): number {
@@ -326,7 +342,52 @@ export class Kit {
         const open = s.runs.filter((r) => scope(r) && time(r.created_at) >= after && r.status !== 'completed');
         return `still running: ${open.map((r) => `${r.display_title} (${r.status})`).join(', ') || 'nothing (waiting for the quiet period)'}`;
       },
+      { quiet: true },
     );
+  }
+
+  /**
+   * A `gonePast` check for a wait on one stage of an Issue: the first reason the wait
+   * can no longer succeed. The Issue is closed; it has `pending` (unless allowed); or a
+   * job of the stage completed and a run of another agent stage was created after it.
+   */
+  stageGone(repo: string, n: number, stage: Stage, opts: GoneOptions = {}): (s: Snapshot) => Promise<string | undefined> {
+    const since = opts.since ?? this.now() - MIN;
+    const name = repo === this.exec ? `#${n}` : `${repo}#${n}`;
+    return async (s) => {
+      const reason = await (async () => {
+        const i = this.issue(s, repo, n);
+        if (i?.state === 'closed') {
+          const delivered = i.labels.some((l) => l.name === 'delivered');
+          if (delivered || !(s.at - time(i.closed_at) < CLOSE_GRACE)) return `${name} is closed (${i.state_reason ?? 'no reason'})${delivered ? ' with delivered' : ' without delivered'}`;
+        }
+        if (!opts.allowPending && i?.labels.some((l) => l.name === 'pending')) return `${name} has pending${(await this.lastComment(repo, n)) ?? ''}`;
+        if (opts.jobs === false) return undefined;
+        const later = this.stages(s, repo, n, AGENT_STAGES).filter((r) => r.stage !== stage);
+        for (const j of await this.agentJobs(s, repo, n, [stage])) {
+          if (j.status !== 'completed' || time(j.created_at ?? j.run.created_at) < since) continue;
+          const next = later.find((r) => time(r.created_at) > time(j.completed_at));
+          if (next) return `${name}'s ${stage} job ${j.id} completed (run ${j.run.id}, ${String(j.conclusion)}) and a ${next.stage} run ${next.id} followed`;
+        }
+        return undefined;
+      })();
+      return reason === undefined ? undefined : redact(reason, this.ctx.secretValues());
+    };
+  }
+
+  /** `stageGone` for a wait on the Issue's closure: only closed without `delivered` and `pending` end it. */
+  closeGone(repo: string, n: number): (s: Snapshot) => Promise<string | undefined> {
+    return this.stageGone(repo, n, 'review', { jobs: false });
+  }
+
+  /** `; last Nibfin comment: …` of the Issue, or undefined; comments are only context, so a failed read gives undefined. */
+  private async lastComment(repo: string, n: number): Promise<string | undefined> {
+    try {
+      const c = (await this.obs.comments(repo, n)).filter((x) => markerOf(x.body)).at(-1);
+      return c ? `; last Nibfin comment: ${(c.body ?? '').replace(/<!--[\s\S]*?-->/g, '').replace(/\s+/g, ' ').trim().slice(0, 200)}` : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   /** The runs that belong to one Issue: its stage runs in the execution repository and its wake runs. */
@@ -352,14 +413,7 @@ export class Kit {
     const runs = this.stages(s, repo, n)
       .slice(-8)
       .map((r) => `${r.stage} ${r.status}${r.conclusion ? `/${r.conclusion}` : ''}`);
-    let last = '';
-    try {
-      const marked = (await this.obs.comments(repo, n)).filter((c) => markerOf(c.body));
-      const c = marked.at(-1);
-      if (c) last = `; last Nibfin comment: ${(c.body ?? '').replace(/<!--[\s\S]*?-->/g, '').replace(/\s+/g, ' ').trim().slice(0, 200)}`;
-    } catch {
-      // Comments are only context.
-    }
+    const last = (await this.lastComment(repo, n)) ?? '';
     return redact(`${repo}#${n} ${i.state}${i.state_reason ? ` (${i.state_reason})` : ''} [${i.labels.map((l) => l.name).join(', ')}] runs: ${runs.join(', ') || 'none'}${last}`, this.ctx.secretValues());
   }
 

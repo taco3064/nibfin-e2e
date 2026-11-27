@@ -84,6 +84,7 @@ async function driveJourney(k: Kit, filed: number[]): Promise<Journey> {
     async (s) => (await k.agentJobs(s, exec, a.number, ['deliver'])).find((j) => j.status === 'in_progress'),
     DEADLINE.delivery,
     k.show(exec, a.number),
+    { gonePast: k.stageGone(exec, a.number, 'deliver') },
   );
   const toggles: number[] = [];
   for (let i = 0; i < 2; i++) {
@@ -127,9 +128,9 @@ async function driveJourney(k: Kit, filed: number[]): Promise<Journey> {
   const openAfterCd = isOpen(k, afterCd, a.number);
   await k.gh.rest('POST', `/repos/${exec}/git/refs`, { ref: `refs/tags/${t}-a-ci2`, sha: mergeSha });
 
-  await k.obs.until('A to close with delivered', (s) => k.delivered(s, exec, a.number), DEADLINE.delivery, k.show(exec, a.number));
+  await k.obs.until('A to close with delivered', (s) => k.delivered(s, exec, a.number), DEADLINE.delivery, k.show(exec, a.number), { gonePast: k.closeGone(exec, a.number) });
   for (const [name, n] of [['B', b.number], ['C', c.number], ['X', x.number]] as const) {
-    await k.obs.until(`${name} to close with delivered`, (s) => k.delivered(s, exec, n), DEADLINE.delivery, k.show(exec, n));
+    await k.obs.until(`${name} to close with delivered`, (s) => k.delivered(s, exec, n), DEADLINE.delivery, k.show(exec, n), { gonePast: k.closeGone(exec, n) });
   }
   return {
     a,
@@ -199,7 +200,7 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
   const running = (stage: 'shape' | 'deliver', after = 0) => async (s: Snapshot) =>
     (await k.agentJobs(s, exec, n, [stage])).find((j: Job) => j.status === 'in_progress' && selfHosted(j) && time(j.started_at) >= after);
 
-  const shapeJob = await k.obs.until('P\'s shape job to run', running('shape'), DEADLINE.stage, show);
+  const shapeJob = await k.obs.until('P\'s shape job to run', running('shape'), DEADLINE.stage, show, { gonePast: k.stageGone(exec, n, 'shape') });
   await k.addLabels(exec, n, ['pause']);
   const pausedAt = k.now();
   const shapeDone = await k.obs.until('P\'s shape job to complete', async () => {
@@ -232,13 +233,14 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
     async (s) => outcome(s) ?? ((await running('deliver', editedAt)(s)) ? ('running' as const) : undefined),
     DEADLINE.stage,
     show,
+    { gonePast: k.stageGone(exec, n, 'deliver', { since: editedAt - 60_000, allowPending: true }) },
   );
   let pendingAt: number | undefined;
   if (first === 'running') {
     await k.addLabels(exec, n, ['pending']);
     pendingAt = k.now();
   }
-  const next = first === 'running' ? await k.obs.until('Deliver to send the Shape back or open a PR', outcome, DEADLINE.stage, show) : first;
+  const next = first === 'running' ? await k.obs.until('Deliver to send the Shape back or open a PR', outcome, DEADLINE.stage, show, { gonePast: k.stageGone(exec, n, 'deliver', { since: editedAt - 60_000, allowPending: true }) }) : first;
   let reshapedAt: number | undefined;
   if (next === 'sent back') {
     if (pendingAt !== undefined) await k.removeLabel(exec, n, 'pending');
@@ -246,7 +248,7 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
     // The label's own time, not the snapshot's: a Deliver may start before the next snapshot.
     reshapedAt = await k.labeledAt(exec, n, 'shaped', editedAt);
     if (reshapedAt === undefined) throw new Error(`#${n} shows \`shaped\` again but its timeline has no labeled event after the edit`);
-    await k.obs.until('P\'s next deliver job to run', running('deliver', reshapedAt), DEADLINE.stage, show);
+    await k.obs.until('P\'s next deliver job to run', running('deliver', reshapedAt), DEADLINE.stage, show, { gonePast: k.stageGone(exec, n, 'deliver', { since: reshapedAt - 60_000 }) });
     await k.addLabels(exec, n, ['pending']);
     pendingAt = k.now();
   } else if (pendingAt === undefined) {
@@ -277,6 +279,6 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
       : undefined;
   await k.removeLabel(exec, n, 'pending');
   const unpendedAt = k.now();
-  await k.obs.until('P to close with delivered', (s) => k.delivered(s, exec, n), DEADLINE.delivery, show);
+  await k.obs.until('P to close with delivered', (s) => k.delivered(s, exec, n), DEADLINE.delivery, show, { gonePast: k.closeGone(exec, n) });
   return { p, pausedAt, pauseLate, deliverWhilePaused, shapedWhilePaused, editedAt, sentBack: next === 'sent back', reshapedAt, pendingAt, reviewWhilePending, pendingLate, unpendedAt };
 }

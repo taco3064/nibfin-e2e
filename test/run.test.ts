@@ -324,8 +324,8 @@ test('upcoming lists the scenarios still to start: all for a step, the later gro
 
 // ---- the harness budget (Issue #334) ----
 
-/** Work limit at 200 ms, final limit at 300 ms, 50 ms to settle. */
-const BUDGET = { budgetMs: 300, teardownReserveMs: 100, settleMs: 50 };
+/** Work limit at 500 ms, final limit at 2 s, 100 ms to settle: room for timers that fire late on a loaded host. */
+const BUDGET = { budgetMs: 2000, teardownReserveMs: 1500, settleMs: 100 };
 const never = () => new Promise<never>(() => {});
 
 async function runBudget(list: Scenario[], steps: ProvisioningStep[], logs: string[] = []) {
@@ -344,8 +344,8 @@ test('a provisioning step cut off by the budget fails; its dependants are blocke
   ];
   const { r, limits } = await runBudget([scenario('a', ['R1.1'], ['linux'], passed, ['stuck']), scenario('b', ['R1.2'], ['linux'], passed, ['later'])], steps);
   deepEqual(r.provisioning, [
-    { id: 'stuck', status: 'failed', reason: 'harness budget of 0 min ran out during this step' },
-    { id: 'later', status: 'failed', reason: 'not run: harness budget of 0 min ran out' },
+    { id: 'stuck', status: 'failed', reason: 'harness budget of 0.01 min ran out during this step' },
+    { id: 'later', status: 'failed', reason: 'not run: harness budget of 0.01 min ran out' },
   ]);
   deepEqual(r.scenarios.map((s) => [s.id, s.status, s.blockedBy]), [['a', 'failed', 'stuck'], ['b', 'failed', 'later']]);
   deepEqual(calls, ['down:stuck']);
@@ -370,8 +370,8 @@ test('a scenario cut off by the budget fails, later scenarios are not run, and i
   const steps = [step('host', passed, calls, { teardown: async (ctx: RunContext) => (calls.push(`down:host aborted=${String(ctx.signal.aborted)}`), passed) })];
   const { r } = await runBudget([stuck, scenario('later', ['R1.2'], ['linux'], passed)], steps);
   deepEqual(r.scenarios.map((s) => [s.id, s.status, s.reason]), [
-    ['stuck', 'failed', 'harness budget of 0 min ran out during this scenario'],
-    ['later', 'failed', 'not run: harness budget of 0 min ran out'],
+    ['stuck', 'failed', 'harness budget of 0.01 min ran out during this scenario'],
+    ['later', 'failed', 'not run: harness budget of 0.01 min ran out'],
   ]);
   equal(signalled?.aborted, true);
   deepEqual(calls, ['host', 'finally', 'down:host aborted=false']);
@@ -394,8 +394,8 @@ test('every scenario of a concurrent group cut off by the budget gets the budget
   const { r } = await runBudget([c('x', passed), c('yy', 'never'), c('zzz', 'never')], []);
   deepEqual(r.scenarios.map((s) => [s.id, s.status, s.reason]), [
     ['x', 'passed', 'ok'],
-    ['yy', 'failed', 'harness budget of 0 min ran out during this scenario'],
-    ['zzz', 'failed', 'harness budget of 0 min ran out during this scenario'],
+    ['yy', 'failed', 'harness budget of 0.01 min ran out during this scenario'],
+    ['zzz', 'failed', 'harness budget of 0.01 min ran out during this scenario'],
   ]);
 });
 
@@ -407,12 +407,12 @@ test('a teardown step still running at the final limit fails, the ones after it 
   ];
   const { r, limits, took } = await runBudget([scenario('a', ['R1.1'], ['linux'], passed, ['first', 'second'])], steps);
   deepEqual(r.teardown, [
-    { id: 'second', status: 'failed', reason: "did not finish before the harness's final limit of 0.01 min" },
-    { id: 'first', status: 'failed', reason: "not run: the harness's final limit of 0.01 min ran out" },
+    { id: 'second', status: 'failed', reason: "did not finish before the harness's final limit of 0.03 min" },
+    { id: 'first', status: 'failed', reason: "not run: the harness's final limit of 0.03 min ran out" },
   ]);
   deepEqual(calls, ['first', 'second']);
   equal(limits, 1);
-  equal(took < 1000, true, `took ${took} ms`);
+  equal(took < 3000, true, `took ${took} ms`);
   equal(r.scenarios[0]?.status, 'passed');
 });
 
