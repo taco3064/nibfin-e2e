@@ -4,7 +4,7 @@ import { deepEqual, equal, match, rejects } from 'node:assert/strict';
 import { test } from 'node:test';
 import { busyTogether, issueKey, jobWindow } from '../../scenarios/lifecycle/analysis.ts';
 import type { Job } from '../../scenarios/lifecycle/analysis.ts';
-import { DEADLINE, Kit } from '../../scenarios/lifecycle/kit.ts';
+import { DEADLINE, Kit, PUBLISH_GRACE, STALL } from '../../scenarios/lifecycle/kit.ts';
 import { Observer } from '../../scenarios/lifecycle/observe.ts';
 import { allBusyAt, busyGone } from '../../scenarios/lifecycle/phase1.ts';
 import { clock, context, routes } from './fake.ts';
@@ -62,6 +62,45 @@ test('a completed stage job is not out of reach while no other stage followed, n
   equal(await k.stageGone('o/exec', 6, 'shape')(s), undefined);
   match((await k.stageGone('o/exec', 6, 'shape', { since: Date.parse('2026-11-26T08:00:00Z') })(s)) ?? '', /shape job 11 completed \(run 5, success\) and a deliver run 7 followed/);
   equal(await k.stageGone('o/exec', 6, 'shape', { since: Date.parse('2026-11-26T08:00:00Z'), jobs: false })(s), undefined);
+});
+
+test('with publishes, a stage wait fails once a successful job of the stage left the Issue without its label past the grace (Issue #463)', async () => {
+  const shapeJob = (extra: Partial<Job> = {}) => job(11, 5, { created_at: '2026-11-26T10:00:40Z', completed_at: '2026-11-26T10:02:00Z', ...extra });
+  // A fresh Kit per case: the observer keeps a completed run's jobs once read.
+  const setup = (jobs: Job[], labels = [{ name: 'scope' }, { name: 'pause' }]) => {
+    const f = routes({
+      ...base,
+      'GET /repos/o/exec/actions/runs': { workflow_runs: [run(5, 'shape', 'completed', '2026-11-26T10:00:30Z')] },
+      'GET /repos/o/exec/actions/runs/5/jobs': { jobs },
+      'GET /repos/o/exec/issues': [issue(6, { labels })],
+    });
+    const c = clock();
+    return { c, k: new Kit(context(f.github), { now: c.now, sleep: c.sleep }) };
+  };
+  const since = Date.parse('2026-11-26T10:00:00Z');
+
+  const { c, k } = setup([shapeJob()]);
+  const started = c.now();
+  await rejects(
+    k.obs.until('`shaped`', () => undefined, DEADLINE.event, k.show('o/exec', 6), { gonePast: k.stageGone('o/exec', 6, 'shape', { since, publishes: 'shaped' }) }),
+    /^Error: gave up waiting for `shaped`: #6's shape job 11 completed \(run 5, success\) and #6 has no shaped [5-9] min later \(labels: scope, pause\)/,
+  );
+  equal(c.now() - started < STALL, true, 'it ended long before the stall check');
+  equal(c.now() - Date.parse('2026-11-26T10:02:00Z') >= PUBLISH_GRACE, true, 'it waited out the grace');
+
+  // Past the grace, only a successful job inside `since`, a missing label and `publishes` with jobs end the wait.
+  const late = async (jobs: Job[], opts: Parameters<Kit['stageGone']>[3], labels?: { name: string }[]) => {
+    const t = setup(jobs, labels);
+    t.c.advance(10 * MIN);
+    return t.k.stageGone('o/exec', 6, 'shape', opts)(await t.k.obs.fresh());
+  };
+  match((await late([shapeJob()], { since, publishes: 'shaped' })) ?? '', /^#6's shape job 11 completed \(run 5, success\) and #6 has no shaped 8 min later \(labels: scope, pause\)$/);
+  equal(await late([shapeJob({ completed_at: '2026-11-26T10:06:00Z' })], { since, publishes: 'shaped' }), undefined, 'within the grace');
+  equal(await late([shapeJob()], { since, publishes: 'shaped' }, [{ name: 'scope' }, { name: 'shaped' }]), undefined, 'shaped is on the Issue');
+  equal(await late([shapeJob({ conclusion: 'failure' })], { since, publishes: 'shaped' }), undefined, 'the job failed');
+  equal(await late([shapeJob()], { since: Date.parse('2026-11-26T10:01:00Z'), publishes: 'shaped' }), undefined, 'the job is older than the wait');
+  equal(await late([shapeJob()], { since }), undefined, 'publishes is unset');
+  equal(await late([shapeJob()], { since, publishes: 'shaped', jobs: false }), undefined, 'jobs: false');
 });
 
 test('a stage wait fails at once when the Issue is closed or has pending, unless pending is allowed', async () => {

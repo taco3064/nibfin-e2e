@@ -26,6 +26,11 @@ export const DEADLINE = {
 export const STALL = 20 * MIN;
 /** How long an Issue may show closed without `delivered` before a wait counts it as closed: Nibfin may label and close in either order. */
 const CLOSE_GRACE = 2 * MIN;
+/**
+ * How long after a successful stage job completed its label may still be missing before a
+ * wait counts the stage as not published (a paused Issue is not published, Proposal R4.12).
+ */
+export const PUBLISH_GRACE = DEADLINE.quiet;
 
 export interface GoneOptions {
   /** Only the stage's jobs created at or after this epoch ms count (default: when the check is made, minus one minute). */
@@ -34,6 +39,8 @@ export interface GoneOptions {
   allowPending?: boolean;
   /** Whether a completed job of the stage followed by another agent stage ends the wait (default true). */
   jobs?: boolean;
+  /** The label the stage adds when it succeeds: a successful job of the stage and no such label `PUBLISH_GRACE` later end the wait (needs `jobs`). */
+  publishes?: string;
 }
 
 export interface Hook {
@@ -356,7 +363,9 @@ export class Kit {
   /**
    * A `gonePast` check for a wait on one stage of an Issue: the first reason the wait
    * can no longer succeed. The Issue is closed; it has `pending` (unless allowed); or a
-   * job of the stage completed and a run of another agent stage was created after it.
+   * job of the stage completed and a run of another agent stage was created after it;
+   * or, with `publishes`, a job of the stage succeeded and the Issue still lacks that
+   * label `PUBLISH_GRACE` after the job completed.
    */
   stageGone(repo: string, n: number, stage: Stage, opts: GoneOptions = {}): (s: Snapshot) => Promise<string | undefined> {
     const since = opts.since ?? this.now() - MIN;
@@ -375,6 +384,14 @@ export class Kit {
           if (j.status !== 'completed' || time(j.created_at ?? j.run.created_at) < since) continue;
           const next = later.find((r) => time(r.created_at) > time(j.completed_at));
           if (next) return `${name}'s ${stage} job ${j.id} completed (run ${j.run.id}, ${String(j.conclusion)}) and a ${next.stage} run ${next.id} followed`;
+        }
+        const label = opts.publishes;
+        const labels = i?.labels.map((l) => l.name) ?? [];
+        if (label === undefined || labels.includes(label)) return undefined;
+        for (const j of await this.agentJobs(s, repo, n, [stage])) {
+          if (j.status !== 'completed' || j.conclusion !== 'success' || time(j.created_at ?? j.run.created_at) < since) continue;
+          const after = s.at - time(j.completed_at);
+          if (after >= PUBLISH_GRACE) return `${name}'s ${stage} job ${j.id} completed (run ${j.run.id}, success) and ${name} has no ${label} ${Math.floor(after / MIN)} min later (labels: ${labels.join(', ') || 'none'})`;
         }
         return undefined;
       })();
