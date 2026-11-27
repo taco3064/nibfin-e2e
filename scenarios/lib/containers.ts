@@ -21,7 +21,10 @@ export interface Projection {
   nanoCpus: number;
   cpuQuota: number;
   pidsLimit: number;
-  mounts: { source: string; destination: string }[];
+  /** `name` and `type` are Podman's `Name` (empty for bind mounts) and `Type` (volume or bind), when shown. */
+  mounts: { source: string; destination: string; name?: string; type?: string }[];
+  /** Names (never values) of the model credential variables set in the container environment. */
+  credentialEnv: string[];
   runId?: string;
   runRepo?: string;
 }
@@ -40,20 +43,26 @@ export function parseEvent(line: string): ContainerEvent | undefined {
   return { kind: status, id };
 }
 
-const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+/** Model credential variables whose presence in a Job environment would hand the CLI a login outside the login volume. */
+export const CREDENTIAL_ENV = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN'];
 
-/** Projects one inspect document; every environment value except the two run ids is dropped. */
+const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+const text = (v: unknown) => (typeof v === 'string' && v !== '' ? v : undefined);
+
+/** Projects one inspect document; every environment value except the two run ids is dropped (credential variables keep their name only). */
 export function project(raw: unknown): Projection | undefined {
   const c = (Array.isArray(raw) ? raw[0] : raw) as Record<string, unknown> | undefined;
   if (!c || typeof c !== 'object') return undefined;
   const host = (c.HostConfig ?? {}) as Record<string, unknown>;
   const config = (c.Config ?? {}) as { Env?: unknown };
   const env = new Map<string, string>();
+  const credentialEnv = new Set<string>();
   for (const kv of Array.isArray(config.Env) ? config.Env : []) {
     const s = String(kv);
     const i = s.indexOf('=');
     const k = i < 0 ? s : s.slice(0, i);
     if (k === 'NIBFIN_RUN_ID' || k === 'NIBFIN_RUN_REPO') env.set(k, s.slice(i + 1));
+    if (CREDENTIAL_ENV.includes(k)) credentialEnv.add(k);
   }
   const mounts = (Array.isArray(c.Mounts) ? c.Mounts : []) as Record<string, unknown>[];
   return {
@@ -62,7 +71,12 @@ export function project(raw: unknown): Projection | undefined {
     nanoCpus: num(host.NanoCpus),
     cpuQuota: num(host.CpuQuota),
     pidsLimit: num(host.PidsLimit),
-    mounts: mounts.map((m) => ({ source: String(m.Source ?? m.Name ?? ''), destination: String(m.Destination ?? '') })),
+    mounts: mounts.map((m) => {
+      const name = text(m.Name);
+      const type = text(m.Type);
+      return { source: String(m.Source ?? m.Name ?? ''), destination: String(m.Destination ?? ''), ...(name ? { name } : {}), ...(type ? { type } : {}) };
+    }),
+    credentialEnv: [...credentialEnv].sort(),
     runId: env.get('NIBFIN_RUN_ID'),
     runRepo: env.get('NIBFIN_RUN_REPO'),
   };

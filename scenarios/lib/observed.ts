@@ -10,8 +10,8 @@ import type { InitEvent } from './joblog.ts';
 import { message } from './kit.ts';
 import type { Kit } from './kit.ts';
 import { parseProbe } from './probe.ts';
-import { CLAUDE_VOLUME, TOOLS_VOLUME, listVolume, readLoginFacts, removeLoginKey } from './volume.ts';
-import type { LoginFacts } from './volume.ts';
+import { CLAUDE_VOLUME, TOOLS_VOLUME, inspectVolume, listVolume, readLoginFacts, removeLoginKey, statVolume } from './volume.ts';
+import type { LoginFacts, VolumeFile, VolumeInfo } from './volume.ts';
 import { DEADLINE, remoteWait } from './waits.ts';
 
 /** What the observed-job step saw; scenarios read it through `facts('observed-job')`. */
@@ -38,6 +38,45 @@ export interface ObservedFacts {
   pr?: number;
   /** How the PR ended while the approval ruleset was in force. */
   finish?: { merged: boolean; approvalComment?: string };
+  /** `podman volume inspect` of the login volume, read before the first Job. */
+  loginVolume?: VolumeInfo | ReadError;
+  /** Names, sizes and mtimes (never contents) of the login volume's files before Shape, after Shape and after Review. */
+  volumeFiles?: { beforeJobs: VolumeFile[] | ReadError; afterShape?: VolumeFile[] | ReadError; afterJobs?: VolumeFile[] | ReadError };
+  /** The login settings after the Review Job. */
+  loginAfterJobs?: LoginFacts | ReadError;
+  /** Every Job container of the fixture in start order (Shape, Deliver, Review, then extra-<k>), with its projection. */
+  jobs?: ObservedJob[];
+}
+
+/** A read that failed; the message carries the command output. Scenarios needing it fail on it. */
+export interface ReadError {
+  error: string;
+}
+
+export interface ObservedJob {
+  stage: string;
+  id: string;
+  projection?: Projection;
+}
+
+/** The result of `read`, or `{ error }` with its message: these reads never fail the step. */
+async function attempt<T>(read: () => Promise<T>): Promise<T | ReadError> {
+  try {
+    return await read();
+  } catch (error) {
+    return { error: message(error) };
+  }
+}
+
+const STAGES = ['Shape', 'Deliver', 'Review'];
+
+/** Every container started so far, in start order, named by stage. */
+export async function observedJobs(watch: Watch): Promise<ObservedJob[]> {
+  const ids = [...new Set(watch.events.filter((e) => e.kind === 'start').map((e) => e.id))];
+  return Promise.all(ids.map(async (id, i) => {
+    const projection = await watch.projection(id);
+    return { stage: STAGES[i] ?? `extra-${i - STAGES.length + 1}`, id, ...(projection ? { projection } : {}) };
+  }));
 }
 
 const pathsOf = async (kit: Kit, repo: string, ref: string) => {
@@ -114,6 +153,8 @@ export async function runObservedJob(kit: Kit): Promise<StepOutcome> {
       ruleset: approvalRuleset(),
     });
     facts.loginBefore = await removeLoginKey(kit.exec, 'enableAllProjectMcpServers');
+    facts.loginVolume = await attempt(() => inspectVolume(kit.exec, CLAUDE_VOLUME));
+    facts.volumeFiles = { beforeJobs: await attempt(() => statVolume(kit.exec, CLAUDE_VOLUME)) };
 
     const n = await openFixture(kit, repo, 'e2e observed job: add double(n)', TASK_BODY);
     facts.issue = n;
@@ -136,6 +177,7 @@ export async function runObservedJob(kit: Kit): Promise<StepOutcome> {
       facts.shapeLog = { imageRef: imageLine(text), buildOutput: buildOutput(text), init: initEvents(text), slot: job.slot };
     }
     facts.loginAfter = await readLoginFacts(kit.exec);
+    facts.volumeFiles.afterShape = await attempt(() => statVolume(kit.exec, CLAUDE_VOLUME));
     facts.memoryEntries = await listVolume(kit.exec, CLAUDE_VOLUME, '.', 'memory');
     facts.decoys = { tools: await listVolume(kit.exec, TOOLS_VOLUME, '.', DECOY_PATTERN), login: await listVolume(kit.exec, CLAUDE_VOLUME, '.', DECOY_PATTERN) };
     await notPending(kit, repo, n, 'Shape');
@@ -152,6 +194,9 @@ export async function runObservedJob(kit: Kit): Promise<StepOutcome> {
 
     // Review, then the finish Job on a GitHub-hosted runner (no local event marks its end).
     await stageDied(kit, watch, repo, n, 3, 'Review', DEADLINE.review);
+    facts.volumeFiles.afterJobs = await attempt(() => statVolume(kit.exec, CLAUDE_VOLUME));
+    facts.loginAfterJobs = await attempt(() => readLoginFacts(kit.exec));
+    facts.jobs = await observedJobs(watch);
     const pr = facts.pr;
     facts.finish = await remoteWait(kit, `PR #${pr} to merge or get Nibfin's comment about the missing approving review`, DEADLINE.finish, 30_000, async () => {
       const { data } = await kit.github.rest<{ merged?: boolean }>('GET', `/repos/${repo}/pulls/${pr}`);

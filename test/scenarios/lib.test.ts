@@ -18,8 +18,11 @@ test('the inspect projection keeps only allowlisted fields and the two run ids',
   const raw = [{
     ImageName: 'ghcr.io/taco3064/nibfin@sha256:abc',
     HostConfig: { Memory: 3221225472, NanoCpus: 2e9, CpuQuota: 0, PidsLimit: 2048, Binds: ['x'] },
-    Config: { Env: ['NIBFIN_GITHUB_TOKEN=' + TOKEN, 'NIBFIN_RUN_ID=42', 'NIBFIN_RUN_REPO=o/exec', 'PATH=/bin'] },
-    Mounts: [{ Name: 'nibfin-home-claude', Source: '/home/u/.local/share/containers/storage/volumes/nibfin-home-claude/_data', Destination: '/home/nibfin' }],
+    Config: { Env: ['NIBFIN_GITHUB_TOKEN=' + TOKEN, 'NIBFIN_RUN_ID=42', 'NIBFIN_RUN_REPO=o/exec', 'PATH=/bin', 'ANTHROPIC_API_KEY=' + TOKEN, 'CLAUDE_CODE_OAUTH_TOKEN=' + TOKEN] },
+    Mounts: [
+      { Type: 'volume', Name: 'nibfin-home-claude', Source: '/home/u/.local/share/containers/storage/volumes/nibfin-home-claude/_data', Destination: '/home/nibfin/.claude' },
+      { Type: 'bind', Name: '', Source: '/home/u/work', Destination: '/workspace' },
+    ],
   }];
   const p = project(raw);
   deepEqual(p, {
@@ -28,7 +31,11 @@ test('the inspect projection keeps only allowlisted fields and the two run ids',
     nanoCpus: 2e9,
     cpuQuota: 0,
     pidsLimit: 2048,
-    mounts: [{ source: '/home/u/.local/share/containers/storage/volumes/nibfin-home-claude/_data', destination: '/home/nibfin' }],
+    mounts: [
+      { source: '/home/u/.local/share/containers/storage/volumes/nibfin-home-claude/_data', destination: '/home/nibfin/.claude', name: 'nibfin-home-claude', type: 'volume' },
+      { source: '/home/u/work', destination: '/workspace', type: 'bind' },
+    ],
+    credentialEnv: ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'],
     runId: '42',
     runRepo: 'o/exec',
   });
