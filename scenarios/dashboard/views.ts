@@ -113,14 +113,25 @@ const quote = (t: string) => `"${t.replace(/\s+/g, ' ').trim().slice(0, 200)}"`;
  * a standalone count (the tile may still be loading); never the whole view.
  */
 async function summaryTile(page: Page, name: string, title: RegExp): Promise<string> {
+  return tileText(await tileRegion(page, name, title));
+}
+
+/** The R9.1 summary tile region named by its title; fails R9.1 quoting the summary when absent. */
+async function tileRegion(page: Page, name: string, title: RegExp): Promise<Locator> {
   const tile = page.getByRole('region', { name: title }).first();
   if (!(await tile.count())) {
     const group = page.getByRole('group', { name: /summary/i }).first();
     const seen = (await group.count()) ? await group.innerText().catch(() => '') : await bodyText(page);
     fail('R9.1', `a ${name} summary tile`, `none (summary: ${quote(seen)})`);
   }
-  return until(() => tile.innerText().catch(() => ''), hasCount, 30_000, 1000);
+  return tile;
 }
+
+const tileText = (tile: Locator) => until(() => tile.innerText().catch(() => ''), hasCount, 30_000, 1000);
+
+/** The Issue hrefs the page currently shows. */
+const visibleHrefs = async (page: Page) =>
+  new Set(await page.locator('a[href*="/issues/"]').filter({ visible: true }).evaluateAll((els) => els.map((e) => e.getAttribute('href') ?? '')));
 
 /** Conclusions of the runs an Issue's run strip lists, read from each run row's text or label. */
 async function stripConclusions(page: Page, el: Locator): Promise<string[] | undefined> {
@@ -173,16 +184,20 @@ async function personView(page: Page, ctx: RunContext, f: Fixtures, notes: strin
     check(got === want, 'R9.1', `the stage stack to show ${stage} ${want}`, () => `${got} (tile: ${quote(openTile)})`);
   }
   const held = listed.filter((i) => i.labels.includes('pause') || i.labels.includes('pending'));
-  const needs = page.getByRole('button', { name: /intervention|needs (you|attention)/i }).first();
-  check(await needs.count(), 'R9.1', 'a clickable needs-intervention tile', 'none');
-  const needsN = countNear(`${await needs.innerText()} ${(await needs.getAttribute('aria-label')) ?? ''}`, /intervention|attention|needs/);
-  check(needsN === held.length, 'R9.1', `the needs-intervention count ${held.length}`, String(needsN));
-  await needs.click();
-  await sleep(800);
-  const hrefs = new Set(await page.locator('a[href*="/issues/"]').filter({ visible: true }).evaluateAll((els) => els.map((e) => e.getAttribute('href') ?? '')));
-  for (const i of held) check(hrefs.has(i.html_url), 'R9.1', `${i.repo}${num(i)} in the needs-intervention filter`, 'missing');
-  for (const i of listed.filter((x) => !held.includes(x))) check(!hrefs.has(i.html_url), 'R9.1', `${i.repo}${num(i)} (no pause or pending) filtered out`, 'still listed');
-  await needs.click();
+  const needsTile = await tileRegion(page, 'Needs you', /^needs you\b/i);
+  const needsText = await tileText(needsTile);
+  const needsN = countNear(needsText, /pending or paused/);
+  check(needsN === held.length, 'R9.1', `the needs-intervention count ${held.length}`, () => `${needsN} (tile: ${quote(needsText)})`);
+  const toggle = needsTile.getByRole('button', { name: /show(?:ing)? only these/i }).first();
+  check(await toggle.count(), 'R9.1', "the Needs you tile's filter toggle", () => `none (tile: ${quote(needsText)})`);
+  const others = listed.filter((x) => !held.includes(x));
+  await toggle.click();
+  const filtered = await until(() => visibleHrefs(page), (h) => held.every((i) => h.has(i.html_url)) && !others.some((i) => h.has(i.html_url)), 10_000, 500);
+  for (const i of held) check(filtered.has(i.html_url), 'R9.1', `${i.repo}${num(i)} in the needs-intervention filter`, 'missing');
+  for (const i of others) check(!filtered.has(i.html_url), 'R9.1', `${i.repo}${num(i)} (no pause or pending) filtered out`, 'still listed');
+  await toggle.click();
+  const restored = await until(() => visibleHrefs(page), (h) => listed.every((i) => h.has(i.html_url)), 10_000, 500);
+  for (const i of listed) check(restored.has(i.html_url), 'R9.1', `${i.repo}${num(i)} listed again after the needs-intervention filter is off`, 'missing');
   // Run-conclusion statistics equal the listed Issues' run strips.
   const tally = new Map<string, number>();
   for (const i of listed) {
