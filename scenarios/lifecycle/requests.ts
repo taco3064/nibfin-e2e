@@ -2,10 +2,11 @@
 // Core delivers the stage (Proposal R8.20).
 import type { GitHub } from '../../src/host/github.ts';
 import type { Outcome, Scenario } from '../../src/types.ts';
-import { Checks, findListing, markerOf, refersToIssue, time } from './analysis.ts';
-import type { Issue } from './analysis.ts';
+import { Checks, describeComments, findListing, markerOf, refersToIssue, time } from './analysis.ts';
+import type { Comment, Issue } from './analysis.ts';
 import { DEADLINE, lifecycle } from './kit.ts';
 import type { Kit } from './kit.ts';
+import type { Snapshot } from './observe.ts';
 
 /** The Issues that deliver the Scope stage (the Proposal's R3.2–R3.11 record). */
 export const SCOPE_ISSUES: [string, number][] = [
@@ -45,6 +46,32 @@ function requestScenario(id: string, rules: string[], body: (k: Kit, filed: numb
   });
 }
 
+/**
+ * Waits for an infeasible request to stop (Proposal R3.9): first for `pending` on it,
+ * with the stall check, as Scope should be active until then; then for a Nibfin-marked
+ * comment, read directly from GitHub on each try and `quiet`, as after `pending` the
+ * request waits for a person by design. Step B's failure names the comments it read.
+ */
+export async function awaitInfeasibleStop(k: Kit, repo: string, n: number, show: (s: Snapshot) => Promise<string>): Promise<void> {
+  await k.obs.until('the request to get pending', (s) => (k.labels(s, repo, n).includes('pending') ? true : undefined), DEADLINE.stage, show, {
+    gonePast: (s) => {
+      const i = k.issue(s, repo, n);
+      return i?.state === 'closed' ? `#${n} was closed (${String(i.state_reason)}) before it got pending` : undefined;
+    },
+  });
+  let read: Comment[] = [];
+  await k.obs.until(
+    'a Nibfin comment on the request',
+    async () => {
+      read = await k.gh.list<Comment>(`/repos/${repo}/issues/${n}/comments`);
+      return read.some((c) => markerOf(c.body)) ? true : undefined;
+    },
+    DEADLINE.event,
+    async (s) => `${await show(s).catch(() => '')}; ${describeComments(read)}`,
+    { quiet: true },
+  );
+}
+
 const FIXTURE = '_This Issue is an automated nibfin-e2e fixture._';
 
 export const requestInfeasible = requestScenario('request-infeasible', ['R3.2', 'R3.3', 'R3.9', 'R3.10', 'R4.8'], async (k, filed) => {
@@ -64,10 +91,7 @@ export const requestInfeasible = requestScenario('request-infeasible', ['R3.2', 
   const paused = await k.settle('the paused request', k.now(), k.runsOf(exec, n));
   c.check('R4.8', k.stages(paused, exec, n, ['scope']).length === 0, 'a paused request got a scope run');
   await k.removeLabel(exec, n, 'pause');
-  await k.obs.until('the request to get pending and a comment', async (s) => {
-    if (!k.labels(s, exec, n).includes('pending')) return undefined;
-    return (await k.obs.comments(exec, n)).some((x) => markerOf(x.body)) ? true : undefined;
-  }, DEADLINE.stage, show);
+  await awaitInfeasibleStop(k, exec, n, show);
   const s = await k.obs.fresh();
   c.check('R3.2', k.stages(s, exec, n, ['scope']).length > 0, 'the request never reached the Scope stage');
   c.check('R3.3', !(s.issues.get(exec) ?? []).some((i) => i.body?.includes(`Origin: ${r.html_url}`)), 'an infeasible request published Issues');
