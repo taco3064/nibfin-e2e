@@ -5,6 +5,7 @@ import { interruptedDeliver, loginExpiry } from './phase1.ts';
 import { assigneeRouting, fixLoops, peerDispatch, protectedPaths } from './phase2-fixtures.ts';
 import { blockedByChain, deliveryLifecycle, deliveryParallel, pauseAndPending, shapeRewrite } from './phase2-journeys.ts';
 import { noCredentials } from './phase3.ts';
+import { reviewRebase } from './review-rebase.ts';
 import { requestAlreadyDone, requestFeasible, requestInfeasible } from './requests.ts';
 
 export const lifecycleScenarios: Scenario[] = [
@@ -19,6 +20,7 @@ export const lifecycleScenarios: Scenario[] = [
   peerDispatch,
   protectedPaths,
   fixLoops,
+  reviewRebase,
   requestInfeasible,
   requestFeasible,
   requestAlreadyDone,
