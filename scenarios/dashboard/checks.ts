@@ -574,6 +574,35 @@ export function pauseResumePreconditions(F: IssueState, A: IssueState & { id: nu
   return out;
 }
 
+/** What an Issue element showed about pause: whether it is rendered, its text and its Pause/Resume controls. */
+export interface PauseView {
+  present: boolean;
+  text: string;
+  pauseControls: number;
+  resumeControls: number;
+}
+
+const PAUSE_MARKER = /\bpaused?\b/gi;
+
+/**
+ * Whether an Issue element shows a pause that was not there before (R9.2, R9.19, R5.51): a new
+ * Resume control or a new pause marker. A missing or empty element, a Pause control that only
+ * disappeared, or other new label names never count.
+ */
+export function pauseAppeared(before: PauseView, after: PauseView): boolean {
+  if (!after.present || !after.text.trim()) return false;
+  if (after.resumeControls > before.resumeControls) return true;
+  const markers = (t: string) => t.match(PAUSE_MARKER)?.length ?? 0;
+  return markers(after.text) > markers(before.text);
+}
+
+/** A short, one-line description of a PauseView for a failure message. */
+export function describePauseView(v: PauseView): string {
+  if (!v.present) return 'not listed';
+  const t = v.text.replace(/\s+/g, ' ').trim();
+  return `${v.pauseControls} Pause and ${v.resumeControls} Resume control(s), text "${t.length > 200 ? `${t.slice(0, 200)}…` : t}"`;
+}
+
 /** The first primitive value in a JSON document under a key matching `key`. */
 export function statusValue(json: unknown, key: RegExp): string | number | boolean | undefined {
   let found: string | number | boolean | undefined;
