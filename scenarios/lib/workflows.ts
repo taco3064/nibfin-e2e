@@ -93,8 +93,12 @@ export function triggers(text: string): string[] {
   const lines = text.split(/\r?\n/);
   const at = lines.findIndex((l) => /^(?:on|"on"|'on'):(?:\s|$)/.test(l));
   if (at < 0) return [];
-  const value = (lines[at] as string).replace(/^[^:]+:/, '').replace(/\s+#.*$/, '').trim();
+  const clean = (l: string) => l.replace(/(^|\s+)#.*$/, '').trim();
+  let value = clean((lines[at] as string).replace(/^[^:]+:/, ''));
   if (value.startsWith('[') || value.startsWith('{')) {
+    // A flow collection may continue on the following lines until it closes.
+    const close = value.startsWith('[') ? ']' : '}';
+    for (let j = at + 1; j < lines.length && !value.endsWith(close); j++) value += ' ' + clean(lines[j] as string);
     return value
       .slice(1, value.endsWith(']') || value.endsWith('}') ? -1 : undefined)
       .split(',')
@@ -210,12 +214,29 @@ const BARE = 'ghcr.io/taco3064/nibfin';
 /** The bare image name, not followed by a tag, digest or longer name. */
 const BARE_RE = /ghcr\.io\/taco3064\/nibfin(?![\w@:/.-])/;
 
-/** The workflow's lines with each trailing-`\` continuation joined into one command line. */
+/**
+ * The workflow's lines as command lines: each trailing-`\` continuation and each folded
+ * `run: >` block joined into one line.
+ */
 function commandLines(text: string): string[] {
   const out: string[] = [];
   let cur = '';
+  let foldedAt: number | undefined;
   for (const l of text.split(/\r?\n/)) {
-    if (/\\\s*$/.test(l)) cur += l.replace(/\\\s*$/, ' ');
+    if (foldedAt !== undefined) {
+      if (l.trim() === '' || indent(l) > foldedAt) {
+        cur += ' ' + l.trim();
+        continue;
+      }
+      out.push(cur);
+      cur = '';
+      foldedAt = undefined;
+    }
+    if (/^\s*(?:-\s+)?run:\s*>[-+1-9]*\s*(?:#.*)?$/.test(l)) {
+      out.push(cur + l);
+      cur = '';
+      foldedAt = indent(l.replace(/^(\s*)-\s+/, '$1  '));
+    } else if (/\\\s*$/.test(l)) cur += l.replace(/\\\s*$/, ' ');
     else {
       out.push(cur + l);
       cur = '';
@@ -225,13 +246,27 @@ function commandLines(text: string): string[] {
   return out;
 }
 
+/** The names of the variables holding the bare image name, directly or through another such variable. */
+function bareVariables(text: string): string[] {
+  const vars = new Set([...text.matchAll(/([A-Za-z_]\w*)\s*[:=]\s*["']?ghcr\.io\/taco3064\/nibfin(?![\w@:/.-])/g)].map((m) => m[1] as string));
+  for (let size = -1; size !== vars.size; ) {
+    size = vars.size;
+    for (const v of [...vars]) {
+      const ref = `(?:\\$${v}(?!\\w)|\\$\\{${v}\\}|\\$\\{\\{\\s*env\\.${v}\\s*\\}\\})`;
+      for (const m of text.matchAll(new RegExp(`([A-Za-z_]\\w*)\\s*[:=]\\s*["']?${ref}["']?(?![\\w@:/.$-])`, 'g'))) vars.add(m[1] as string);
+    }
+  }
+  return [...vars];
+}
+
 /**
  * The image references of one workflow that break Proposal R5.7, each once, with why.
  * A reference with a digest must be `ghcr.io/taco3064/nibfin@<digest>`; any other
  * reference fails except the bare `ghcr.io/taco3064/nibfin`, which passes only when the
  * expected digest appears in this file or in a file that calls it (`callerTexts`), and
- * the bare name (literally or through a variable assigned it) is never pulled, run or
- * created by podman, nor used as an `image:`, `container:` or `docker://` image.
+ * the bare name (literally or through a variable holding it) is never pulled, run or
+ * created by podman or another container tool, nor used as an `image:`, `container:` or
+ * `docker://` image.
  */
 export function unpinnedImages(text: string, digest: string, callerTexts: string[] = []): { ref: string; why?: string }[] {
   const pinned = `${BARE}@${digest}`;
@@ -246,10 +281,11 @@ export function unpinnedImages(text: string, digest: string, callerTexts: string
       out.push({ ref, why: 'with no expected digest in the file or its caller' });
       continue;
     }
-    const vars = [...text.matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*[:=]\s*["']?ghcr\.io\/taco3064\/nibfin(?![\w@:/.-])/g)].map((m) => m[1] as string);
+    const vars = bareVariables(text);
     const viaVar = (s: string) => vars.some((v) => new RegExp(`\\$${v}\\b|\\$\\{${v}\\}|env\\.${v}\\b`).test(s));
     const podman = commandLines(text).some((l) => {
-      const m = /\bpodman\s+(?:(?:image|container)\s+)?(?:run|pull|create)\b/.exec(l);
+      // Any container tool, with any options before its run, pull or create.
+      const m = /\b(?:podman|docker|nerdctl)\b.*?\b(?:run|pull|create)\b/.exec(l);
       if (!m) return false;
       const rest = l.slice(m.index);
       return BARE_RE.test(rest) || viaVar(rest);
