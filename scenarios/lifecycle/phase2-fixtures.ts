@@ -40,7 +40,9 @@ export const assigneeRouting: Scenario = lifecycle({
       filed.push(m2.number);
       const n = m2.number;
       const show = k.show(exec, n);
-      const shapeJob = await k.obs.until('M2\'s shape job to run', async (s) => (await k.agentJobs(s, exec, n, ['shape'])).find((j) => j.status === 'in_progress'), DEADLINE.stage, show);
+      const shapeJob = await k.obs.until('M2\'s shape job to run', async (s) => (await k.agentJobs(s, exec, n, ['shape'])).find((j) => j.status === 'in_progress'), DEADLINE.stage, show, {
+        gonePast: k.stageGone(exec, n, 'shape'),
+      });
       await k.gh.rest('PATCH', `/repos/${exec}/issues/${n}`, { assignees: [other.login, owner.login] });
       const reassignedAt = k.now();
       const { data: back } = await k.gh.rest<Issue>('GET', `/repos/${exec}/issues/${n}`);
@@ -118,11 +120,11 @@ export const peerDispatch: Scenario = lifecycle({
         if (!running) return undefined;
         const pushes = (await k.obs.activity(peer, { ref: `refs/heads/${branch}` })).filter((a) => a.activity_type === 'push' || a.activity_type === 'branch_creation');
         return pushes.length ? ('pushed' as const) : undefined;
-      }, DEADLINE.delivery, show);
+      }, DEADLINE.delivery, show, { gonePast: k.stageGone(peer, n, 'deliver') });
       const conflict = await writeConflict(k, peer, branch, trigger === 'merged');
       if (!conflict) c.notExercised('R3.18', 'the PR merged before the first observed push');
 
-      await k.obs.until('Q to close with delivered', (s) => k.delivered(s, peer, n), DEADLINE.delivery, show);
+      await k.obs.until('Q to close with delivered', (s) => k.delivered(s, peer, n), DEADLINE.delivery, show, { gonePast: k.closeGone(peer, n) });
       const s = await k.obs.fresh();
       const merged = (await k.obs.pullsByHead(peer, branch)).find((p) => p.merged_at);
       if (!merged) c.fail('R3.18', `no merged PR for ${branch}`);
@@ -319,7 +321,7 @@ export const fixLoops: Scenario = lifecycle({
       const pr2 = await k.obs.until('a new fix PR for F', (s) => s.pulls.get(exec)?.find((p) => p.number !== merged.number && isIssueBranch(p.head.ref, n)), DEADLINE.stage, show);
       c.check('R3.30', time(pr2.created_at) > time(cd.updated_at) && pr2.base.ref === 'main', `PR #${pr2.number} is not a new PR against main after the CD failure`);
       c.check('R3.30', await k.obs.descends(exec, mergeSha, pr2.head.sha), `the fix PR #${pr2.number} (${pr2.head.sha}) is not cut from the main F's CD ran on (${mergeSha})`);
-      const done = await k.obs.until('F to close with delivered', (s) => k.delivered(s, exec, n), DEADLINE.delivery, show);
+      const done = await k.obs.until('F to close with delivered', (s) => k.delivered(s, exec, n), DEADLINE.delivery, show, { gonePast: k.closeGone(exec, n) });
       const s = await k.obs.fresh();
       const pr2m = s.pulls.get(exec)?.find((p) => p.number === pr2.number);
       c.check('R3.30', !!pr2m?.merged_at, `the fix PR #${pr2.number} did not merge`);

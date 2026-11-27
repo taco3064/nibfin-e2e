@@ -1,6 +1,7 @@
 // One shared, read-only view of the sandboxes. Waiters share a snapshot that is
 // refreshed at most once per interval; detail reads are cached for the same interval,
 // or for good once what they read can no longer change.
+import { abortError, throwIfAborted, untilAborted } from '../../src/abort.ts';
 import type { GitHub } from '../../src/host/github.ts';
 import { parseLog } from './analysis.ts';
 import type { Activity, Comment, Issue, Job, LogLine, Pull, Run, Runner } from './analysis.ts';
@@ -21,6 +22,25 @@ export interface ObserverOptions {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   log?: (message: string) => void;
+  /** The run's signal: a wait ends with its reason once it aborts (the harness budget). */
+  signal?: AbortSignal;
+  /** A wait not marked `quiet` fails once no snapshot changed and no run was in progress for this long; absent, never. */
+  stallMs?: number;
+}
+
+export interface UntilOptions {
+  /** A reason when the goal is out of reach; checked on each snapshot after `fn`. */
+  gonePast?: (s: Snapshot) => string | undefined | Promise<string | undefined>;
+  /** This wait expects silence; the stall check does not apply. */
+  quiet?: boolean;
+}
+
+/** What a snapshot shows of the sandboxes' activity; two equal fingerprints mean nothing changed. */
+export function fingerprint(s: Pick<Snapshot, 'runs' | 'issues' | 'pulls'>): string {
+  const runs = s.runs.map((r) => [r.repo, r.id, r.status, r.conclusion, r.run_attempt, r.updated_at]).sort((a, b) => String(a[0]).localeCompare(String(b[0])) || Number(a[1]) - Number(b[1]));
+  const issues = [...s.issues].map(([repo, list]) => [repo, list.map((i) => [i.number, i.state, i.updated_at, (i.labels ?? []).map((l) => l.name).sort()]).sort((a, b) => Number(a[0]) - Number(b[0]))]);
+  const pulls = [...s.pulls].map(([repo, list]) => [repo, list.map((p) => [p.number, p.state, p.head?.sha, p.updated_at, p.merged_at]).sort((a, b) => Number(a[0]) - Number(b[0]))]);
+  return JSON.stringify([runs, issues.sort(), pulls.sort()]);
 }
 
 const DONE_JOB = (j: Job) => j.status === 'completed';
@@ -36,6 +56,9 @@ export class Observer {
   /** Every run seen since the start, by "repo id". */
   private readonly seen = new Map<string, Run>();
   private readonly listedAt = new Map<string, number>();
+  private lastPrint?: string;
+  /** When the latest snapshot that showed activity was taken: a change from the one before, or a run in progress. */
+  private lastActivityAt?: number;
   readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly interval: number;
@@ -49,7 +72,8 @@ export class Observer {
     this.repos = repos;
     this.opts = opts;
     this.now = opts.now ?? (() => Date.now());
-    this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+    const sleep = opts.sleep ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms)));
+    this.sleep = (ms) => untilAborted(sleep(ms), opts.signal);
     this.interval = opts.intervalMs ?? 60_000;
   }
 
@@ -114,6 +138,9 @@ export class Observer {
     }
     const runs = [...this.seen.values()];
     const s: Snapshot = { gen: ++this.gen, at: this.now(), runs, issues, pulls };
+    const print = fingerprint(s);
+    if (print !== this.lastPrint || runs.some((r) => r.status === 'in_progress')) this.lastActivityAt = s.at;
+    this.lastPrint = print;
     try {
       const { data } = await this.gh.rest<{ resources?: { core?: { remaining?: number } } }>('GET', '/rate_limit');
       this.opts.log?.(`observer: snapshot ${s.gen}, ${runs.length} runs, ${data.resources?.core?.remaining ?? '?'} requests left this hour`);
@@ -124,41 +151,69 @@ export class Observer {
   }
 
   /**
-   * Waits until `fn` returns a value other than `undefined`. At the deadline it fails
-   * naming what it waited for and, through `show`, the last observed state.
+   * Waits until `fn` returns a value other than `undefined`. On each snapshot after
+   * `fn` it ends early when `opts.gonePast` gives a reason the goal is out of reach, or
+   * when the sandboxes showed no activity for `stallMs` (unless the wait is `quiet`).
+   * At the deadline it fails naming what it waited for and, through `show`, the last
+   * observed state. It ends with the abort reason once the run's signal aborts.
    *
-   * A wait only reads, so a failed read (a refresh or a read inside `fn`) is logged
-   * and the wait goes on to its next snapshot; the last such error is named if the
-   * deadline passes. Harness writes are never repeated.
+   * A wait only reads, so a failed read (a refresh or a read inside `fn` or
+   * `gonePast`) is logged and the wait goes on to its next snapshot; the last such
+   * error is named if the deadline passes. Harness writes are never repeated.
    */
   async until<T>(
     desc: string,
     fn: (s: Snapshot) => T | undefined | Promise<T | undefined>,
     timeoutMs: number,
     show?: (s: Snapshot) => string | Promise<string>,
+    opts: UntilOptions = {},
   ): Promise<T> {
-    const end = this.now() + timeoutMs;
+    const signal = this.opts.signal;
+    const start = this.now();
+    const end = start + timeoutMs;
     let seen = -1;
     let lastError: string | undefined;
     let last: Snapshot | undefined;
+    const fail = async (message: string): Promise<never> => {
+      let state = '';
+      if (show && last) state = await Promise.resolve(show(last)).catch(() => '');
+      const err = lastError ? `; last read error: ${lastError}` : '';
+      throw new Error(`${message}${state ? `; observed: ${state}` : ''}${err}`);
+    };
+    const readError = (error: unknown) => {
+      if (signal?.aborted) throw abortError(signal);
+      lastError = error instanceof Error ? error.message : String(error);
+      // The next call to next() waits one interval before reading again.
+      this.opts.log?.(`observer: a read while waiting for ${desc} failed: ${lastError}`);
+    };
     for (;;) {
+      throwIfAborted(signal);
+      let fresh: Snapshot | undefined;
       try {
         const s = await this.next(seen);
         seen = s.gen;
-        last = s;
+        last = fresh = s;
         const v = await fn(s);
         if (v !== undefined) return v;
       } catch (error) {
-        lastError = error instanceof Error ? error.message : String(error);
-        // The next call to next() waits one interval before reading again.
-        this.opts.log?.(`observer: a read while waiting for ${desc} failed: ${lastError}`);
+        readError(error);
       }
-      if (this.now() >= end) {
-        let state = '';
-        if (show && last) state = await Promise.resolve(show(last)).catch(() => '');
-        const err = lastError ? `; last read error: ${lastError}` : '';
-        throw new Error(`timed out after ${Math.round(timeoutMs / 60_000)} min waiting for ${desc}${state ? `; observed: ${state}` : ''}${err}`);
+      if (fresh && opts.gonePast) {
+        let reason: string | undefined;
+        try {
+          reason = await opts.gonePast(fresh);
+        } catch (error) {
+          readError(error);
+        }
+        if (reason !== undefined) await fail(`gave up waiting for ${desc}: ${reason}`);
       }
+      const stall = this.opts.stallMs;
+      if (stall !== undefined && !opts.quiet) {
+        const calmSince = Math.max(this.lastActivityAt ?? start, start);
+        const now = this.now();
+        if (now - calmSince >= stall) await fail(`no sandbox activity for ${Math.round((now - calmSince) / 60_000)} min while waiting for ${desc}`);
+      }
+      if (this.now() >= end) await fail(`timed out after ${Math.round(timeoutMs / 60_000)} min waiting for ${desc}`);
     }
   }
 

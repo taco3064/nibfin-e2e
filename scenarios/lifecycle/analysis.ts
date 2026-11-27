@@ -48,6 +48,7 @@ export interface Issue {
   assignees: { login: string }[];
   created_at: string;
   closed_at: string | null;
+  updated_at?: string;
   html_url: string;
   node_id: string;
   id: number;
@@ -60,6 +61,7 @@ export interface Pull {
   merged_at: string | null;
   merge_commit_sha: string | null;
   created_at: string;
+  updated_at?: string;
   head: { ref: string; sha: string };
   base: { ref: string };
   user: { login: string } | null;
@@ -211,6 +213,19 @@ export function windowAt<W extends { start: number; end: number }>(t: number, wi
 }
 
 export const overlap = (a: { start: number; end: number }, b: { start: number; end: number }) => a.start < b.end && b.start < a.end;
+
+/**
+ * The common span in which the windows, each on its own Runner, cover every registered
+ * Runner name: every Runner was busy with one of these jobs at once. Undefined when the
+ * windows are on the same Runner, miss or add a Runner, or do not overlap.
+ */
+export function busyTogether(windows: Window[], runners: string[]): { start: number; end: number } | undefined {
+  const on = windows.map((w) => w.runner);
+  if (!runners.length || windows.length !== runners.length || new Set(on).size !== on.length || !runners.every((r) => on.includes(r))) return undefined;
+  const start = Math.max(...windows.map((w) => w.start));
+  const end = Math.min(...windows.map((w) => w.end));
+  return start < end ? { start, end } : undefined;
+}
 
 /** Two windows of different Issues on different Runners that overlap. */
 export function concurrentPair(windows: Window[]): [Window, Window] | undefined {

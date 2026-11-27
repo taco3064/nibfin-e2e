@@ -1,7 +1,7 @@
 // Phase 1: scenarios that change the whole host (the login, the Runner services), so
 // each runs alone.
 import type { Scenario } from '../../src/types.ts';
-import { AGENT_STAGES, Checks, describeJob, duplicateMarkers, githubHosted, markerOf, overlap, queuedHoldProblems, selfHosted, startedBefore, time } from './analysis.ts';
+import { AGENT_STAGES, Checks, busyTogether, describeJob, duplicateMarkers, githubHosted, issueKey, jobWindow, markerOf, overlap, queuedHoldProblems, selfHosted, startedBefore, time } from './analysis.ts';
 import type { Comment, Issue, Job, Run } from './analysis.ts';
 import { DEADLINE, changeRequest, finishAt, finishRunProblems, finishSeen, lifecycle, message } from './kit.ts';
 import type { Kit } from './kit.ts';
@@ -84,6 +84,7 @@ export const loginExpiry: Scenario = lifecycle({
         async (s) => (await k.agentJobs(s, exec, n, ['shape'])).find((j) => j.run.id === next.id && j.status !== 'queued'),
         DEADLINE.stage,
         show,
+        { gonePast: k.stageGone(exec, n, 'shape', { since: woke - 60_000 }) },
       );
       await k.addLabels(exec, n, ['pause']);
       const done = await k.obs.until('the redone shape run to complete', (s) => s.runs.find((r) => r.id === next.id && r.status === 'completed'), DEADLINE.stage, show);
@@ -111,10 +112,26 @@ async function dispatched(k: Kit, s: Snapshot, n: number, label: string): Promis
   return queued ? { queued } : undefined;
 }
 
-const allBusy = async (k: Kit) => {
-  const rs = await k.obs.runners(k.exec);
-  return rs.length >= 2 && rs.every((r) => r.status === 'online' && r.busy);
-};
+/**
+ * Why I's deliver job and I2's shape job can no longer hold both Runners at once: they
+ * cannot cover the registered Runners, ran on the same one, or I's job completed before
+ * I2's started. Read from the jobs' own times, not from a snapshot's Runner list.
+ */
+export function busyGone(oldJob: Job, shapeJob: Job | undefined, runners: string[]): string | undefined {
+  if (runners.length !== 2) return `the registered Runners are ${runners.join(', ') || 'none'}; I's deliver job and I2's shape job cannot cover them`;
+  const shapeStarted = shapeJob !== undefined && jobWindow(shapeJob, 'I2', 'shape') !== undefined;
+  if (shapeStarted && shapeJob.runner_name === oldJob.runner_name) return `I2's shape job ${shapeJob.id} ran on ${String(shapeJob.runner_name)}, the same Runner as I's deliver job ${oldJob.id}`;
+  if (oldJob.status === 'completed' && (!shapeStarted || time(shapeJob.started_at) >= time(oldJob.completed_at))) {
+    return `I's deliver job ${oldJob.id} completed at ${String(oldJob.completed_at)} before I2's shape job started`;
+  }
+  return undefined;
+}
+
+/** Whether every registered Runner was busy with one of the jobs at `t`, from the jobs' own windows. */
+export function allBusyAt(t: number, jobs: Job[], runners: string[]): boolean {
+  const windows = jobs.flatMap((j) => jobWindow(j, '', 'shape') ?? []);
+  return runners.length > 0 && runners.every((name) => windows.some((w) => w.runner === name && w.start <= t && t <= w.end));
+}
 
 export const interruptedDeliver: Scenario = lifecycle({
   id: 'interrupted-deliver',
@@ -159,29 +176,41 @@ export const interruptedDeliver: Scenario = lifecycle({
         },
         DEADLINE.stage,
         show,
+        { gonePast: k.stageGone(exec, n, 'deliver') },
       );
 
-      // 4: I2 takes the second Runner.
+      // 4: I2 takes the second Runner while I's deliver job holds the other: both Runners busy, read from the jobs' own times.
       const n2 = await file('i2', 'Add decrement', changeRequest(k.slug('i2'), 'decrement', 'returns its argument minus one'));
-      await k.obs.until(
-        'I2\'s shape job to run with both Runners online and busy',
-        async (s) => ((await k.agentJobs(s, exec, n2, ['shape'])).some((j) => j.status === 'in_progress') && (await allBusy(k)) ? true : undefined),
+      const runnerNames = (await k.obs.runners(exec)).map((r) => r.name);
+      const i2Shape = async (s: Snapshot) => (await k.agentJobs(s, exec, n2, ['shape'])).find((j) => jobWindow(j, issueKey(exec, n2), 'shape'));
+      const i2Gone = k.stageGone(exec, n2, 'shape');
+      const shape2 = await k.obs.until(
+        'I2\'s shape job to run while I\'s deliver job holds the other Runner',
+        async (s) => {
+          const j = await i2Shape(s);
+          const old = jobWindow(await k.obs.job(exec, oldJob.id), issueKey(exec, n), 'deliver');
+          const w = j && jobWindow(j, issueKey(exec, n2), 'shape');
+          return old && w && busyTogether([old, w], runnerNames) ? j : undefined;
+        },
         DEADLINE.stage,
-        k.show(exec, n2),
+        k.show(exec, n, n2),
+        { gonePast: async (s) => busyGone(await k.obs.job(exec, oldJob.id), await i2Shape(s), runnerNames) ?? i2Gone(s) },
       );
 
       // 5: I3 is dispatched while the member is online; its job queues (R4.23).
       const n3 = await file('i3', 'Add sign', changeRequest(k.slug('i3'), 'sign', 'returns -1, 0 or 1 for the sign of its argument'));
       const d3 = await k.obs.until(
-        'I3\'s shape job to queue on the Owner\'s label while both Runners are online and busy',
+        'I3\'s shape job to queue on the Owner\'s label while I\'s deliver job and I2\'s shape job hold both Runners',
         async (s) => {
           const d = await dispatched(k, s, n3, label);
           if (!d) return undefined;
           if (d.started) return d;
-          return (await allBusy(k)) ? d : undefined;
+          // The windows are re-read until those jobs complete.
+          return allBusyAt(s.at, [await k.obs.job(exec, oldJob.id), await k.obs.job(exec, shape2.id)], runnerNames) ? d : undefined;
         },
         DEADLINE.event,
         k.show(exec, n3),
+        { gonePast: k.stageGone(exec, n3, 'shape') },
       );
       const recordedAt = k.now();
       let j3 = d3.queued;
@@ -216,7 +245,9 @@ export const interruptedDeliver: Scenario = lifecycle({
 
       // 8: I4 is dispatched while every Runner is offline (R4.21).
       const n4 = await file('i4', 'Add isEven', changeRequest(k.slug('i4'), 'isEven', 'returns whether its argument is even'));
-      const d4 = await k.obs.until('I4\'s shape job to queue on the Owner\'s label while the Runners are offline', (s) => dispatched(k, s, n4, label), DEADLINE.event, k.show(exec, n4));
+      const d4 = await k.obs.until('I4\'s shape job to queue on the Owner\'s label while the Runners are offline', (s) => dispatched(k, s, n4, label), DEADLINE.event, k.show(exec, n4), {
+        gonePast: k.stageGone(exec, n4, 'shape'),
+      });
       c.check('R4.21', d4.queued !== undefined, `I4's shape job started while every Runner was offline`);
       const s8 = await k.obs.fresh();
       const strays = (await k.agentJobs(s8, exec, n4)).filter((j) => !j.labels.includes(label));
@@ -251,6 +282,7 @@ export const interruptedDeliver: Scenario = lifecycle({
         },
         DEADLINE.stage,
         show,
+        { gonePast: k.stageGone(exec, n, 'deliver', { jobs: false }) },
       );
       for (const j of redo.fresh) {
         const ok = time(j.started_at) >= time(redo.old.completed_at);
@@ -283,7 +315,7 @@ export const interruptedDeliver: Scenario = lifecycle({
       const unblockedAt = k.now();
       await k.addLabels(exec, n, ['pause']);
       await k.removeLabel(exec, n, 'pause');
-      await k.obs.until('I to close with delivered', (s) => k.delivered(s, exec, n), DEADLINE.delivery, show);
+      await k.obs.until('I to close with delivered', (s) => k.delivered(s, exec, n), DEADLINE.delivery, show, { gonePast: k.closeGone(exec, n) });
       const prs = await k.obs.pullsByHead(exec, branch);
       const merged = prs.find((p) => p.merged_at);
       c.check('R3.42', prs.length === 1, `${prs.length} PRs use ${branch}, expected one reused PR`);
