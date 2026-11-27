@@ -142,6 +142,19 @@ test('snapshot repositories and open Issue numbers are read from the message', (
   deepEqual(Object.fromEntries(snapshotOpenIssues(keyed, ['nibfin-e2e'])), { 'nibfin-e2e': [5] });
 });
 
+test('host-prefixed repository ids are read as repository names and agree with the open Issue reading', () => {
+  const names = ['gh-nibfin', 'nibfin-core', 'nibfin-e2e'];
+  const snap = { type: 'snapshot', result: { repos: names.map((n, i) => ({ repo: `github.com/taco3064/${n}`, issues: [{ number: i + 1 }] })) } };
+  deepEqual(snapshotRepos(snap), names);
+  deepEqual([...snapshotOpenIssues(snap, names).keys()].sort(), snapshotRepos(snap));
+  const keyed = { result: { repos: { 'github.com/taco3064/nibfin-e2e': { issues: [{ number: 5 }] } } } };
+  deepEqual(snapshotRepos(keyed), ['nibfin-e2e']);
+  deepEqual([...snapshotOpenIssues(keyed, ['nibfin-e2e']).keys()].sort(), snapshotRepos(keyed));
+  const odd = { result: { repos: [{ repo: '' }, { repo: 'github.com/taco3064/nibfin core' }, { repo: 'github.com/taco3064/' }, { repo: 'github.com/taco3064/gh-nibfin' }] } };
+  deepEqual(snapshotRepos(odd), ['gh-nibfin']);
+  deepEqual(snapshotRepos({ result: { repos: { '': {}, 'a b': {}, 'github.com/': {} } } }), []);
+});
+
 test('deploy triggers: push among several passes; manual runs beside a push run pass; a sha with only manual runs fails', () => {
   const yaml = 'name: Website\non:\n  push:\n    branches: [main]\n    paths:\n      - dashboard/**\n  workflow_dispatch:\njobs:\n  x: {}\n';
   deepEqual(workflowTriggers(yaml), { events: ['push', 'workflow_dispatch'], pushBranches: ['main'] });
