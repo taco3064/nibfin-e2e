@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { deepEqual, equal, match, ok } from 'node:assert/strict';
+import { deepEqual, equal, match, ok, rejects } from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +10,7 @@ import { hostMemoryCheck } from '../../scenarios/host-memory-check.ts';
 import { imageProvenance } from '../../scenarios/image-provenance.ts';
 import { OVERRIDE_MARKER } from '../../scenarios/lib/files.ts';
 import { issueState } from '../../scenarios/lib/fixture.ts';
+import { runFirstJob } from '../../scenarios/lib/single.ts';
 import { modelChoice } from '../../scenarios/model-choice.ts';
 import { skillLimits } from '../../scenarios/skill-limits.ts';
 import { createGitHub } from '../../src/host/github.ts';
@@ -191,18 +192,21 @@ test('skill-limits: a moved main or a merged PR fails', async () => {
   match(out.reason, /R7\.8: Nibfin commented that a review is missing \(observed: no comment\)/);
 });
 
-function modelSim(opts: { sameRunner?: boolean; failRestore?: boolean } = {}) {
+function modelSim(opts: { sameRunner?: boolean; failRestore?: boolean; peerLabels?: string[] } = {}) {
   const data = mkdtempSync(join(tmpdir(), 'e2e-model-'));
   const dir = join(data, 'nibfin', 'runners', 'claude-1');
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, '.env'), 'LANG=C.UTF-8\n');
   let restarts = 0;
   const envAtStart: string[] = [];
+  /** Each fixture's labels while its Shape Job runs, before it publishes. */
+  const labelsDuringShape = new Map<string, string[]>();
+  const during = (repo: string) => () => labelsDuringShape.set(repo, [...(sim.repo(repo).issues[0]?.labels ?? [])]);
   const sim = simulate(
     (repo) =>
       repo === EXEC
-        ? { runner: 'myhost-1a2b3c4d-claude-1', log: init('claude-sonnet-4-5'), comments: ['```e2e-probe\nmarker=e2e-override-299\nfirst_instruction_line=' + OVERRIDE_MARKER + '\n```'], labels: ['shaped'] }
-        : { runner: `myhost-1a2b3c4d-claude-${opts.sameRunner ? 1 : 2}`, log: init('claude-opus-4-5'), labels: ['shaped'] },
+        ? { runner: 'myhost-1a2b3c4d-claude-1', log: init('claude-sonnet-4-5'), comments: ['```e2e-probe\nmarker=e2e-override-299\nfirst_instruction_line=' + OVERRIDE_MARKER + '\n```'], labels: ['shaped'], during: during(repo) }
+        : { runner: `myhost-1a2b3c4d-claude-${opts.sameRunner ? 1 : 2}`, log: init('claude-opus-4-5'), labels: opts.peerLabels ?? ['shaped'], during: during(repo) },
     {
       respond: (argv) => {
         if (argv[0] !== 'systemctl') return undefined;
@@ -212,13 +216,15 @@ function modelSim(opts: { sameRunner?: boolean; failRestore?: boolean } = {}) {
     },
   );
   sim.kit.env = { XDG_DATA_HOME: data };
-  return { sim, envFile: join(dir, '.env'), envAtStart };
+  return { sim, envFile: join(dir, '.env'), envAtStart, labelsDuringShape };
 }
 
 test('model-choice: the Runner .env model applies to that Runner only, the default is Opus, and the Runner is restored', async () => {
-  const { sim, envFile, envAtStart } = modelSim();
+  const { sim, envFile, envAtStart, labelsDuringShape } = modelSim();
   const out = await modelChoice(() => sim.kit).run(ctxFor());
   equal(out.status, 'passed', out.reason);
+  // No pause while the Shape can still read it; pause only after the Shape was published.
+  deepEqual([labelsDuringShape.get(EXEC), labelsDuringShape.get(PEER)], [['scope'], ['scope']]);
   deepEqual(envAtStart, ['LANG=C.UTF-8\nNIBFIN_MODEL=sonnet\n', 'LANG=C.UTF-8\n']);
   equal(readFileSync(envFile, 'utf8'), 'LANG=C.UTF-8\n');
   equal(sim.repo(EXEC).variableValues.get('NIBFIN_MODEL'), 'haiku');
@@ -236,6 +242,26 @@ test('model-choice: both Jobs on one Runner fail saying so, and the Runner is st
   equal(out.status, 'failed');
   match(out.reason, /both Jobs landed on one Runner \(claude-1\)/);
   equal(readFileSync(envFile, 'utf8'), 'LANG=C.UTF-8\n');
+});
+
+test('model-choice: a Shape Job that ends without shaped fails fast naming it, and the Runner is still restored', async () => {
+  const { sim, envFile } = modelSim({ peerLabels: [] });
+  const out = await modelChoice(() => sim.kit).run(ctxFor());
+  equal(out.status, 'failed');
+  match(out.reason, /the Shape Job of o\/peer#\d+ ended and no shaped followed within 300 s; o\/peer#\d+ labels \[scope\]; latest comment: none/);
+  equal(/timed out/.test(out.reason), false);
+  equal(readFileSync(envFile, 'utf8'), 'LANG=C.UTF-8\n');
+  equal(sim.repo(PEER).issues[0]?.labels?.includes('pause'), false);
+  for (const r of [EXEC, PEER]) equal(sim.repo(r).issues[0]?.state, 'closed');
+});
+
+test('model-choice: a Shape that ends with pending fails at once naming it', async () => {
+  const { sim, envFile } = modelSim({ peerLabels: ['pending'] });
+  const out = await modelChoice(() => sim.kit).run(ctxFor());
+  equal(out.status, 'failed');
+  match(out.reason, /the Shape of o\/peer#\d+ ended with pending; o\/peer#\d+ labels \[scope, pending\]/);
+  equal(readFileSync(envFile, 'utf8'), 'LANG=C.UTF-8\n');
+  for (const r of [EXEC, PEER]) equal(sim.repo(r).issues[0]?.state, 'closed');
 });
 
 test('model-choice: a failed restore fails the scenario', async () => {
@@ -290,4 +316,10 @@ test('image-provenance: a single-arch image, no attestation or a failed verify f
   const unverified = registry(multiArch, [{ bundle: { dsseEnvelope: { payload: statement } } }], 1);
   const r = await imageProvenance(() => unverified.sim.kit).run(ctxFor({ nibfin: { imageDigest: unverified.digest } }));
   match(r.reason, /gh attestation verify accepts the index .*no matching attestation/);
+});
+
+test('runFirstJob: pause and pauseWhenShaped cannot be combined, and nothing is opened', async () => {
+  const sim = simulate(() => ({}));
+  await rejects(runFirstJob(sim.kit, EXEC, { title: 't', file: 'f', deadlineMs: 1000, stage: 'Shape', pause: true, pauseWhenShaped: true }), /pause and pauseWhenShaped cannot be combined/);
+  equal(sim.repo(EXEC).issues.length, 0);
 });

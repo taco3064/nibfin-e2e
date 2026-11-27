@@ -76,6 +76,13 @@ export function simulate(plan: (repo: string, issue: number) => JobPlan, extra: 
     }
     h.events.emitFor(repo, number, JSON.stringify({ ID: id, Status: 'died' }));
   }
+  // A re-reading wait advances the fake clock without yielding to setImmediate; one tick per
+  // sleep lets the simulated Job go on, as real time would.
+  const sleep = h.kit.sleep;
+  h.kit.sleep = async (ms) => {
+    await tick();
+    await sleep(ms);
+  };
   h.kit.github = createGitHub(() => 'tok', fetchFn);
   h.kit.fetch = fetchFn;
   return { ...h, runs };
