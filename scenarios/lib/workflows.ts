@@ -215,89 +215,40 @@ const BARE = 'ghcr.io/taco3064/nibfin';
 const BARE_RE = /ghcr\.io\/taco3064\/nibfin(?![\w@:/.-])/;
 
 /**
- * The workflow's lines as command lines: each trailing-`\` continuation and each folded
- * `run: >` block joined into one line.
+ * A line that only assigns the bare image name to a key or variable, `NAME: <bare>` or
+ * `NAME=<bare>`, quoted or not; keys that run or pull an image are not names.
  */
-function commandLines(text: string): string[] {
-  const out: string[] = [];
-  let cur = '';
-  let foldedAt: number | undefined;
-  for (const l of text.split(/\r?\n/)) {
-    if (foldedAt !== undefined) {
-      if (l.trim() === '' || indent(l) > foldedAt) {
-        cur += ' ' + l.trim();
-        continue;
-      }
-      out.push(cur);
-      cur = '';
-      foldedAt = undefined;
-    }
-    if (/^\s*(?:-\s+)?run:\s*>[-+1-9]*\s*(?:#.*)?$/.test(l)) {
-      out.push(cur + l);
-      cur = '';
-      foldedAt = indent(l.replace(/^(\s*)-\s+/, '$1  '));
-    } else if (/\\\s*$/.test(l)) cur += l.replace(/\\\s*$/, ' ');
-    else {
-      out.push(cur + l);
-      cur = '';
-    }
-  }
-  if (cur) out.push(cur);
-  return out;
-}
+const BARE_ASSIGNMENT = /^\s*(?:-\s+)?(?:export\s+)?([A-Za-z_][\w-]*)\s*(?::\s+|=)(["']?)ghcr\.io\/taco3064\/nibfin\2\s*(?:#.*)?$/;
+const RUNS_IMAGE = new Set(['image', 'container', 'uses', 'run', 'default']);
 
-/** The ways a workflow refers to a variable or input `name`: `$name`, `${name}`, `env.name` or `inputs.name`. */
-const refersTo = (name: string) => new RegExp(`\\$${name}(?![\\w-])|\\$\\{${name}\\}|\\b(?:env|inputs)\\.${name}(?![\\w-])`);
+/** A shell test that only compares two plain values, `[ "$a" != "$b" ]` or `[[ … == … ]]`. */
+const COMPARISON = /\[\[?\s+(?:"\$\{?[A-Za-z_]\w*\}?"|\$\{?[A-Za-z_]\w*\}?|"[^"$`\\]*"|'[^']*')\s*(?:!=|==|=)\s*(?:"\$\{?[A-Za-z_]\w*\}?"|\$\{?[A-Za-z_]\w*\}?|"[^"$`\\]*"|'[^']*')\s+\]\]?/g;
 
 /**
- * The value lines below a YAML key whose value does not start on its own line: a block
- * scalar (`KEY: |`, `KEY: >-`) or a plain scalar continued on the next, more indented
- * lines. A nested mapping or list below the key is not its value; it yields ''.
+ * Why a workflow's bare image name may be run, or undefined when it cannot be. The bare
+ * name may only be the whole value of a plain assignment (`IMAGE: <bare>`), in this file or
+ * a caller (which may pass it in), and each name so assigned may only appear in its own
+ * assignment or inside a shell test comparing plain values (as when telling older local
+ * images apart). Any other appearance (a command, an expansion, an expression, an output,
+ * a matrix value or a comment) could run it, so it fails.
  */
-function continuation(lines: string[], at: number, m: RegExpMatchArray): string {
-  const line = lines[at] as string;
-  const rest = line.slice((m.index ?? 0) + m[0].length);
-  if (!m[0].endsWith(':') || !/^\s*(?:[|>][-+1-9]*)?\s*(?:#.*)?$/.test(rest)) return '';
-  const block = /[|>]/.test(rest);
-  const value: string[] = [];
-  for (let j = at + 1; j < lines.length; j++) {
-    const l = lines[j] as string;
-    if (l.trim() === '') continue;
-    if (indent(l) <= indent(line)) break;
-    if (!block && !value.length && /^\s*(?:-\s|[\w"'-]+\s*:(?:\s|$))/.test(l)) return '';
-    value.push(l.trim());
-  }
-  return ' ' + value.join(' ');
-}
-
-/**
- * The names that may hold the bare image name, read across a workflow and the files that
- * call it: every key or variable assigned a value that holds the bare name or refers to
- * another such name, whatever follows it (so `$IMAGE:tag` or `$IMAGE@…` holds it too), and
- * the input an assigned `default:` belongs to.
- */
-function bareVariables(texts: string[]): string[] {
-  const lines = texts.flatMap((t) => t.split(/\r?\n/));
+function bareUse(text: string, callerTexts: string[]): string | undefined {
+  const lines = text.split(/\r?\n/);
   const names = new Set<string>();
-  const holds = (value: string) => BARE_RE.test(value) || [...names].some((n) => refersTo(n).test(value));
-  for (let size = -1; size !== names.size; ) {
-    size = names.size;
-    lines.forEach((l, i) => {
-      for (const m of l.matchAll(/([A-Za-z_][\w-]*)\s*[:=]/g)) {
-        if (!holds(l.slice((m.index ?? 0) + m[0].length) + continuation(lines, i, m))) continue;
-        names.add(m[1] as string);
-        if (m[1] !== 'default') continue;
-        for (let j = i - 1; j >= 0; j--) {
-          const parent = /^\s*([A-Za-z_][\w-]*):\s*$/.exec(lines[j] as string);
-          if (parent && indent(lines[j] as string) < indent(l)) {
-            names.add(parent[1] as string);
-            break;
-          }
-        }
-      }
-    });
+  for (const l of [text, ...callerTexts].flatMap((t) => t.split(/\r?\n/))) {
+    const m = BARE_ASSIGNMENT.exec(l);
+    if (m && !RUNS_IMAGE.has(m[1] as string)) names.add(m[1] as string);
   }
-  return [...names];
+  for (const l of lines) {
+    const m = BARE_ASSIGNMENT.exec(l);
+    if (m && names.has(m[1] as string)) continue;
+    if (BARE_RE.test(l)) return 'run without a digest';
+    const rest = l.replace(COMPARISON, ' ');
+    for (const n of names) {
+      if (new RegExp(`(?<![\\w-])${n}(?![\\w-])`).test(rest)) return 'run without a digest';
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -305,15 +256,15 @@ function bareVariables(texts: string[]): string[] {
  * A reference with a digest must be `ghcr.io/taco3064/nibfin@<digest>`; any other
  * reference fails except the bare `ghcr.io/taco3064/nibfin`, which passes only when the
  * expected digest appears in this file or in a file that calls it (`callerTexts`), and
- * the bare name (literally or through a variable or input holding it) is never pulled, run or
- * created by podman or another container tool, nor used as an `image:`, `container:` or
- * `docker://` image.
+ * the bare name is only assigned and compared, never used in a way that could run it
+ * (see `bareUse`): so it is never pulled, run or created by podman, directly or through
+ * its variable, nor used as an `image:`, `container:` or `docker://` image.
  */
 export function unpinnedImages(text: string, digest: string, callerTexts: string[] = []): { ref: string; why?: string }[] {
   const pinned = `${BARE}@${digest}`;
   const out: { ref: string; why?: string }[] = [];
   const refs = new Set(readWorkflow(text).images);
-  // A caller may pass the bare name in as an input, so this file must not run it either.
+  // A caller may pass the bare name in as an input, so this file is checked for it too.
   if (callerTexts.some((t) => BARE_RE.test(t))) refs.add(BARE);
   for (const ref of refs) {
     if (ref === pinned) continue;
@@ -325,19 +276,8 @@ export function unpinnedImages(text: string, digest: string, callerTexts: string
       out.push({ ref, why: 'with no expected digest in the file or its caller' });
       continue;
     }
-    const vars = bareVariables([text, ...callerTexts]);
-    const viaVar = (s: string) => vars.some((v) => refersTo(v).test(s));
-    const podman = commandLines(text).some((l) => {
-      // Any container tool, with any options before its run, pull or create.
-      const m = /\b(?:podman|docker|nerdctl)\b.*?\b(?:run|pull|create)\b/.exec(l);
-      // The whole command line counts, so an image piped or fed into the command is seen too.
-      return !!m && (BARE_RE.test(l) || viaVar(l));
-    });
-    const declared = text.split(/\r?\n/).some((l) => {
-      const m = /^\s*(?:-\s+)?(?:image|container|uses):\s*["']?(?:docker:\/\/)?(.*?)["']?\s*$/.exec(l);
-      return !!m && (BARE_RE.test(m[1] as string) || viaVar(m[1] as string));
-    });
-    if (podman || declared) out.push({ ref, why: 'run without a digest' });
+    const why = bareUse(text, callerTexts);
+    if (why) out.push({ ref, why });
   }
   return out;
 }
