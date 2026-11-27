@@ -137,7 +137,7 @@
   {"id": "R5.15", "platforms": ["linux"], "scenarios": ["runner-add-setup"]},
   {"id": "R5.16", "platforms": ["macos", "windows"], "scenarios": ["runner-remove"]},
   {"id": "R5.17", "platforms": ["linux", "macos", "windows"], "scenarios": []},
-  {"id": "R5.70", "platforms": ["linux"], "scenarios": []},
+  {"id": "R5.70", "platforms": ["linux"], "scenarios": ["delivery-lifecycle"]},
   {"id": "R5.71", "notE2e": "e2e 的 execution 沙盒 Repository 是 public（R8.19）"},
   {"id": "R5.72", "platforms": ["linux"], "scenarios": ["delivery-lifecycle", "interrupted-deliver"]},
   {"id": "R5.73", "notE2e": "e2e 的 execution 沙盒 Repository 是 public（R8.19）"},

@@ -17,15 +17,17 @@ import {
   markerOf,
   pushWakeSha,
   pushesWithin,
+  routePodmanProblems,
   sameIssueOverlaps,
   time,
 } from './analysis.ts';
 import type { Activity, Window } from './analysis.ts';
 import { holdJourney, journey } from './journeys.ts';
-import { DEADLINE, finishAt, finishRunProblems, finishSeen, lifecycle } from './kit.ts';
+import { DEADLINE, finishAt, hostedRunProblems, stageSeen, lifecycle } from './kit.ts';
 import type { Kit } from './kit.ts';
 import { ACCEPT_END, ACCEPT_START, BLOCKER_REPORT, NO_ASSIGNEE_REPORT, SHAPE_MARKER, VALIDATOR_VERDICT } from './marks.ts';
 import type { Snapshot } from './observe.ts';
+import { IMAGE } from '../lib/observed-facts.ts';
 import { closingProblems } from './phase1.ts';
 
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -55,7 +57,7 @@ async function validatorProblems(k: Kit, s: Snapshot, repo: string, n: number, a
 export const deliveryLifecycle: Scenario = lifecycle({
   id: 'delivery-lifecycle',
   concurrent: true,
-  rules: ['R1.11', 'R3.13', 'R3.15', 'R3.16', 'R3.17', 'R3.19', 'R3.22', 'R3.23', 'R3.24', 'R3.25', 'R3.31', 'R3.33', 'R3.34', 'R3.35', 'R3.36', 'R4.7', 'R4.9', 'R4.10', 'R4.18', 'R4.34', 'R4.35', 'R5.7', 'R5.72', 'R5.74', 'R6.5'],
+  rules: ['R1.11', 'R3.13', 'R3.15', 'R3.16', 'R3.17', 'R3.19', 'R3.22', 'R3.23', 'R3.24', 'R3.25', 'R3.31', 'R3.33', 'R3.34', 'R3.35', 'R3.36', 'R4.7', 'R4.9', 'R4.10', 'R4.18', 'R4.34', 'R4.35', 'R5.7', 'R5.70', 'R5.72', 'R5.74', 'R6.5'],
   async run(k) {
     const j = await journey(k);
     const c = new Checks();
@@ -167,26 +169,39 @@ export const deliveryLifecycle: Scenario = lifecycle({
     const offHost = agentJobs.filter((x) => x.runner_name && (!sandboxRunners.includes(x.runner_name) || !x.labels.includes(label)));
     c.check('R5.7', agentJobs.length > 0 && offHost.length === 0, `A's agent jobs ran outside the sandbox's Runners (${sandboxRunners.join(', ')}) with ${label}: ${offHost.map((x) => describeJob(x.run, x)).join('; ') || 'A has no agent jobs'}`);
 
+    // R5.70, R5.7: on the public sandbox A's route jobs ran GitHub-hosted, on none of its Runners,
+    // and ran the image under Podman. Route runs no runner took (cancelled or skipped) are ignored.
+    const route = await k.windowedJobs(s, exec, n, ['route']);
+    const ran = route.filter((x) => x.window);
+    c.check('R5.70', ran.length > 0, `A has no route job a runner took; ${route.length ? stageSeen(route, 'route') : 'A had no route run'}`);
+    const routeProblems = hostedRunProblems(route, sandboxRunners);
+    c.none('R5.70', routeProblems);
+    c.none('R5.7', routeProblems);
+    // A job log is complete only once the job is; a route job still running is judged by placement alone.
+    const done = ran.filter((x) => x.status === 'completed');
+    c.check('R5.70', ran.length === 0 || done.length > 0, `none of A's route jobs a runner took has completed, so no log shows the image under Podman; ${stageSeen(ran, 'route')}`);
+    for (const x of done) c.none('R5.70', routePodmanProblems(x.run, x, await k.obs.log(exec, x.id), IMAGE));
+
     // R5.72, R5.74: no finish job of A ran on a self-hosted or sandbox Runner (so none started an agent).
     const finish = await k.finishJobs(s, exec, n);
-    const finishProblems = finishRunProblems(finish, sandboxRunners);
+    const finishProblems = hostedRunProblems(finish, sandboxRunners);
     c.none('R5.72', finishProblems);
     c.none('R5.74', finishProblems.map((p) => `the finish Job runs no agent, but ${p}`));
 
     // R5.74 closing clause: the close, `delivered` and the closing comment happen inside a hosted finish job.
     const closer = finishAt(finish, closedAt);
-    c.check('R5.74', !!closer, `A has no hosted finish job whose window contains its close ${String(a?.closed_at)}; ${finishSeen(finish)}`);
+    c.check('R5.74', !!closer, `A has no hosted finish job whose window contains its close ${String(a?.closed_at)}; ${stageSeen(finish)}`);
     const anyCloser = finishAt(finish, closedAt, false);
     for (const rule of ['R5.72', 'R5.7'] as const) {
-      c.check(rule, !!anyCloser && githubHosted(anyCloser), anyCloser ? `the finish job that closed A did not run GitHub-hosted: ${describeJob(anyCloser.run, anyCloser)}` : `no finish job's window contains A's close ${String(a?.closed_at)}; ${finishSeen(finish)}`);
+      c.check(rule, !!anyCloser && githubHosted(anyCloser), anyCloser ? `the finish job that closed A did not run GitHub-hosted: ${describeJob(anyCloser.run, anyCloser)}` : `no finish job's window contains A's close ${String(a?.closed_at)}; ${stageSeen(finish)}`);
     }
     const deliveredAt = await k.labeledAt(exec, n, 'delivered');
-    c.check('R5.74', deliveredAt !== undefined && !!finishAt(finish, deliveredAt), `\`delivered\` was added to A at ${deliveredAt === undefined ? 'no time seen' : iso(deliveredAt)}, outside every hosted finish job; ${finishSeen(finish)}`);
+    c.check('R5.74', deliveredAt !== undefined && !!finishAt(finish, deliveredAt), `\`delivered\` was added to A at ${deliveredAt === undefined ? 'no time seen' : iso(deliveredAt)}, outside every hosted finish job; ${stageSeen(finish)}`);
     const closing = (await k.obs.comments(exec, n)).filter((x) => markerOf(x.body)).at(-1);
     if (!closing) c.fail('R5.74', 'A has no marked closing comment');
     else {
       for (const at of new Set([closing.created_at, closing.updated_at])) {
-        c.check('R5.74', !!finishAt(finish, time(at)), `the closing comment ${closing.html_url} was written at ${at}, outside every hosted finish job; ${finishSeen(finish)}`);
+        c.check('R5.74', !!finishAt(finish, time(at)), `the closing comment ${closing.html_url} was written at ${at}, outside every hosted finish job; ${stageSeen(finish)}`);
       }
     }
 
@@ -290,7 +305,7 @@ export const blockedByChain: Scenario = lifecycle({
       // R5.74: the upstream's delivered close came from a hosted finish job, and the downstream woke after it.
       const upFinish = await k.finishJobs(s, exec, up);
       const closer = finishAt(upFinish, upClosed);
-      c.check('R5.74', !!closer, `${upName} (#${up}) has no hosted finish job whose window contains its close ${String(k.issue(s, exec, up)?.closed_at)}; ${finishSeen(upFinish)}`);
+      c.check('R5.74', !!closer, `${upName} (#${up}) has no hosted finish job whose window contains its close ${String(k.issue(s, exec, up)?.closed_at)}; ${stageSeen(upFinish)}`);
       const woken = k.stages(s, exec, n).filter((r) => time(r.created_at) >= upClosed);
       const seen = k.stages(s, exec, n).map((r) => `${r.display_title} (${r.id}) ${r.stage} ${r.created_at}`).join(', ') || 'none';
       const by = closer ? `${closer.run.display_title} (run ${closer.run.id}) job ${closer.name} (${closer.id})` : 'no hosted finish job';
