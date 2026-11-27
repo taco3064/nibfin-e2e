@@ -554,3 +554,28 @@ export function lightProblem(name: string, lightText: string, state: 'good' | 'b
   if (state === 'bad' && !bad) return `${name}: status is not good but the light says "${lightText.slice(0, 80)}"`;
   return undefined;
 }
+
+/** How a view header marks its updates (Proposal R9.8). */
+export type UpdateMarker = 'live' | 'manual' | 'neither' | 'both';
+
+/** An element that says the view updates automatically: exactly `Live`. */
+export const LIVE_MARKER = /^live$/i;
+/** The Dashboard's manual and live-off wording, matched exactly. */
+export const MANUAL_MARKER = /^(updates on refresh|live updates off)$/i;
+/** Earlier manual wording, matched anywhere in an element's text. */
+export const MANUAL_WORDING = /manual|refresh manually|not live|paused updates/i;
+
+/**
+ * Sorts a header's markers (Proposal R9.8). Each item is the visible text of one element;
+ * control text such as `Refresh`, tab names or freshness text is neither marker.
+ */
+export function classifyUpdateMarker(texts: string[]): UpdateMarker {
+  let live = false;
+  let manual = false;
+  for (const raw of texts) {
+    const t = raw.replace(/\s+/g, ' ').trim();
+    if (LIVE_MARKER.test(t)) live = true;
+    else if (MANUAL_MARKER.test(t) || MANUAL_WORDING.test(t)) manual = true;
+  }
+  return live ? (manual ? 'both' : 'live') : manual ? 'manual' : 'neither';
+}
