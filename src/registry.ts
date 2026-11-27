@@ -19,6 +19,7 @@ import { initFiles } from '../scenarios/management/init-files.ts';
 import { initSettings } from '../scenarios/management/init-settings.ts';
 import { confirmPreview, pauseResume } from '../scenarios/management/labels.ts';
 import { loginCommand } from '../scenarios/management/login-command.ts';
+import { podmanMachineDetached } from '../scenarios/management/podman-machine-detached.ts';
 import { runnerAddSetup } from '../scenarios/management/runner-add-setup.ts';
 import { runnerAddLogin } from '../scenarios/management/runner-add-login.ts';
 import { runnerRemove } from '../scenarios/management/runner-remove.ts';
@@ -50,6 +51,8 @@ export const scenarios: Scenario[] = [
   runnerAddSetup,
   // Right after runner-add-setup: only this host's Runners are registered and nothing has changed them yet.
   hostRequirements((ctx) => createKit(services, ctx)),
+  // Alone, before the delivery scenarios and with no fixture Job running: stops and restarts the Windows podman machine.
+  podmanMachineDetached,
   initSettings,
   initFiles,
   imageDigest,
