@@ -58,6 +58,51 @@ test('config-rejections: a case whose comment misses an item, or where an agent 
   equal(/R7\.10/.test(out.reason), false);
 });
 
+const caseIndex = (name: string) => CASES.findIndex((k) => k.name === name);
+const R77 = CASES.flatMap((k, i) => (k.rule === 'R7.7' ? [i] : []));
+
+test('config-rejections: an R7.7 case passes when its comment names only the rejected path, not .nibfin.json', async () => {
+  equal(R77.length, 3);
+  let n = 0;
+  const sim = simulate(() => {
+    const i = n++;
+    if (R77.includes(i)) return { labels: ['pending'], comments: [`CONFIG_INVALID: skill path ${CASES[i]?.names.join(', ')} was rejected.`], log: '2026-11-26T00:00:00Z CONFIG_INVALID\n' };
+    return { labels: ['pending'], comments: [`.nibfin.json ${ALL_NAMES}`], log: '' };
+  });
+  const out = await configRejections(() => sim.kit).run(ctxFor());
+  equal(out.status, 'passed', out.reason);
+});
+
+test('config-rejections: an R7.7 case whose comment names .nibfin.json but not its path fails naming the path', async () => {
+  const target = caseIndex('path outside the workspace');
+  let n = 0;
+  const sim = simulate(() => {
+    const i = n++;
+    if (i === target) return { labels: ['pending'], comments: ['CONFIG_INVALID: .nibfin.json has an invalid skill path'], log: '' };
+    return { labels: ['pending'], comments: [`.nibfin.json ${ALL_NAMES}`], log: '' };
+  });
+  const out = await configRejections(() => sim.kit).run(ctxFor());
+  equal(out.status, 'failed');
+  match(out.reason, /R7\.7: path outside the workspace: the comment names \.\.\/outside\.md \(observed: missing \.\.\/outside\.md\)/);
+  equal(/R7\.7: (symlink escape|missing file)/.test(out.reason), false);
+});
+
+test('config-rejections: a non-R7.7 case whose comment lacks .nibfin.json still fails', async () => {
+  const syntax = caseIndex('JSON syntax error');
+  const domains = caseIndex('removed allowedDomains');
+  let n = 0;
+  const sim = simulate(() => {
+    const i = n++;
+    if (i === syntax) return { labels: ['pending'], comments: ['CONFIG_INVALID: unexpected end of JSON input'], log: '' };
+    if (i === domains) return { labels: ['pending'], comments: ['CONFIG_INVALID: allowedDomains was removed'], log: '' };
+    return { labels: ['pending'], comments: [`.nibfin.json ${ALL_NAMES}`], log: '' };
+  });
+  const out = await configRejections(() => sim.kit).run(ctxFor());
+  equal(out.status, 'failed');
+  match(out.reason, /R7\.2: JSON syntax error: the comment names \.nibfin\.json \(observed: missing \.nibfin\.json\)/);
+  match(out.reason, /R7\.4: removed allowedDomains: the comment names \.nibfin\.json, allowedDomains \(observed: missing \.nibfin\.json\)/);
+});
+
 const failureLog = (n: number, extra = '') =>
   [
     `2026-11-26T00:00:00Z Nibfin image: ghcr.io/taco3064/nibfin@${DIGEST}`,
