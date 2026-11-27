@@ -39,6 +39,51 @@ resolved it).
 Exit codes: `2` usage or validation error, `1` a scenario or a teardown failed
 or the `--all` gate did not pass, `0` otherwise.
 
+`--plan <path>` runs the selection of a gate plan (below) instead of
+`--all`/`--rule`/`--section`. A scenario whose selected rules are all waiting is
+reported `waiting` and not run. A step or scenario held back by a required step
+names it in `blockedBy`, and `meta.runner` records `RUNNER_NAME`.
+
+## Gate
+
+`npm run gate -- <subcommand>` decides what to rerun and files `request` Issues
+in this repository for what the Scope stage or a person must judge. No agent
+runs in it and it never reads the Proposal. Each subcommand prints one JSON
+document to stdout (with a Markdown `summary` for `$GITHUB_STEP_SUMMARY`) and
+writes no file.
+
+- `select --delivered <owner/repo>#<n>` (nibfin-core or gh-nibfin), `select --rule …
+  --section …` or `select --all`: prints the plan. A delivered Issue selects the
+  ids of its approved Shape's `Proposal rules:` line; a Shape without the line,
+  with a malformed line, or no single Shape falls back to the `R` ids, ranges and
+  `§` sections under the Issue's `## Authority`, and the decisions say so. An
+  Issue not closed with `delivered` selects nothing. A rule cited by an open
+  `scope` Issue in nibfin-core or gh-nibfin is `waiting`. Selected rules without a
+  scenario are `gaps`; other uncovered rules (every one in `--all`) are
+  `unselectedGaps` and only listed.
+- `report --plan <path> --results <dir>`: reads every `*.json` result under
+  `<dir>` (validated against the registry and the map; anything else counts as no
+  result) and the run's jobs, then files one request per root failure
+  (`Scenario failed: <id>`, `Provisioning failed: <step>`, `Teardown failed:
+  <step>`, merged across legs), per failed, cancelled or timed-out job without a
+  result (`Job failed: <job>`) and per plan gap (`Coverage gap: <rule>`).
+- `proposal-updated`: reads the `repository_dispatch` event (`client_payload`:
+  `page_id`, `block_ids`, ISO-8601 `timestamp`) and creates or comments on the
+  open request titled `Proposal updated`, whose body keeps the earliest and latest
+  event times and the previous handled update's time.
+
+Every request is created with `NIBFIN_GITHUB_TOKEN` (so it wakes Nibfin),
+labelled `request`, assigned to the token's account and read back. An open
+request with the same title is reused with one comment per run; a hidden
+`<!-- nibfin-e2e:run <id> -->` marker makes a re-run attempt skip what it already
+wrote. `report` and `proposal-updated` need `GITHUB_RUN_ID`, `GITHUB_SERVER_URL`
+and `GITHUB_REPOSITORY` (`taco3064/nibfin-e2e`); `proposal-updated` also needs
+`GITHUB_EVENT_PATH`.
+
+Exit codes: `2` usage or input error (no write), `1` a failure was found, a write
+or read-back failed, or the coverage check failed, `0` otherwise. The harness
+never reads `NIBFIN_GITHUB_TOKEN` and drops it from every child's environment.
+
 ## Host provisioning
 
 Execution runs on a fresh GitHub-hosted runner (`ubuntu-24.04` or
