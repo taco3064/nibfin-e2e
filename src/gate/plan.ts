@@ -9,7 +9,7 @@ import { authorityCitations } from './citations.ts';
 import { decisionTable } from './decisions.ts';
 import type { Decision } from './decisions.ts';
 import { readImpact } from './impact.ts';
-import type { ImpactSource, IssueRef } from './impact.ts';
+import type { ChangeContext, ImpactSource, IssueRef } from './impact.ts';
 
 export type PlanRequest =
   | { mode: 'delivered'; ref: IssueRef }
@@ -68,13 +68,16 @@ async function openScopeCitations(gh: GitHub, entries: MapEntry[]): Promise<Map<
 
 export type PlanOutcome = { plan: Plan } | { usage: string[] };
 
-/** Decides what to rerun from GitHub state; the result is printed as one JSON document. */
-export async function makePlan(gh: GitHub, entries: MapEntry[], scenarios: Scenario[], request: PlanRequest): Promise<PlanOutcome> {
+/**
+ * Decides what to rerun from GitHub state; the result is printed as one JSON document.
+ * `sources` reads the checkout's `scenarios/**` files for a nibfin-e2e Issue's changed scenarios.
+ */
+export async function makePlan(gh: GitHub, entries: MapEntry[], scenarios: Scenario[], request: PlanRequest, sources: ChangeContext['sources'] = () => []): Promise<PlanOutcome> {
   const decisions: Decision[] = [];
   let source: ImpactSource | null = null;
   let ids: RuleId[];
   if (request.mode === 'delivered') {
-    const impact = await readImpact(gh, request.ref, entries);
+    const impact = await readImpact(gh, request.ref, entries, { scenarios, sources });
     source = impact.source;
     ids = impact.ids;
     decisions.push(...impact.decisions);

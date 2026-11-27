@@ -1,6 +1,8 @@
-import { SHAPE_MARKER, WATCHED_REPOS } from '../host/config.ts';
+import { DELIVERED_REPOS, E2E_REPO, SHAPE_MARKER } from '../host/config.ts';
 import type { GitHub } from '../host/github.ts';
-import type { MapEntry, RuleId } from '../types.ts';
+import type { MapEntry, RuleId, Scenario } from '../types.ts';
+import { readChanges } from './changes.ts';
+import type { SourceFile } from './changes.ts';
 import { authorityCitations, parseShapeLine } from './citations.ts';
 import type { Decision } from './decisions.ts';
 
@@ -11,12 +13,12 @@ export interface IssueRef {
 
 const REF = /^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#([1-9]\d*)$/;
 
-/** Parses `<owner/repo>#<n>`; the repository must be one the gate watches. */
+/** Parses `<owner/repo>#<n>`; the repository must be one whose delivered Issues select a rerun. */
 export function parseIssueRef(text: string): IssueRef | { error: string } {
   const m = REF.exec(text);
   if (!m) return { error: `--delivered ${text}: expected <owner/repo>#<n>` };
-  if (!WATCHED_REPOS.includes(m[1] as string)) {
-    return { error: `--delivered ${text}: the repository must be one of ${WATCHED_REPOS.join(', ')}` };
+  if (!DELIVERED_REPOS.includes(m[1] as string)) {
+    return { error: `--delivered ${text}: the repository must be one of ${DELIVERED_REPOS.join(', ')}` };
   }
   return { repo: m[1] as string, number: Number(m[2]) };
 }
@@ -33,6 +35,15 @@ export interface ImpactSource {
   malformed?: string;
   /** Set when the selection fell back to the Issue's `## Authority` citations. */
   fallback?: { ids: RuleId[]; sections: number[] };
+  /** For a nibfin-e2e Issue, the merged pull requests whose changed files were read. */
+  pulls?: string[];
+}
+
+/** What a nibfin-e2e Issue's changed files are matched against. */
+export interface ChangeContext {
+  scenarios: Scenario[];
+  /** The checkout's `scenarios/**` files; read only when a changed file is under `scenarios/`. */
+  sources: () => SourceFile[];
 }
 
 interface Issue {
@@ -53,10 +64,11 @@ const labelNames = (issue: Issue) => (issue.labels ?? []).map((l) => (typeof l =
 
 /**
  * The rules a delivered Issue affects: the approved Shape's `Proposal rules:` line, or,
- * without a usable line, the Issue's `## Authority` citations. Everything is read from
- * GitHub now, so a stale or repeated dispatch selects from the current state (Proposal R1.11).
+ * without a usable line, the Issue's `## Authority` citations. A nibfin-e2e Issue adds the
+ * rules its merged pull requests' changed files affect (`readChanges`). Everything is read
+ * from GitHub now, so a stale or repeated dispatch selects from the current state (Proposal R1.11).
  */
-export async function readImpact(gh: GitHub, ref: IssueRef, entries: MapEntry[]): Promise<{ source: ImpactSource; ids: RuleId[]; decisions: Decision[] }> {
+export async function readImpact(gh: GitHub, ref: IssueRef, entries: MapEntry[], changes?: ChangeContext): Promise<{ source: ImpactSource; ids: RuleId[]; decisions: Decision[] }> {
   const name = `${ref.repo}#${ref.number}`;
   const { data: issue } = await gh.rest<Issue>('GET', `/repos/${ref.repo}/issues/${ref.number}`);
   const url = issue.html_url ?? `https://github.com/${ref.repo}/issues/${ref.number}`;
@@ -109,6 +121,13 @@ export async function readImpact(gh: GitHub, ref: IssueRef, entries: MapEntry[])
       decision: 'fell back to the Issue\'s ## Authority',
       reason: cited.ids.length ? `cited: ${cited.ids.join(', ')}${cited.sections.length ? ` (sections ${cited.sections.map((s) => `§${s}`).join(', ')})` : ''}` : 'it cites no rule or section',
     });
+  }
+  if (ref.repo === E2E_REPO && changes) {
+    const changed = await readChanges(gh, ref, changes.scenarios, changes.sources);
+    source.pulls = changed.pulls;
+    decisions.push(...changed.decisions);
+    ids = [...ids];
+    for (const id of [...changed.ids, ...(changed.all ? entries.map((e) => e.id) : [])]) if (!ids.includes(id)) ids.push(id);
   }
   return { source, ids, decisions };
 }

@@ -1,6 +1,7 @@
 import { deepEqual, equal, match } from 'node:assert/strict';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import type { SourceFile } from '../../src/gate/changes.ts';
 import { main, readResultFiles } from '../../src/gate/cli.ts';
 import type { Env } from '../../src/host/exec.ts';
 import { map, scenarios } from '../fixtures.ts';
@@ -8,7 +9,7 @@ import { FakeGate } from './fake.ts';
 
 const base: Env = { NIBFIN_GITHUB_TOKEN: 'owner-secret', GITHUB_RUN_ID: '7', GITHUB_SERVER_URL: 'https://github.com', GITHUB_REPOSITORY: 'taco3064/nibfin-e2e', GITHUB_EVENT_PATH: 'event.json' };
 
-async function gate(argv: string[], opts: { env?: Env; files?: Record<string, string>; gh?: FakeGate } = {}) {
+async function gate(argv: string[], opts: { env?: Env; files?: Record<string, string>; gh?: FakeGate; sources?: SourceFile[] } = {}) {
   const gh = opts.gh ?? new FakeGate();
   gh.runs.set('7', { created_at: '2026-11-27T09:00:00Z', run_attempt: 1 });
   let stdout = '';
@@ -26,6 +27,7 @@ async function gate(argv: string[], opts: { env?: Env; files?: Record<string, st
       return text;
     },
     readResults: () => [],
+    sources: () => opts.sources ?? [],
     stdout: (t) => (stdout += t),
     stderr: (t) => (stderr += t),
   });
@@ -66,6 +68,16 @@ test('select prints the plan and uses the Owner token only through the GitHub cl
   deepEqual(r.json.selection, { all: false, rules: ['R5.13', 'R5.14'] });
   deepEqual(r.tokens, ['owner-secret']);
   deepEqual(r.gh.writes, []);
+});
+
+test('select --delivered for a nibfin-e2e Issue maps its changed scenario files through the checkout', async () => {
+  const gh = new FakeGate();
+  gh.addIssue('taco3064/nibfin-e2e', { title: 'fix', state: 'closed', labels: ['delivered'], comments: [{ body: '<!-- nibfin:shape -->\nProposal rules: none', user: 'taco3064', updated_at: '2026-11-26T00:00:00Z', html_url: 's' }] });
+  gh.addPull('taco3064/nibfin-e2e', { number: 9, head: 'nibfin/issue-1', files: [{ filename: 'scenarios/x.ts', status: 'modified' }] });
+  const r = await gate(['select', '--delivered', 'taco3064/nibfin-e2e#1'], { gh, sources: [{ path: 'scenarios/x.ts', text: "export const b = { id: 'b' };" }] });
+  equal(r.code, 0);
+  deepEqual(r.json.selection, { all: false, rules: ['R3.2', 'R5.13'] });
+  deepEqual(r.json.source.pulls, ['https://github.com/taco3064/nibfin-e2e/pull/9']);
 });
 
 test('report and proposal-updated exit 1 on a failure and 0 when all is well', async () => {

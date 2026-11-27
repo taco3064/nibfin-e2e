@@ -52,8 +52,11 @@ export function requireEnv(env: Env, name: SecretName): string {
 /** The gate's own repository, where `request` Issues are filed (Proposal R8.20). */
 export const E2E_REPO = 'taco3064/nibfin-e2e';
 
-/** Repositories whose delivered Issues select a rerun and whose open `scope` Issues mark rules waiting. */
+/** Repositories whose open `scope` Issues mark rules waiting: the Proposal is ahead of their implementation. */
 export const WATCHED_REPOS: readonly string[] = ['taco3064/nibfin-core', 'taco3064/gh-nibfin'];
+
+/** Repositories whose delivered Issues select a rerun: the watched ones and the gate's own. */
+export const DELIVERED_REPOS: readonly string[] = [...WATCHED_REPOS, E2E_REPO];
 
 /** The first line of an approved Shape comment. */
 export const SHAPE_MARKER = '<!-- nibfin:shape -->';

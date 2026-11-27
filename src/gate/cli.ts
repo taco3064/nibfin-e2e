@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { crossCheck, loadMap, validateRegistry } from '../coverage.ts';
 import { E2E_REPO, requireEnv } from '../host/config.ts';
@@ -8,6 +9,7 @@ import { createGitHub } from '../host/github.ts';
 import type { GitHub } from '../host/github.ts';
 import { select } from '../select.ts';
 import type { MapEntry, ProvisioningStep, Scenario } from '../types.ts';
+import type { SourceFile } from './changes.ts';
 import { parseIssueRef } from './impact.ts';
 import { makePlan } from './plan.ts';
 import type { PlanRequest } from './plan.ts';
@@ -25,6 +27,8 @@ export interface GateDeps {
   readFile(path: string): string;
   /** Every `*.json` file under a directory, recursively. */
   readResults(dir: string): ResultFile[];
+  /** The checkout's `scenarios/**` `*.ts` files, by repository path; read only for a nibfin-e2e Issue's changed scenarios. */
+  sources(): SourceFile[];
   stdout(text: string): void;
   stderr(text: string): void;
 }
@@ -89,7 +93,7 @@ export async function main(argv: string[], deps: GateDeps): Promise<number> {
     }
     if (usage.length || !request || token === undefined) return fail('usage', usage);
     try {
-      const out = await makePlan(gh(), map.entries, deps.scenarios, request);
+      const out = await makePlan(gh(), map.entries, deps.scenarios, request, () => deps.sources());
       if ('usage' in out) return fail('usage', out.usage);
       print(out.plan);
       return 0;
@@ -181,6 +185,15 @@ export function readResultFiles(dir: string): ResultFile[] {
     });
 }
 
+/** Every `*.ts` under `<root>/scenarios/`, with paths relative to `root` and `/` separators. */
+export function readScenarioSources(root: string): SourceFile[] {
+  const dir = join(root, 'scenarios');
+  return readdirSync(dir, { recursive: true, encoding: 'utf8' })
+    .filter((n) => n.endsWith('.ts'))
+    .sort()
+    .map((n) => ({ path: relative(root, join(dir, n)).split(sep).join('/'), text: readFileSync(join(dir, n), 'utf8') }));
+}
+
 if (import.meta.main) {
   const { scenarios, provisioning } = await import('../registry.ts');
   process.exitCode = await main(process.argv.slice(2), {
@@ -191,6 +204,7 @@ if (import.meta.main) {
     steps: provisioning,
     readFile: (path) => readFileSync(path, 'utf8'),
     readResults: readResultFiles,
+    sources: () => readScenarioSources(fileURLToPath(new URL('../..', import.meta.url))),
     stdout: (t) => process.stdout.write(t),
     stderr: (t) => process.stderr.write(t),
   });
