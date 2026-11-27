@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { IMAGE_DIGEST, KNOWN_VISIBILITY, SANDBOX } from './host/config.ts';
+import { MAX_REASON } from './gate/file.ts';
 import { mustRun } from './host/exec.ts';
 import type { ExecResult } from './host/exec.ts';
 import { installGhNibfin } from './host/ghnibfin.ts';
@@ -18,7 +19,26 @@ import { createKit } from '../scenarios/lib/kit.ts';
 import { runObservedJob } from '../scenarios/lib/observed.ts';
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const tail = (r: ExecResult) => (r.stderr.trim() || r.stdout.trim()).slice(-4000);
+
+/** Room the output leaves in a filed reason for the command and step prefixes, so `cap` never cuts its end. */
+export const OUTPUT_BUDGET = MAX_REASON - 500;
+
+/** The end of `text` in at most `max` characters, marked with `…` at the front when cut. */
+const lastOf = (text: string, max: number) => (text.length <= max ? text : `…${text.slice(text.length - max + 1)}`);
+
+/**
+ * The output a failed command adds to its reason (Proposal R1.14): both streams, each keeping its end.
+ * A stream alone is shown unlabelled. When both have text each gets half the budget, and a stream
+ * shorter than its half gives the rest to the other. Returns '' when neither stream has text.
+ */
+export function outputOf(r: ExecResult, budget = OUTPUT_BUDGET): string {
+  const stderr = r.stderr.trim();
+  const stdout = r.stdout.trim();
+  if (!stderr || !stdout) return lastOf(stderr || stdout, budget);
+  const room = budget - 'stderr: \nstdout: '.length;
+  const err = lastOf(stderr, room - Math.min(stdout.length, Math.floor(room / 2)));
+  return `stderr: ${err}\nstdout: ${lastOf(stdout, room - err.length)}`;
+}
 
 /** Resets both sandboxes and reads them back; throws listing what is left. */
 async function resetBoth(host: HostServices, ctx: RunContext): Promise<string> {
@@ -100,12 +120,12 @@ export async function readPeriodicBaseline(run: HostRun, host: Pick<HostServices
   }
   const start = await host.exec(['podman', 'machine', 'start']);
   if (start.code !== 0) {
-    before.vm = { error: `podman machine start exited ${start.code}: ${tail(start) || 'no output'}` };
+    before.vm = { error: `podman machine start exited ${start.code}: ${outputOf(start) || 'no output'}` };
     return;
   }
   before.vm = await baselineOf(() => readVmPeriodic(run));
   const stop = await host.exec(['podman', 'machine', 'stop']);
-  if (stop.code !== 0) throw new Error(`podman machine stop after reading the VM baseline exited ${stop.code}: ${tail(stop)}`);
+  if (stop.code !== 0) throw new Error(`podman machine stop after reading the VM baseline exited ${stop.code}: ${outputOf(stop)}`);
 }
 
 /** Host provisioning, in the order the steps run (Issue #283). */
@@ -157,7 +177,7 @@ export function createProvisioning(host: HostServices): ProvisioningStep[] {
         const nibfin = async (args: string[]) => {
           const r = await ctx.ghNibfin(args);
           commands.push({ args, ...r });
-          if (r.code !== 0) throw new Error(`gh nibfin ${args.join(' ')} exited ${r.code}: ${tail(r)}`);
+          if (r.code !== 0) throw new Error(`gh nibfin ${args.join(' ')} exited ${r.code}: ${outputOf(r)}`);
         };
         try {
           await mustRun(host.exec, ['git', 'clone', '--quiet', `https://github.com/${SANDBOX.execution}.git`, ctx.executionDir]);
@@ -199,7 +219,7 @@ export function createProvisioning(host: HostServices): ProvisioningStep[] {
         const status = await ctx.ghNibfin(['status', '--json']);
         if (status.code === 0 && claudeRunnersLeft(status.stdout) === false) return { status: 'passed', reason: 'no local Runners left' };
         const r = await ctx.ghNibfin(['runner', 'remove', 'claude', '--yes']);
-        if (r.code !== 0) return { status: 'failed', reason: `gh nibfin runner remove claude --yes exited ${r.code}: ${tail(r)}` };
+        if (r.code !== 0) return { status: 'failed', reason: `gh nibfin runner remove claude --yes exited ${r.code}: ${outputOf(r)}` };
         return { status: 'passed', reason: 'local Runners removed' };
       },
     },
