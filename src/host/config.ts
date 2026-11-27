@@ -27,6 +27,9 @@ export const HELPER_IMAGE = 'docker.io/library/busybox:1.37.0@sha256:a7dbc319b14
 /** The CLI's login volume for Claude (Proposal R6.12, R6.21). */
 export const CLAUDE_VOLUME = 'nibfin-home-claude';
 
+/** The CLI's login volume for Codex (Proposal R6.12, R6.21). */
+export const CODEX_VOLUME = 'nibfin-home-codex';
+
 /** The OS user that holds the collaborator's Runners, apart from the Owner's (Issue #300). */
 export const PEER_USER = 'e2epeer';
 

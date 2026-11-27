@@ -376,26 +376,48 @@ export async function statusJson(ctx: RunContext, repo?: string): Promise<unknow
   return JSON.parse(r.stdout);
 }
 
-/** True when some object in the status names claude and reports it logged in. */
-export function claudeLoggedIn(status: unknown): boolean {
-  let found = false;
+const LOGIN_KEY = /logged|login|signed|auth/i;
+
+function loginValue(x: unknown): boolean | undefined {
+  if (x === true) return true;
+  if (x === false) return false;
+  if (typeof x !== 'string') return undefined;
+  if (/^(true|yes|ok|logged[ _-]?in|signed[ _-]?in|valid)$/i.test(x)) return true;
+  if (/^(false|no|none|logged[ _-]?out|not[ _-]?logged[ _-]?in|signed[ _-]?out|invalid)$/i.test(x)) return false;
+  return undefined;
+}
+
+/**
+ * Whether the status reports `provider` logged in: true when some object that names the
+ * provider (`{provider, loggedIn}`, or a `{<provider>: {loggedIn}}` entry) says so, false
+ * when such objects only say it is not, and undefined when the status names no login of
+ * the provider.
+ */
+export function providerLogin(status: unknown, provider: string): boolean | undefined {
+  const seen: boolean[] = [];
+  const read = (o: object) => {
+    for (const [k, x] of Object.entries(o)) {
+      if (!LOGIN_KEY.test(k)) continue;
+      const v = loginValue(x);
+      if (v !== undefined) seen.push(v);
+    }
+  };
   const visit = (v: unknown) => {
-    if (found || !v || typeof v !== 'object') return;
+    if (!v || typeof v !== 'object') return;
     if (Array.isArray(v)) return v.forEach(visit);
     const o = v as Record<string, unknown>;
-    if (Object.values(o).includes('claude')) {
-      for (const [k, x] of Object.entries(o)) {
-        if (!/logged|login|signed|auth/i.test(k)) continue;
-        if (x === true || (typeof x === 'string' && /^(true|yes|ok|logged[ _-]?in|signed[ _-]?in|valid)$/i.test(x))) found = true;
-      }
-    }
+    if (Object.values(o).includes(provider)) read(o);
     for (const [k, x] of Object.entries(o)) {
-      if (k === 'claude' && x && typeof x === 'object') {
-        for (const [kk, xx] of Object.entries(x)) if (/logged|login|signed|auth/i.test(kk) && (xx === true || /^(true|yes|ok|logged[ _-]?in)$/i.test(String(xx)))) found = true;
-      }
+      if (k === provider && x && typeof x === 'object' && !Array.isArray(x)) read(x);
       visit(x);
     }
   };
   visit(status);
-  return found;
+  if (seen.includes(true)) return true;
+  return seen.length ? false : undefined;
+}
+
+/** True when some object in the status names claude and reports it logged in. */
+export function claudeLoggedIn(status: unknown): boolean {
+  return providerLogin(status, 'claude') === true;
 }
