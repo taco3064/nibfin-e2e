@@ -52,7 +52,11 @@ export interface RunnerFile {
   gitHubUrl?: string;
 }
 
-/** Parses `.runner` (JSON, possibly with a UTF-8 BOM); undefined when it is not a JSON object. */
+/**
+ * Parses `.runner` (JSON, possibly with a UTF-8 BOM); undefined when it is not a JSON object.
+ * Keys are matched case-insensitively: the official runner writes its settings through a
+ * camelCase contract resolver (`agentId`, `agentName`, `gitHubUrl`), and PascalCase still reads.
+ */
 export function parseRunnerFile(text: string): RunnerFile | undefined {
   let v: unknown;
   try {
@@ -62,11 +66,18 @@ export function parseRunnerFile(text: string): RunnerFile | undefined {
   }
   if (typeof v !== 'object' || v === null || Array.isArray(v)) return undefined;
   const o = v as Record<string, unknown>;
-  const id = typeof o.AgentId === 'number' ? o.AgentId : typeof o.AgentId === 'string' && /^\d+$/.test(o.AgentId) ? Number(o.AgentId) : undefined;
+  const field = (lower: string): unknown => {
+    const key = Object.keys(o).find((k) => k.toLowerCase() === lower);
+    return key === undefined ? undefined : o[key];
+  };
+  const rawId = field('agentid');
+  const name = field('agentname');
+  const url = field('githuburl');
+  const id = typeof rawId === 'number' ? rawId : typeof rawId === 'string' && /^\d+$/.test(rawId) ? Number(rawId) : undefined;
   return {
     agentId: id,
-    agentName: typeof o.AgentName === 'string' ? o.AgentName : undefined,
-    gitHubUrl: typeof o.GitHubUrl === 'string' ? o.GitHubUrl : undefined,
+    agentName: typeof name === 'string' ? name : undefined,
+    gitHubUrl: typeof url === 'string' ? url : undefined,
   };
 }
 
