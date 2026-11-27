@@ -208,6 +208,7 @@
   {"id": "R6.10", "platforms": ["linux"], "scenarios": ["agent-setup"]},
   {"id": "R6.11", "platforms": ["linux"], "scenarios": []},
   {"id": "R6.12", "platforms": ["linux"], "scenarios": ["login-volume"]},
+  {"id": "R6.32", "notE2e": "e2e 閘門使用長效 token，CLI 不會 refresh；refresh 是官方 CLI 的行為"},
   {"id": "R6.13", "platforms": ["linux"], "scenarios": ["login-expiry"]},
   {"id": "R6.14", "notE2e": "無法證明不存在"},
   {"id": "R6.15", "notE2e": "原則，無可觀察行為"},
