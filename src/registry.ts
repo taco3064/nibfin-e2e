@@ -22,6 +22,7 @@ import { confirmPreview, pauseResume } from '../scenarios/management/labels.ts';
 import { loginCommand } from '../scenarios/management/login-command.ts';
 import { podmanMachineDetached } from '../scenarios/management/podman-machine-detached.ts';
 import { runnerAddSetup } from '../scenarios/management/runner-add-setup.ts';
+import { runnerAlwaysOn } from '../scenarios/management/runner-always-on.ts';
 import { runnerAddLogin } from '../scenarios/management/runner-add-login.ts';
 import { runnerNoPeriodic } from '../scenarios/management/runner-no-periodic.ts';
 import { runnerRemove } from '../scenarios/management/runner-remove.ts';
@@ -58,6 +59,10 @@ export const scenarios: Scenario[] = [
   runnerLocation((ctx) => createKit(services, ctx)),
   // Reads only: compares the host (and the podman machine VM) with the state before runner add.
   runnerNoPeriodic,
+  // Waits idle with no command running, on the Runners from the provisioning runner add (Proposal R5.11):
+  // after host-requirements, runner-location and runner-no-periodic, which need nothing changed since runner-add-setup, before
+  // podman-machine-detached stops and restarts the machine, and long before runner-remove.
+  runnerAlwaysOn,
   // Alone, before the delivery scenarios and with no fixture Job running: stops and restarts the Windows podman machine.
   podmanMachineDetached,
   initSettings,

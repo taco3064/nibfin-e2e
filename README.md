@@ -321,7 +321,8 @@ followed without the token.
 The installation and management scenarios (`scenarios/management/`) run
 first, on the fresh host and the init PRs; `upgrade` runs before the
 delivery-lifecycle scenarios so GHCR's main image has little time to move after
-`init`. Their fixture Issues are left paused or without `scope`, and the
+`init`. `runner-always-on` follows `host-requirements`, `runner-location` and `runner-no-periodic` and adds a 5-minute idle
+wait with no command running (Proposal R5.11). Their fixture Issues are left paused or without `scope`, and the
 lifecycle scenarios judge only their own tagged fixtures and the runs created
 since they started. Then come the Issue #299 and site scenarios, then the
 Dashboard scenarios. `runner-add-login` runs alone after them: it starts a Codex
