@@ -13,6 +13,7 @@ import { reviewEvents } from './review-events.ts';
 import { reviewRebase } from './review-rebase.ts';
 import { resolutionSpecFix } from './resolution-spec-fix.ts';
 import { requestAlreadyDone, requestFeasible, requestInfeasible } from './requests.ts';
+import { resolutionDecision } from './resolution-decision.ts';
 
 export const lifecycleScenarios: Scenario[] = [
   loginExpiry,
@@ -31,6 +32,7 @@ export const lifecycleScenarios: Scenario[] = [
   requestInfeasible,
   requestFeasible,
   requestAlreadyDone,
+  resolutionDecision,
   resolutionSpecFix,
   noCredentials,
 ];
