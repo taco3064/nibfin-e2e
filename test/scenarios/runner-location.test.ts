@@ -39,7 +39,7 @@ test('runner location: cgroup paths name the user manager and unit, nothing else
 });
 
 const b64 = (s: string) => Buffer.from(s).toString('base64');
-const runnerJson = (id: number, slot: string) => JSON.stringify({ AgentId: id, AgentName: `myhost-1a2b3c4d-${slot}`, GitHubUrl: `https://github.com/${EXEC}` });
+const runnerJson = (id: number, slot: string) => JSON.stringify({ agentId: id, agentName: `myhost-1a2b3c4d-${slot}`, gitHubUrl: `https://github.com/${EXEC}` });
 
 test('runner location: the VM report ignores other lines and groups each listener', () => {
   deepEqual(parseVmReport('Welcome to Fedora\nnibfin-e2e uid 1000\r\nnibfin-e2e home /home/user\nnibfin-e2e data /home/user/.local/share\n'), { uid: 1000, home: '/home/user', data: '/home/user/.local/share', listeners: [] });
