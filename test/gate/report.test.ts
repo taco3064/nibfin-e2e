@@ -13,7 +13,7 @@ const steps = [step('host', passed), step('nibfin', passed, undefined, { require
 const registry = { entries: map, scenarios, steps };
 
 const plan = (over: Record<string, unknown> = {}) => ({
-  text: JSON.stringify({ gaps: [], unselectedGaps: [], coverage: { passed: true, covered: 3, total: 3 }, source: null, ...over }),
+  text: JSON.stringify({ selection: { all: false, rules: [] }, gaps: [], unselectedGaps: [], coverage: { passed: true, covered: 3, total: 3 }, source: null, ...over }),
 });
 
 function result(platform: string, runner: string | null, body: Record<string, unknown>): string {
@@ -111,7 +111,7 @@ test('a forged or malformed result counts as no result', async () => {
   }
 });
 
-test('selected gaps file "Coverage gap"; unselected gaps are listed and fail the coverage check', async () => {
+test('selected gaps file "Coverage gap" and fail the run; unselected gaps are only listed outside --all', async () => {
   const gh = gate();
   const p = plan({
     gaps: [{ id: 'R5.14', missing: ['macos'] }, { id: 'R9.9', missing: 'not in coverage-map.json' }],
@@ -125,16 +125,58 @@ test('selected gaps file "Coverage gap"; unselected gaps are listed and fail the
   match(gh.repo(E2E)[0]?.body ?? '', /no scenario on macos\. It was selected by https:\/\/github.com\/taco3064\/nibfin-core\/issues\/1/);
   match(gh.repo(E2E)[1]?.body ?? '', /R9\.9 is not in coverage-map\.json/);
   match(output.summary, /\| R3\.9 \| listed, not filed \|/);
-  match(output.summary, /\| coverage check \| failed \| 2\/3/);
+  match(output.summary, /\| coverage check \| failed \| 2\/3 rules covered; fails the run only for --all/);
   deepEqual(output.coverage, { passed: false, covered: 2, total: 3 });
 
   const none = await report({ gh: gate(), env, plan: plan({ unselectedGaps: [{ id: 'R3.9', missingPlatforms: ['linux'] }], coverage: { passed: false, covered: 2, total: 3 } }), results: [], registry });
-  equal(none.failed, true);
+  equal(none.failed, false);
   deepEqual(none.output.filed, []);
+  match(none.output.summary, /\| R3\.9 \| listed, not filed \|/);
+  match(none.output.summary, /\| coverage check \| failed \| 2\/3/);
+
+  // A selected gap fails the run by itself, even when the whole map is covered.
+  const selected = await report({ gh: gate(), env, plan: plan({ gaps: [{ id: 'R5.13', missing: ['windows'] }] }), results: [], registry });
+  equal(selected.failed, true);
+  deepEqual(selected.output.filed.map((f) => [f.title, f.decision]), [['Coverage gap: R5.13', 'created']]);
+});
+
+test('a delivered retest whose selected rules are all 〔不測〕 passes although other rules are uncovered', async () => {
+  const gh = gate();
+  const p = plan({
+    selection: { all: false, rules: [] },
+    unselectedGaps: [{ id: 'R3.9', missingPlatforms: ['linux'] }, { id: 'R5.13', missingPlatforms: ['windows'] }],
+    coverage: { passed: false, covered: 181, total: 209 },
+    source: { issue: 'taco3064/gh-nibfin#457', url: 'https://github.com/taco3064/gh-nibfin/issues/457' },
+  });
+  const { output, failed } = await report({ gh, env, plan: p, results: [], registry });
+  equal(failed, false);
+  deepEqual(output.filed, []);
+  deepEqual(gh.repo(E2E), []);
+  match(output.summary, /\| R3\.9 \| listed, not filed \|/);
+  match(output.summary, /\| R5\.13 \| listed, not filed \|/);
+  match(output.summary, /\| coverage check \| failed \| 181\/209 rules covered; fails the run only for --all/);
+});
+
+test('an --all plan fails on an uncovered rule and passes at 100%', async () => {
+  const uncovered = await report({
+    gh: gate(),
+    env,
+    plan: plan({ selection: { all: true }, unselectedGaps: [{ id: 'R3.9', missingPlatforms: ['linux'] }], coverage: { passed: false, covered: 2, total: 3 } }),
+    results: [],
+    registry,
+  });
+  equal(uncovered.failed, true);
+  deepEqual(uncovered.output.filed, []);
+  match(uncovered.output.summary, /\| R3\.9 \| listed, not filed \|/);
+  match(uncovered.output.summary, /\| coverage check \| failed \| 2\/3 rules covered \|/);
+
+  const full = await report({ gh: gate(), env, plan: plan({ selection: { all: true } }), results: [], registry });
+  equal(full.failed, false);
+  match(full.output.summary, /\| coverage check \| passed \| 3\/3 rules covered \|/);
 });
 
 test('a missing or unusable plan is a decision and fails the coverage check', async () => {
-  for (const p of [{ error: 'no --plan given' }, { text: '{"gaps": "x"}' }]) {
+  for (const p of [{ error: 'no --plan given' }, { text: '{"gaps": "x"}' }, plan({ selection: undefined }), plan({ selection: { all: 'yes' } })]) {
     const { output, failed } = await report({ gh: gate(), env, plan: p, results: [], registry });
     equal(failed, true);
     equal(output.decisions[0]?.decision, 'no plan');

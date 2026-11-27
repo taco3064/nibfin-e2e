@@ -38,7 +38,10 @@ export const USAGE = `usage: npm run gate -- <subcommand>
   report [--plan <path>] --results <dir>
   proposal-updated`;
 
-/** Runs one gate subcommand: 0 ok, 1 a failure, a failed write or read-back or a failed coverage check, 2 usage or input error. */
+/**
+ * Runs one gate subcommand: 0 ok; 1 a failure, a selected gap, a failed write or read-back, no usable
+ * plan, or a failed coverage check in an `--all` run; 2 usage or input error.
+ */
 export async function main(argv: string[], deps: GateDeps): Promise<number> {
   const print = (doc: unknown) => deps.stdout(JSON.stringify(doc, null, 2) + '\n');
   const fail = (kind: 'usage' | 'validation' | 'github', messages: string[], code = 2) => {

@@ -81,12 +81,16 @@ test('select --delivered for a nibfin-e2e Issue maps its changed scenario files 
 });
 
 test('report and proposal-updated exit 1 on a failure and 0 when all is well', async () => {
-  const plan = JSON.stringify({ gaps: [], unselectedGaps: [], coverage: { passed: true, covered: 1, total: 1 }, source: null });
+  const plan = JSON.stringify({ selection: { all: false, rules: [] }, gaps: [], unselectedGaps: [], coverage: { passed: true, covered: 1, total: 1 }, source: null });
   const ok = await gate(['report', '--plan', 'plan.json', '--results', 'r'], { files: { 'plan.json': plan } });
   equal(ok.code, 0);
   match(ok.json.summary, /^## Gate report/);
   const noPlan = await gate(['report', '--results', 'r']);
   equal(noPlan.code, 1);
+  const retest = JSON.stringify({ selection: { all: false, rules: [] }, gaps: [], unselectedGaps: [{ id: 'R3.9', missingPlatforms: ['linux'] }], coverage: { passed: false, covered: 0, total: 1 }, source: null });
+  equal((await gate(['report', '--plan', 'plan.json', '--results', 'r'], { files: { 'plan.json': retest } })).code, 0);
+  const all = JSON.stringify({ selection: { all: true }, gaps: [], unselectedGaps: [{ id: 'R3.9', missingPlatforms: ['linux'] }], coverage: { passed: false, covered: 0, total: 1 }, source: null });
+  equal((await gate(['report', '--plan', 'plan.json', '--results', 'r'], { files: { 'plan.json': all } })).code, 1);
   const event = JSON.stringify({ action: 'proposal-updated', client_payload: { page_id: 'p', block_ids: ['b'], timestamp: '2026-11-27T00:00:00Z' } });
   const filed = await gate(['proposal-updated'], { files: { 'event.json': event } });
   equal(filed.code, 0);
