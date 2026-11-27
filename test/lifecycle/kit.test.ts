@@ -4,9 +4,10 @@ import { Kit, hostedRunProblems, lifecycle, redact, stageSeen } from '../../scen
 import { Observer } from '../../scenarios/lifecycle/observe.ts';
 import { closingProblems } from '../../scenarios/lifecycle/phase1.ts';
 import { isProtected, peerIssueBody, writeConflict } from '../../scenarios/lifecycle/phase2-fixtures.ts';
-import { leaks, scan } from '../../scenarios/lifecycle/phase3.ts';
+import { credentialOutcome, leaks, scan } from '../../scenarios/lifecycle/phase3.ts';
 import { SCOPE_ISSUES, scopeGate } from '../../scenarios/lifecycle/requests.ts';
 import { clock, context, routes } from './fake.ts';
+import type { Handler } from './fake.ts';
 
 const empty = { 'GET /repos/o/exec/actions/runs': { workflow_runs: [] }, 'GET /repos/o/exec/issues': [], 'GET /repos/o/exec/pulls': [], 'GET /repos/o/peer/actions/runs': { workflow_runs: [] }, 'GET /repos/o/peer/issues': [], 'GET /repos/o/peer/pulls': [], 'GET /rate_limit': { resources: { core: { remaining: 4999 } } } };
 
@@ -136,7 +137,7 @@ test('the secret scan reports locations, never values', async () => {
     'GET /repos/o/peer/issues/comments': [],
     'GET /repos/o/peer/pulls/comments': [],
     'GET /repos/o/exec/actions/runs': { workflow_runs: [{ id: 5, display_title: 'Nibfin · o/exec#1 · shape', status: 'completed', created_at: '2026-11-26T10:00:00Z' }] },
-    'GET /repos/o/exec/actions/runs/5/jobs': { jobs: [{ id: 8, status: 'completed' }] },
+    'GET /repos/o/exec/actions/runs/5/jobs': { jobs: [{ id: 8, status: 'completed', conclusion: 'success', started_at: '2026-11-26T10:00:00Z', runner_name: 'r1', labels: [] }] },
     'GET /repos/o/exec/actions/jobs/8/logs': { status: 302, headers: { location: 'https://logs.example/8' } },
   });
   const fetchFn = f.fetchFn;
@@ -144,9 +145,82 @@ test('the secret scan reports locations, never values', async () => {
   const { createGitHub } = await import('../../src/host/github.ts');
   const c = clock();
   const k = new Kit(context(createGitHub(() => 'tok', withLogs), { secretValues: () => [secret] }), { now: c.now, sleep: c.sleep });
-  const found = await scan(k);
+  const { found, unreadable } = await scan(k);
+  deepEqual(unreadable, []);
   deepEqual(found, ['o/exec#1 body: a secret value', 'o/exec#1 body: a token-shaped string', 'o/exec job 8 log (Nibfin · o/exec#1 · shape): a token-shaped string']);
   equal(found.some((x) => x.includes(secret)), false);
+  equal(credentialOutcome({ found, unreadable }).reason.includes(secret), false);
+});
+
+const ran = { status: 'completed', conclusion: 'success', started_at: '2026-11-26T10:00:00Z', runner_name: 'r1', labels: [] };
+
+/** A Kit whose exec sandbox has one Nibfin run with the given jobs and job log routes. */
+async function scanKit(jobs: object[], logs: Record<string, Handler | object>, logText = 'clean line') {
+  const f = routes({
+    ...empty,
+    'GET /repos/o/exec/issues/comments': [],
+    'GET /repos/o/exec/pulls/comments': [],
+    'GET /repos/o/peer/issues/comments': [],
+    'GET /repos/o/peer/pulls/comments': [],
+    'GET /repos/o/exec/actions/runs': { workflow_runs: [{ id: 5, display_title: 'Nibfin · o/exec#1 · shape', status: 'completed', created_at: '2026-11-26T10:00:00Z' }] },
+    'GET /repos/o/exec/actions/runs/5/jobs': { jobs },
+    ...logs,
+  });
+  const fetchFn = f.fetchFn;
+  const withLogs: typeof fetch = async (input, init) => (String(input).startsWith('https://logs.example/') ? new Response(`2026-11-26T10:00:00Z ${logText}\n`) : fetchFn(input, init));
+  const { createGitHub } = await import('../../src/host/github.ts');
+  const c = clock();
+  return { f, k: new Kit(context(createGitHub(() => 'tok', withLogs), { secretValues: () => ['s3cret-value'] }), { now: c.now, sleep: c.sleep }) };
+}
+
+const logReads = (calls: string[], id: number) => calls.filter((x) => x.startsWith(`GET /repos/o/exec/actions/jobs/${id}/logs`)).length;
+
+test('the secret scan does not read the log of a job no runner took', async () => {
+  const { f, k } = await scanKit(
+    [
+      { id: 11, status: 'completed', conclusion: 'skipped', started_at: null, runner_name: null, labels: [] },
+      { id: 12, status: 'completed', conclusion: 'cancelled', started_at: '2026-11-26T10:00:00Z', runner_name: '', labels: [] },
+    ],
+    {},
+  );
+  deepEqual(await scan(k), { found: [], unreadable: [] });
+  deepEqual([logReads(f.calls, 11), logReads(f.calls, 12)], [0, 0]);
+});
+
+test('an unreadable log of a job that ran is read twice and reported as unchecked, not as credentials found', async () => {
+  const { f, k } = await scanKit([{ id: 9, ...ran }], { 'GET /repos/o/exec/actions/jobs/9/logs': { status: 404, data: { message: 'Not Found' } } });
+  const result = await scan(k);
+  equal(logReads(f.calls, 9), 2);
+  deepEqual(result.found, []);
+  equal(result.unreadable.length, 1);
+  match(result.unreadable[0] ?? '', /^o\/exec job 9 \(Nibfin · o\/exec#1 · shape\): .*actions\/jobs\/9\/logs.*404/);
+  const out = credentialOutcome(result);
+  equal(out.status, 'failed');
+  match(out.reason, /^R3\.49: .*could not be checked.*o\/exec job 9/);
+  equal(out.reason.includes('credentials found'), false);
+});
+
+test('a log that fails once and reads on the second try is scanned', async () => {
+  let reads = 0;
+  const { f, k } = await scanKit([{ id: 9, ...ran }], {
+    'GET /repos/o/exec/actions/jobs/9/logs': () => (++reads === 1 ? { status: 404, data: { message: 'Not Found' } } : { status: 302, headers: { location: 'https://logs.example/9' } }),
+  }, 'leaked s3cret-value');
+  deepEqual(await scan(k), { found: ['o/exec job 9 log (Nibfin · o/exec#1 · shape): a secret value'], unreadable: [] });
+  equal(logReads(f.calls, 9), 2);
+});
+
+test('the credential verdict keeps leaks and unchecked logs apart, and passes a clean scan', () => {
+  const both = credentialOutcome({ found: ['o/exec#1 body: a secret value'], unreadable: ['o/exec job 9 (Nibfin · o/exec#1 · shape): 404'] }, ' (note)');
+  equal(both.status, 'failed');
+  equal(
+    both.reason,
+    'R3.49: credentials found at o/exec#1 body: a secret value. Separately, these Nibfin job logs could not be checked, so the absence of credentials in them is not shown: o/exec job 9 (Nibfin · o/exec#1 · shape): 404 (note)',
+  );
+  deepEqual(credentialOutcome({ found: ['x: a token-shaped string'], unreadable: [] }), { status: 'failed', reason: 'R3.49: credentials found at x: a token-shaped string' });
+  deepEqual(credentialOutcome({ found: [], unreadable: [] }, ' (note)'), {
+    status: 'passed',
+    reason: 'no secret value or token-shaped string in Issues, PRs, comments, patches or Nibfin job logs of either sandbox (note)',
+  });
 });
 
 test('a lifecycle scenario turns a throw into failed and redacts secret values', async () => {
