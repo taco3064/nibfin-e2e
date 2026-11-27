@@ -339,6 +339,17 @@ export function imageSwitch(kitFor: KitFor): Scenario {
         const issue = n;
         await step(`closing fixture ${repo}#${issue}`, () => close(kit, repo, issue));
       }
+      if (up && !upJudged) {
+        // An early return or a throw left the upgrade running: it may still open its PR or align
+        // (restart) an idle Runner, so wait for it to end, after the fixture is closed and before
+        // the new PRs are closed and both Runners are checked online.
+        const pending = up;
+        await step('waiting for gh nibfin upgrade --yes to end', async () => {
+          await remoteWait(kit, 'gh nibfin upgrade --yes to end', DEADLINE.shape, 10 * SECOND, async () => (upEnded === undefined ? undefined : true));
+          const r = await pending;
+          if (r?.code !== 0) throw new Error(`${RULE}: gh nibfin upgrade --yes ${upEnded ?? 'did not end'}${r ? `: ${tail(r)}` : ''}`);
+        });
+      }
       await step('closing the PRs this scenario opened', async () => {
         for (const p of await openPulls(gh, repo)) if (!startPulls.includes(p.number)) await gh.rest('PATCH', `/repos/${repo}/pulls/${p.number}`, { state: 'closed' });
       });
@@ -352,16 +363,6 @@ export function imageSwitch(kitFor: KitFor): Scenario {
           }
           const odd = otherPins(await nibfinWorkflows(kit, repo), ref(dNew));
           if (odd.length) throw new Error(`main still pins ${odd.join(', ')}`);
-        });
-      }
-      if (up && !upJudged) {
-        // An early return or a throw left the upgrade running: it may still align (restart) an
-        // idle Runner, so wait for it to end before checking that both Runners are online.
-        const pending = up;
-        await step('waiting for gh nibfin upgrade --yes to end', async () => {
-          await remoteWait(kit, 'gh nibfin upgrade --yes to end', DEADLINE.shape, 10 * SECOND, async () => (upEnded === undefined ? undefined : true));
-          const r = await pending;
-          if (r?.code !== 0) throw new Error(`${RULE}: gh nibfin upgrade --yes ${upEnded ?? 'did not end'}${r ? `: ${tail(r)}` : ''}`);
         });
       }
       await step('waiting for both Runners to be online', () =>
