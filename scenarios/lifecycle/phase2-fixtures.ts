@@ -113,14 +113,15 @@ export const peerDispatch: Scenario = lifecycle({
       const branch = `nibfin/issue-${n}`;
       const show = k.show(peer, n);
 
-      // R3.18: a true conflict lands on main after the first push of Q's Deliver.
+      // R3.18: a true conflict lands on main after the first push of Q's Deliver. Only closed
+      // and pending end this wait early: it also accepts the PR merging after Deliver completed.
       const trigger = await k.obs.until('the first push to Q\'s branch while its deliver job runs', async (s) => {
         if (s.pulls.get(peer)?.some((p) => p.head.ref === branch && p.merged_at)) return 'merged' as const;
         const running = (await k.agentJobs(s, peer, n, ['deliver'])).some((j) => j.status === 'in_progress');
         if (!running) return undefined;
         const pushes = (await k.obs.activity(peer, { ref: `refs/heads/${branch}` })).filter((a) => a.activity_type === 'push' || a.activity_type === 'branch_creation');
         return pushes.length ? ('pushed' as const) : undefined;
-      }, DEADLINE.delivery, show, { gonePast: k.stageGone(peer, n, 'deliver') });
+      }, DEADLINE.delivery, show, { gonePast: k.stageGone(peer, n, 'deliver', { jobs: false }) });
       const conflict = await writeConflict(k, peer, branch, trigger === 'merged');
       if (!conflict) c.notExercised('R3.18', 'the PR merged before the first observed push');
 

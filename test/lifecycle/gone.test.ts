@@ -195,3 +195,15 @@ test('a wait is not judged on a snapshot taken before it began, such as one stil
   equal(closed.number, 6);
   equal(polls, 2);
 });
+
+test('failed reads do not count as calm: the stall limit counts from the last failed refresh', async () => {
+  const c = clock();
+  const started = c.now();
+  // Reads fail from the 1st to the 30th minute.
+  const failing = () => c.now() - started >= MIN && c.now() - started < 30 * MIN;
+  const f = routes({ ...base, 'GET /repos/o/exec/actions/runs': { workflow_runs: [] }, 'GET /repos/o/exec/issues': () => (failing() ? { status: 502, data: { message: 'Bad Gateway' } } : { data: [] }) });
+  const obs = new Observer(f.github, ['o/exec'], { since: c.now(), now: c.now, sleep: c.sleep, stallMs: 20 * MIN });
+  await rejects(obs.until('A to close', () => undefined, DEADLINE.delivery), /^Error: no sandbox activity for 20 min while waiting for A to close/);
+  const took = (c.now() - started) / MIN;
+  equal(took >= 49 && took <= 51, true, `failed after ${took} min`);
+});
