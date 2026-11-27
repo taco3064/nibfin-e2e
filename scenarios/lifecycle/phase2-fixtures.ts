@@ -239,6 +239,19 @@ async function fixJobs(k: Kit, s: Snapshot, n: number, reason: string): Promise<
   return out;
 }
 
+/**
+ * F's exception to its two-file limit. The scenario's CI and CD hook rules require
+ * `CHANGELOG.md` and `README.md` entries the Writer cannot see up front, so the body
+ * allows them only once a CI or CD failure asks for them; the R3.21 and R3.30 loops still run.
+ */
+export const FIX_LOOPS_EXTRA = 'Exception: if a CI or CD failure on this Issue reports that `CHANGELOG.md` or `README.md` must mention something, also make that change in the named file. Do not touch those files otherwise.';
+
+/** A `gonePast` check for a wait after the Issue closed with `delivered`: only `pending` ends it. */
+export function pendingGone(k: Kit, repo: string, n: number): (s: Snapshot) => Promise<string | undefined> {
+  const name = repo === k.exec ? `#${n}` : `${repo}#${n}`;
+  return async (s) => (k.issue(s, repo, n)?.labels.some((l) => l.name === 'pending') ? `${name} has pending after closing with delivered; ${await k.summary(s, repo, n)}` : undefined);
+}
+
 export const fixLoops: Scenario = lifecycle({
   id: 'fix-loops',
   concurrent: true,
@@ -253,10 +266,12 @@ export const fixLoops: Scenario = lifecycle({
       const slug = k.slug('f');
       await k.hookRules('ci', [{ when: `src/${slug}.js`, event: 'pull_request', require: { file: 'CHANGELOG.md', contains: slug } }]);
       await k.hookRules('cd', [{ when: `src/${slug}.js`, event: 'push', require: { file: 'README.md', contains: slug } }]);
-      f = await k.file(exec, { scenario: 'fix-loops', title: 'Add cube', body: changeRequest(slug, 'cube', 'returns its argument cubed'), labels: ['scope'], assignees: [owner.login] });
+      f = await k.file(exec, { scenario: 'fix-loops', title: 'Add cube', body: changeRequest(slug, 'cube', 'returns its argument cubed', FIX_LOOPS_EXTRA), labels: ['scope'], assignees: [owner.login] });
       const n = f.number;
       const branch = `nibfin/issue-${n}`;
       const show = k.show(exec, n);
+      // F getting pending, or closing, ends every wait up to its closure (R4.3, R4.5).
+      const gone = { gonePast: k.closeGone(exec, n) };
       const headsAfter: { reason: string; prHead: string; branchHead: string }[] = [];
       const readHeads = async (reason: string, pr: number) => {
         const { data: p } = await k.gh.rest<Pull>('GET', `/repos/${exec}/pulls/${pr}`);
@@ -265,14 +280,14 @@ export const fixLoops: Scenario = lifecycle({
       };
 
       // 1: PR CI fails, then a ci-failure Deliver (R3.21, R3.37).
-      const pr1 = await k.obs.until('F\'s first PR', (s) => s.pulls.get(exec)?.find((p) => p.head.ref === branch), DEADLINE.delivery, show);
+      const pr1 = await k.obs.until('F\'s first PR', (s) => s.pulls.get(exec)?.find((p) => p.head.ref === branch), DEADLINE.delivery, show, gone);
       await k.obs.until('PR CI to fail on F\'s first PR', async (s) => {
         const pr = s.pulls.get(exec)?.find((p) => p.number === pr1.number);
         if (!pr) return undefined;
         const t = (await k.obs.checkRuns(exec, pr.head.sha)).find((x) => x.name === 'test');
         return t?.status === 'completed' && t.conclusion === 'failure' ? true : undefined;
-      }, DEADLINE.stage, show);
-      const ciFix = await k.obs.until('a deliver job with REASON ci-failure', async (s) => (await fixJobs(k, s, n, 'ci-failure'))[0], DEADLINE.stage, show);
+      }, DEADLINE.stage, show, gone);
+      const ciFix = await k.obs.until('a deliver job with REASON ci-failure', async (s) => (await fixJobs(k, s, n, 'ci-failure'))[0], DEADLINE.stage, show, gone);
       await readHeads('ci-failure', pr1.number);
 
       // 2: a harness commit the review must reject (R3.24, R3.25).
@@ -294,10 +309,10 @@ export const fixLoops: Scenario = lifecycle({
         await k.obs.until('a marked review comment on F\'s PR after the harness commit', async () => {
           const cs = await k.obs.comments(exec, pr1.number);
           return cs.some((x) => markerOf(x.body) && time(x.updated_at) >= at) ? true : undefined;
-        }, DEADLINE.stage, show);
-        const reviewFix = await k.obs.until('a deliver job with REASON review', async (s) => (await fixJobs(k, s, n, 'review')).find((j) => time(j.started_at) >= at), DEADLINE.stage, show);
+        }, DEADLINE.stage, show, gone);
+        const reviewFix = await k.obs.until('a deliver job with REASON review', async (s) => (await fixJobs(k, s, n, 'review')).find((j) => time(j.started_at) >= at), DEADLINE.stage, show, gone);
         await readHeads('review', pr1.number);
-        const merged1 = await k.obs.until('F\'s first PR to merge', (s) => s.pulls.get(exec)?.find((p) => p.number === pr1.number && p.merged_at), DEADLINE.stage, show);
+        const merged1 = await k.obs.until('F\'s first PR to merge', (s) => s.pulls.get(exec)?.find((p) => p.number === pr1.number && p.merged_at), DEADLINE.stage, show, gone);
         const s = await k.obs.fresh();
         c.check('R3.24', merged1.head.sha !== sha && (await k.obs.descends(exec, sha, merged1.head.sha)), `the merged head ${merged1.head.sha} is the harness commit or does not follow it`);
         c.check('R3.24', ((await k.fileOn(exec, merged1.head.sha, 'src/sum.js')) ?? '').includes('a + b'), 'the merged head still subtracts in sum');
@@ -316,13 +331,13 @@ export const fixLoops: Scenario = lifecycle({
       const merged = (await k.obs.pullsByHead(exec, branch)).find((p) => p.merged_at);
       const mergeSha = merged?.merge_commit_sha;
       if (!merged || !mergeSha) throw new Error(`F's first PR did not merge: ${await k.summary(await k.obs.fresh(), exec, n)}`);
-      const cd = await k.obs.until('CD of F\'s merge to fail', (s) => s.runs.find((r) => r.repo === exec && r.name === 'CD' && r.event === 'push' && r.head_sha === mergeSha && r.status === 'completed'), DEADLINE.event, show);
+      const cd = await k.obs.until('CD of F\'s merge to fail', (s) => s.runs.find((r) => r.repo === exec && r.name === 'CD' && r.event === 'push' && r.head_sha === mergeSha && r.status === 'completed'), DEADLINE.event, show, gone);
       c.check('R3.30', cd.conclusion === 'failure', `CD of F's merge concluded ${String(cd.conclusion)}, expected the README rule to fail it`);
-      await k.obs.until('a deliver job with REASON cd-failure', async (s) => (await fixJobs(k, s, n, 'cd-failure'))[0], DEADLINE.stage, show);
-      const pr2 = await k.obs.until('a new fix PR for F', (s) => s.pulls.get(exec)?.find((p) => p.number !== merged.number && isIssueBranch(p.head.ref, n)), DEADLINE.stage, show);
+      await k.obs.until('a deliver job with REASON cd-failure', async (s) => (await fixJobs(k, s, n, 'cd-failure'))[0], DEADLINE.stage, show, gone);
+      const pr2 = await k.obs.until('a new fix PR for F', (s) => s.pulls.get(exec)?.find((p) => p.number !== merged.number && isIssueBranch(p.head.ref, n)), DEADLINE.stage, show, gone);
       c.check('R3.30', time(pr2.created_at) > time(cd.updated_at) && pr2.base.ref === 'main', `PR #${pr2.number} is not a new PR against main after the CD failure`);
       c.check('R3.30', await k.obs.descends(exec, mergeSha, pr2.head.sha), `the fix PR #${pr2.number} (${pr2.head.sha}) is not cut from the main F's CD ran on (${mergeSha})`);
-      const done = await k.obs.until('F to close with delivered', (s) => k.delivered(s, exec, n), DEADLINE.delivery, show, { gonePast: k.closeGone(exec, n) });
+      const done = await k.obs.until('F to close with delivered', (s) => k.delivered(s, exec, n), DEADLINE.delivery, show, gone);
       const s = await k.obs.fresh();
       const pr2m = s.pulls.get(exec)?.find((p) => p.number === pr2.number);
       c.check('R3.30', !!pr2m?.merged_at, `the fix PR #${pr2.number} did not merge`);
@@ -336,7 +351,7 @@ export const fixLoops: Scenario = lifecycle({
       const deletions = await k.obs.until('F\'s branches to be deleted', async () => {
         const d = (await k.obs.activity(exec, { type: 'branch_deletion' })).filter((x) => isIssueBranch(x.ref, n));
         return d.length ? d : undefined;
-      }, DEADLINE.event, show);
+      }, DEADLINE.event, show, { gonePast: pendingGone(k, exec, n) });
       for (const d of deletions) c.check('R3.17', time(d.timestamp) >= time(done.closed_at), `${d.ref} was deleted at ${d.timestamp}, before F closed at ${String(done.closed_at)}`);
       return c.outcome(`#${n}: PR CI, review and CD failures each led to a Deliver fix with its reason, and F was delivered (PRs #${merged.number}, #${pr2.number})`);
     } finally {
