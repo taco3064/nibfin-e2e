@@ -152,7 +152,8 @@ export class Observer {
 
   /**
    * Waits until `fn` returns a value other than `undefined`. On each snapshot after
-   * `fn` it ends early when `opts.gonePast` gives a reason the goal is out of reach, or
+   * `fn` it ends early when `opts.gonePast` gives a reason the goal is out of reach (only
+   * snapshots read after the wait began are judged), or
    * when the sandboxes showed no activity for `stallMs` (unless the wait is `quiet`).
    * At the deadline it fails naming what it waited for and, through `show`, the last
    * observed state. It ends with the abort reason once the run's signal aborts.
@@ -170,6 +171,9 @@ export class Observer {
   ): Promise<T> {
     const signal = this.opts.signal;
     const start = this.now();
+    // Snapshots read (or being read) before the wait began may predate the caller's own
+    // last write, such as removing `pending`; only later ones can show the goal out of reach.
+    const staleUpTo = this.gen + (this.pending ? 1 : 0);
     const end = start + timeoutMs;
     let seen = -1;
     let lastError: string | undefined;
@@ -198,7 +202,7 @@ export class Observer {
       } catch (error) {
         readError(error);
       }
-      if (fresh && opts.gonePast) {
+      if (fresh && fresh.gen > staleUpTo && opts.gonePast) {
         let reason: string | undefined;
         try {
           reason = await opts.gonePast(fresh);

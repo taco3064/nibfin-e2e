@@ -184,7 +184,8 @@ export async function run(input: RunInput): Promise<RunResult> {
     const work = attempt(fn);
     if (workEndsAt === undefined) return work;
     const got = await before(work, workEndsAt);
-    if (got) return got.value;
+    // Work that ended only because another piece of work's cut-off aborted the signal was cut off too.
+    if (got && !controller.signal.aborted) return got.value;
     if (!controller.signal.aborted) {
       input.log(`harness budget of ${workBudget} ran out during ${label}`);
       settleBy = Date.now() + settleMs;

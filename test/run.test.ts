@@ -390,12 +390,15 @@ test('a scenario that ignores the abort is logged after the settle time and tear
 });
 
 test('every scenario of a concurrent group cut off by the budget gets the budget reason', async () => {
-  const c = (id: string, out: Outcome | 'never'): Scenario => ({ id, rules: [`R1.${id.length}`], platforms: ['linux'], concurrent: true, run: out === 'never' ? never : async () => out });
-  const { r } = await runBudget([c('x', passed), c('yy', 'never'), c('zzz', 'never')], []);
+  // 'aware' rejects as soon as the signal aborts, which may be before its own timer fires.
+  const aware = (ctx: RunContext) => new Promise<Outcome>((_res, reject) => ctx.signal.addEventListener('abort', () => reject(ctx.signal.reason as Error)));
+  const c = (id: string, out: Outcome | 'never' | 'aware'): Scenario => ({ id, rules: [`R1.${id.length}`], platforms: ['linux'], concurrent: true, run: out === 'never' ? never : out === 'aware' ? aware : async () => out });
+  const { r } = await runBudget([c('x', passed), c('yy', 'never'), c('zzz', 'aware'), c('wwww', 'never')], []);
   deepEqual(r.scenarios.map((s) => [s.id, s.status, s.reason]), [
     ['x', 'passed', 'ok'],
     ['yy', 'failed', 'harness budget of 0.01 min ran out during this scenario'],
     ['zzz', 'failed', 'harness budget of 0.01 min ran out during this scenario'],
+    ['wwww', 'failed', 'harness budget of 0.01 min ran out during this scenario'],
   ]);
 });
 
