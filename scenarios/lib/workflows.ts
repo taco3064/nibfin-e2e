@@ -250,6 +250,27 @@ function commandLines(text: string): string[] {
 const refersTo = (name: string) => new RegExp(`\\$${name}(?![\\w-])|\\$\\{${name}\\}|\\b(?:env|inputs)\\.${name}(?![\\w-])`);
 
 /**
+ * The value lines below a YAML key whose value does not start on its own line: a block
+ * scalar (`KEY: |`, `KEY: >-`) or a plain scalar continued on the next, more indented
+ * lines. A nested mapping or list below the key is not its value; it yields ''.
+ */
+function continuation(lines: string[], at: number, m: RegExpMatchArray): string {
+  const line = lines[at] as string;
+  const rest = line.slice((m.index ?? 0) + m[0].length);
+  if (!m[0].endsWith(':') || !/^\s*(?:[|>][-+1-9]*)?\s*(?:#.*)?$/.test(rest)) return '';
+  const block = /[|>]/.test(rest);
+  const value: string[] = [];
+  for (let j = at + 1; j < lines.length; j++) {
+    const l = lines[j] as string;
+    if (l.trim() === '') continue;
+    if (indent(l) <= indent(line)) break;
+    if (!block && !value.length && /^\s*(?:-\s|[\w"'-]+\s*:(?:\s|$))/.test(l)) return '';
+    value.push(l.trim());
+  }
+  return ' ' + value.join(' ');
+}
+
+/**
  * The names that may hold the bare image name, read across a workflow and the files that
  * call it: every key or variable assigned a value that holds the bare name or refers to
  * another such name, whatever follows it (so `$IMAGE:tag` or `$IMAGE@…` holds it too), and
@@ -263,7 +284,7 @@ function bareVariables(texts: string[]): string[] {
     size = names.size;
     lines.forEach((l, i) => {
       for (const m of l.matchAll(/([A-Za-z_][\w-]*)\s*[:=]/g)) {
-        if (!holds(l.slice((m.index ?? 0) + m[0].length))) continue;
+        if (!holds(l.slice((m.index ?? 0) + m[0].length) + continuation(lines, i, m))) continue;
         names.add(m[1] as string);
         if (m[1] !== 'default') continue;
         for (let j = i - 1; j >= 0; j--) {
@@ -309,9 +330,8 @@ export function unpinnedImages(text: string, digest: string, callerTexts: string
     const podman = commandLines(text).some((l) => {
       // Any container tool, with any options before its run, pull or create.
       const m = /\b(?:podman|docker|nerdctl)\b.*?\b(?:run|pull|create)\b/.exec(l);
-      if (!m) return false;
-      const rest = l.slice(m.index);
-      return BARE_RE.test(rest) || viaVar(rest);
+      // The whole command line counts, so an image piped or fed into the command is seen too.
+      return !!m && (BARE_RE.test(l) || viaVar(l));
     });
     const declared = text.split(/\r?\n/).some((l) => {
       const m = /^\s*(?:-\s+)?(?:image|container|uses):\s*["']?(?:docker:\/\/)?(.*?)["']?\s*$/.exec(l);

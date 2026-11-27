@@ -124,6 +124,12 @@ test('unpinned images: a bare name passes only next to the digest and when podma
   const caller = `env:\n  D: ${D1}\njobs:\n  j:\n    uses: ./.github/workflows/nibfin-job.yml\n    with:\n      img: ghcr.io/taco3064/nibfin\n`;
   deepEqual(unpinnedImages(called, D1, [caller]), bare);
   deepEqual(unpinnedImages(called.replace('inputs.img', 'inputs.other'), D1, [caller]), []);
+  // A value written on the lines below its key, and an image fed into the command through a pipe.
+  const below = (value: string, run = 'podman run "$IMAGE"') => job(run, `  IMAGE:${value}\n  IMAGE_REF: ghcr.io/taco3064/nibfin@${D1}\n`);
+  deepEqual(unpinnedImages(below('\n    ghcr.io/taco3064/nibfin'), D1), bare);
+  deepEqual(unpinnedImages(below(' >-\n    ghcr.io/taco3064/nibfin'), D1), bare);
+  deepEqual(unpinnedImages(below('\n    ghcr.io/taco3064/nibfin', 'podman run "$IMAGE_REF"'), D1), []);
+  deepEqual(unpinnedImages(job('echo "$IMAGE" | xargs podman run --rm'), D1), bare);
 });
 
 const HELP = `Add Runners
