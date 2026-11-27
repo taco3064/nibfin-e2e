@@ -8,9 +8,9 @@ import { chromium } from 'playwright-core';
 import type { BrowserContext, Locator, Page } from 'playwright-core';
 import type { Running } from '../../src/host/exec.ts';
 import type { Outcome, RunContext, RuleId, Scenario } from '../../src/types.ts';
-import { fieldsFromAriaSnapshot, parseJobStarts, parseSessionUrl, redact } from './checks.ts';
+import { classifyUpdateMarker, fieldsFromAriaSnapshot, parseJobStarts, parseSessionUrl, redact } from './checks.ts';
 import type { ContainerStart, FormField, Reply, SessionUrl } from './checks.ts';
-import { sleep } from './github.ts';
+import { sleep, until } from './github.ts';
 
 // ---- Scenario wrapper ---------------------------------------------------------
 
@@ -244,15 +244,50 @@ export function issueElement(scope: Page | Locator, title: string): Locator {
   return scope.locator('li, article, [role="listitem"], [role="row"], [role="article"]').filter({ hasText: title }).last();
 }
 
-/** `live` or `manual` from the current view's header (Proposal R9.8); throws when neither or both are shown. */
-export async function readUpdateMarker(page: Page): Promise<'live' | 'manual'> {
+const MARKER_WAIT_MS = 20_000;
+const MARKER_POLL_MS = 500;
+
+/**
+ * The visible text of each element in the header (or in `main` when there is no header)
+ * that holds a non-empty text node of its own, and the scope's whole visible text.
+ * Containers without their own text are skipped, so a badge and the Refresh button never merge.
+ */
+async function headerTexts(page: Page): Promise<{ texts: string[]; text: string }> {
   const header = page.locator('header, [role="banner"]');
   const scope = (await header.count()) ? header : page.locator('main');
-  const live = await scope.getByText(/^\s*live\s*$/i).filter({ visible: true }).count();
-  const manual = await scope.getByText(/manual|refresh manually|not live|paused updates/i).filter({ visible: true }).count();
-  if (live && !manual) return 'live';
-  if (manual && !live) return 'manual';
-  throw new Error(`R9.8: expected the view header to show exactly one of Live or manual refresh; observed ${live ? 'both' : 'neither'}`);
+  return scope.evaluateAll((roots) => {
+    interface El {
+      innerText?: string;
+      childNodes: ArrayLike<{ nodeType: number; textContent: string | null }>;
+      getClientRects(): { length: number };
+      querySelectorAll(s: string): ArrayLike<El>;
+    }
+    const win = globalThis as unknown as { getComputedStyle(e: El): { visibility: string } };
+    const norm = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, ' ').trim();
+    const visible = (e: El) => e.getClientRects().length > 0 && win.getComputedStyle(e).visibility !== 'hidden';
+    const ownText = (e: El) => Array.from(e.childNodes).some((n) => n.nodeType === 3 && norm(n.textContent) !== '');
+    const rs = roots as unknown as El[];
+    const texts: string[] = [];
+    for (const r of rs) {
+      for (const e of [r, ...Array.from(r.querySelectorAll('*'))]) if (visible(e) && ownText(e)) texts.push(norm(e.innerText));
+    }
+    return { texts, text: norm(rs.filter(visible).map((r) => r.innerText ?? '').join(' ')) };
+  });
+}
+
+/**
+ * The current view header's update marker (Proposal R9.8), waiting up to 20 s for it to
+ * appear: `live` for an exact `Live`; `manual` for `Updates on Refresh`, `Live updates off`
+ * or other manual wording. Throws, quoting the header text, when neither or both are shown.
+ */
+export async function readUpdateMarker(page: Page): Promise<'live' | 'manual'> {
+  const read = async () => {
+    const r = await headerTexts(page).catch(() => ({ texts: [] as string[], text: '' }));
+    return { ...r, kind: classifyUpdateMarker(r.texts) };
+  };
+  const r = await until(read, (x) => x.kind === 'live' || x.kind === 'manual', MARKER_WAIT_MS, MARKER_POLL_MS);
+  if (r.kind === 'live' || r.kind === 'manual') return r.kind;
+  throw new Error(`R9.8: expected the view header to show exactly one of Live or manual refresh within ${MARKER_WAIT_MS / 1000} s; observed ${r.kind}: "${r.text.slice(0, 300)}"`);
 }
 
 /** The open dialog, after it appears. */

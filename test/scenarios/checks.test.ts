@@ -1,6 +1,7 @@
 import { deepEqual, equal, ok, throws } from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  classifyUpdateMarker,
   commandInputs,
   commandSchemaFrom,
   dateTexts,
@@ -225,4 +226,23 @@ test('the command schema comes from a 2xx JSON /api/commands reply; anything els
   throws(() => commandSchemaFrom({ status: 200, body: '<html>Dashboard</html>' }), /R9\.13.*not JSON \(/);
   throws(() => commandSchemaFrom({ status: 200, body: '{"ok":true}' }), /R9\.13.*no commands/);
   throws(() => commandSchemaFrom({ status: 500, body: 'x'.repeat(1000) }), (e: Error) => /HTTP 500/.test(e.message) && e.message.length < 400);
+});
+
+test('a view header marks Live or manual refresh only in the marker wording; controls are neither (R9.8)', () => {
+  const controls = ['Me', 'Repo', 'Runner', 'Refresh'];
+  equal(classifyUpdateMarker(['Live']), 'live');
+  equal(classifyUpdateMarker(['  Live ']), 'live');
+  equal(classifyUpdateMarker([...controls, 'Live']), 'live');
+  equal(classifyUpdateMarker(['Updates on Refresh']), 'manual');
+  equal(classifyUpdateMarker(['Live updates off']), 'manual');
+  equal(classifyUpdateMarker([...controls, 'Updates on Refresh']), 'manual');
+  equal(classifyUpdateMarker([...controls, 'Live updates off']), 'manual');
+  equal(classifyUpdateMarker(['Paused updates']), 'manual');
+  equal(classifyUpdateMarker(['Refresh']), 'neither');
+  equal(classifyUpdateMarker(['Refreshing…']), 'neither');
+  equal(classifyUpdateMarker(controls), 'neither');
+  equal(classifyUpdateMarker(['Live … Refresh']), 'neither');
+  equal(classifyUpdateMarker([]), 'neither');
+  equal(classifyUpdateMarker(['']), 'neither');
+  equal(classifyUpdateMarker(['Live', 'Updates on Refresh']), 'both');
 });
