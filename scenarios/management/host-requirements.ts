@@ -1,6 +1,6 @@
 import { lstatSync, readFileSync, readdirSync, readlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, normalize } from 'node:path';
+import { dirname, join, normalize, posix } from 'node:path';
 import { GitHubError } from '../../src/host/github.ts';
 import { readHostState, userRuntimeDir } from '../../src/host/hoststate.ts';
 import type { LinuxHostState } from '../../src/host/hoststate.ts';
@@ -90,7 +90,8 @@ export const releaseTag = (version: string) => `v${version.replace(/^v/, '')}`;
 /** The runner root when `path` is `<root>/bin/Runner.Listener`. */
 export function listenerRoot(path: string | undefined): string | undefined {
   if (!path?.startsWith('/')) return undefined;
-  const p = normalize(path);
+  // POSIX on every host: the VM's paths read from Windows (runner-location) keep their slashes.
+  const p = posix.normalize(path);
   return p.endsWith('/bin/Runner.Listener') ? p.slice(0, -'/bin/Runner.Listener'.length) || '/' : undefined;
 }
 
