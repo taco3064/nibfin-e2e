@@ -367,6 +367,24 @@ const MARKER = /<!--\s*nibfin:([\w.:-]+)/;
 /** The hidden marker key of a Nibfin comment (`<!-- nibfin:pending -->` gives `pending`). */
 export const markerOf = (body: string | undefined) => (body ? MARKER.exec(body)?.[1] : undefined);
 
+/**
+ * What a wait read from an Issue's comments, for a failure message (Proposal R1.14):
+ * the count, then per comment its marker key (or `no marker`) and the start of its text
+ * without hidden `<!-- … -->` markers, cut to about 80 characters. Secrets are not
+ * handled here; scenario reasons are redacted by `lifecycle()`.
+ */
+export function describeComments(comments: Comment[]): string {
+  const head = `read ${comments.length} comment${comments.length === 1 ? '' : 's'}`;
+  if (!comments.length) return head;
+  const each = comments.map((c, i) => {
+    const text = (c.body ?? '').replace(/<!--[\s\S]*?(-->|$)/g, ' ').replace(/\s+/g, ' ').trim();
+    const start = text.length > 80 ? `${text.slice(0, 80).trimEnd()}…` : text;
+    const marker = markerOf(c.body);
+    return `#${i + 1} ${marker ? `marker ${marker}` : 'no marker'} "${start}"`;
+  });
+  return `${head}: ${each.join('; ')}`;
+}
+
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
