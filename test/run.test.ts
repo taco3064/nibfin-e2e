@@ -259,3 +259,40 @@ test('each concurrent scenario runs only its own deferred cleanups, when it ends
   await runAll([mk('a', 1), mk('b', 30)]);
   deepEqual(order, ['end a', 'cleanup a', 'end b', 'cleanup b']);
 });
+
+test('a scenario whose selected rules are all waiting is reported waiting and not run; its steps do not run', async () => {
+  const calls: string[] = [];
+  const list = [
+    { ...scenario('w', ['R1.1'], ['linux'], passed, ['only-w']), run: async () => (calls.push('w'), passed) },
+    { ...scenario('m', ['R1.1', 'R1.2'], ['linux'], passed, ['shared']), run: async () => (calls.push('m'), passed) },
+  ];
+  const steps = [step('only-w', passed, calls), step('shared', passed, calls)];
+  const entries = entriesFor(list);
+  const { selected } = select(entries, list, { all: true });
+  const waiting = [{ id: 'R1.1', issues: ['https://github.com/taco3064/nibfin-core/issues/9'] }];
+  const r = await run({ selection: { all: true }, selected, steps, target, host, log: () => {}, waiting, runner: 'GitHub Actions 7' });
+  deepEqual(calls, ['shared', 'm']);
+  deepEqual(r.scenarios.map((s) => [s.id, s.status, s.reason]), [
+    ['w', 'waiting', 'not run: rule R1.1 is waiting on https://github.com/taco3064/nibfin-core/issues/9'],
+    ['m', 'passed', 'ok'],
+  ]);
+  equal(r.scenarios[0]?.blockedBy, undefined);
+  equal(r.meta.runner, 'GitHub Actions 7');
+  equal(r.gate?.passed, false);
+});
+
+test('a waiting rule outside the selection does not hold back a scenario', async () => {
+  const list = [scenario('m', ['R1.1', 'R1.2'], ['linux'], passed)];
+  const selection = { all: false as const, rules: ['R1.2'], sections: [] };
+  const { selected } = select(entriesFor(list), list, selection);
+  const r = await run({ selection, selected, steps: [], target, host, log: () => {}, waiting: [{ id: 'R1.1', issues: ['u'] }] });
+  deepEqual(r.scenarios.map((s) => s.status), ['passed']);
+  equal(r.meta.runner, null);
+});
+
+test('blocked steps and scenarios name the step that blocked them', async () => {
+  const steps = [step('base', new Error('no podman')), step('login', passed, undefined, { requires: ['base'] }), step('later', { status: 'waiting', reason: 'x' })];
+  const r = await runAll([scenario('a', ['R1.1'], ['linux'], passed, ['login']), scenario('b', ['R1.2'], ['linux'], passed, ['later'])], steps);
+  deepEqual(r.provisioning.map((p) => [p.id, p.blockedBy]), [['base', undefined], ['login', 'base'], ['later', undefined]]);
+  deepEqual(r.scenarios.map((s) => [s.id, s.blockedBy]), [['a', 'login'], ['b', 'later']]);
+});

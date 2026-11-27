@@ -28,14 +28,15 @@ export function envKey(env: Env, name: string, platform = process.platform): str
 }
 
 /**
- * The environment a child gets: the host environment without any `E2E_*` secret and
- * without an inherited `GH_TOKEN`; `GH_TOKEN` is set only when the caller passes one.
+ * The environment a child gets: the host environment without any `E2E_*` secret, without
+ * the Owner's `NIBFIN_GITHUB_TOKEN` and without an inherited `GH_TOKEN`; `GH_TOKEN` is set
+ * only when the caller passes one.
  */
 export function childEnv(env: Env, ghToken?: string): Env {
   const out: Env = {};
   for (const [k, v] of Object.entries(env)) {
     const upper = k.toUpperCase();
-    if (upper.startsWith('E2E_') || upper === 'GH_TOKEN') continue;
+    if (upper.startsWith('E2E_') || upper === 'GH_TOKEN' || upper === 'NIBFIN_GITHUB_TOKEN') continue;
     out[k] = v;
   }
   if (ghToken !== undefined) out.GH_TOKEN = ghToken;
