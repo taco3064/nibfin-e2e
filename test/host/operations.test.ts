@@ -4,7 +4,7 @@ import { createGitHub } from '../../src/host/github.ts';
 import type { Exec } from '../../src/host/exec.ts';
 import { createHostOperations, parseUnits } from '../../src/host/operations.ts';
 import type { HostServices } from '../../src/host/services.ts';
-import { fakeExec } from './fakes.ts';
+import { fakeExec, fakeRunning } from './fakes.ts';
 
 function services(exec: Exec, env: Record<string, string | undefined> = { E2E_SANDBOX_TOKEN: 'sbx-token', E2E_CLAUDE_TOKEN: 'claude-token' }, fetchFn?: typeof fetch): HostServices {
   return {
@@ -15,6 +15,7 @@ function services(exec: Exec, env: Record<string, string | undefined> = { E2E_SA
     repoRoot: '/tmp/none',
     workDir: () => '/tmp/none',
     sandboxToken: () => 'sbx-token',
+    start: () => fakeRunning(),
   };
 }
 
