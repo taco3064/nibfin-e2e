@@ -214,16 +214,44 @@ export interface ReportInput {
   plan: { text: string } | { error: string };
   results: ResultFile[];
   registry: Registry;
+  /**
+   * Leg mode: the final step of one `run` leg, on the runner `RUNNER_NAME` names. It files that
+   * leg's own failures (or `Job failed` for its own job when it has no usable result) and leaves
+   * other jobs, plan gaps and the coverage check to the final report; the plan is not read.
+   */
+  leg?: { runner: string };
+}
+
+/** Title and body of a `Job failed` request; both modes build it here, so they file the same title. */
+function jobFailed(job: Job, runLine: string, ended: string, stepsLabel: string, steps: string[]): Subject {
+  const name = cap(job.name ?? 'unnamed job', 200).replace(/\s+/g, ' ');
+  const body = [
+    runLine,
+    '',
+    ended,
+    '',
+    `- Job: ${job.html_url ?? 'no link'}`,
+    `- Runner: ${job.runner_name ? `\`${job.runner_name.replace(/`/g, "'")}\`` : 'none assigned'}`,
+    '- Related rules: none recorded (no result)',
+    `- ${stepsLabel}:`,
+    '',
+    fence(cap(steps.join('\n') || 'none reported')),
+    '',
+    FOOTER,
+  ].join('\n');
+  return { title: `Job failed: ${name}`, body };
 }
 
 /** Turns a run's results, its jobs and its plan into `request` Issues, and reports every decision. */
 export async function report(input: ReportInput): Promise<{ output: ReportOutput; failed: boolean }> {
-  const { gh, env, registry } = input;
+  const { gh, env, registry, leg } = input;
   const decisions: Decision[] = [];
   const runLink = `${env.serverUrl}/${E2E_REPO}/actions/runs/${env.runId}`;
 
   let plan: PlanView | null = null;
-  if ('error' in input.plan) decisions.push({ subject: 'plan', decision: 'no plan', reason: input.plan.error });
+  if (leg) {
+    decisions.push({ subject: 'plan', decision: 'left to the final report', reason: `leg mode on runner ${leg.runner}: other jobs, plan gaps, unselected gaps and the coverage check are filed or checked by the final report` });
+  } else if ('error' in input.plan) decisions.push({ subject: 'plan', decision: 'no plan', reason: input.plan.error });
   else {
     const view = readPlanView(input.plan.text);
     if ('error' in view) decisions.push({ subject: 'plan', decision: 'no plan', reason: `unusable plan: ${view.error}` });
@@ -232,7 +260,8 @@ export async function report(input: ReportInput): Promise<{ output: ReportOutput
 
   const { data: run } = await gh.rest<{ created_at?: string; run_attempt?: number }>('GET', `/repos/${E2E_REPO}/actions/runs/${env.runId}`);
   if (typeof run.created_at !== 'string') throw new Error(`GitHub GET run ${env.runId}: no created_at`);
-  const jobs = (await gh.list<Job>(`/repos/${E2E_REPO}/actions/runs/${env.runId}/jobs?filter=latest`, 'jobs')).filter((j) => j.status === 'completed');
+  const allJobs = await gh.list<Job>(`/repos/${E2E_REPO}/actions/runs/${env.runId}/jobs?filter=latest`, 'jobs');
+  const jobs = allJobs.filter((j) => j.status === 'completed');
 
   const usable: UsableResult[] = [];
   for (const file of input.results) {
@@ -245,7 +274,8 @@ export async function report(input: ReportInput): Promise<{ output: ReportOutput
   }
   if (input.results.length === 0) decisions.push({ subject: 'results', decision: 'no result files', reason: 'the job conclusions are used' });
 
-  const jobFor = (runner: string | null) => (runner === null ? null : (jobs.find((j) => j.runner_name === runner)?.html_url ?? null));
+  // Any status: a leg's own job is still in progress when its final step files.
+  const jobFor = (runner: string | null) => (runner === null ? null : (allJobs.find((j) => j.runner_name === runner)?.html_url ?? null));
   const failures = new Map<string, Occurrence[]>();
   const add = (title: string, o: Occurrence) => failures.set(title, [...(failures.get(title) ?? []), o]);
   for (const r of usable) {
@@ -267,34 +297,36 @@ export async function report(input: ReportInput): Promise<{ output: ReportOutput
   const runLine = `The release gate run ${runLink} (attempt ${run.run_attempt ?? 1}) reported this.`;
   for (const [title, occurrences] of failures) {
     const kind = title.slice(0, title.indexOf(':'));
-    const body = occurrencesBody(`${runLine}\n\n**${kind}** in ${occurrences.length} leg${occurrences.length === 1 ? '' : 's'}.`, occurrences);
-    subjects.push({ title, body });
+    const platforms = [...new Set(occurrences.map((o) => o.platform))];
+    const render = (some: readonly string[]) => {
+      const these = occurrences.filter((o) => some.includes(o.platform));
+      return occurrencesBody(`${runLine}\n\n**${kind}** in ${these.length} leg${these.length === 1 ? '' : 's'}.`, these);
+    };
+    subjects.push({ title, body: render(platforms), legs: { platforms, render } });
     decisions.push({ subject: title, decision: 'failure: request', reason: occurrences.map((o) => `${o.platform}: ${cap(o.reason, 200)}`).join('; ') });
   }
 
-  const resultRunners = new Set(usable.map((r) => r.runner).filter((r) => r !== null));
-  for (const job of jobs) {
-    if (!['failure', 'cancelled', 'timed_out'].includes(job.conclusion ?? '')) continue;
-    if (job.runner_name && resultRunners.has(job.runner_name)) continue;
-    const name = cap(job.name ?? 'unnamed job', 200).replace(/\s+/g, ' ');
-    const title = `Job failed: ${name}`;
-    const steps = (job.steps ?? []).filter((s) => s.conclusion !== 'success' && s.conclusion !== 'skipped').map((s) => `${s.name ?? 'unnamed step'}: ${s.conclusion ?? 'no conclusion'}`);
-    const body = [
-      runLine,
-      '',
-      `A job ended with conclusion \`${job.conclusion}\` and left no usable result.`,
-      '',
-      `- Job: ${job.html_url ?? 'no link'}`,
-      `- Runner: ${job.runner_name ? `\`${job.runner_name.replace(/`/g, "'")}\`` : 'none assigned'}`,
-      '- Related rules: none recorded (no result)',
-      '- Steps that did not succeed:',
-      '',
-      fence(cap(steps.join('\n') || 'none reported')),
-      '',
-      FOOTER,
-    ].join('\n');
-    subjects.push({ title, body });
-    decisions.push({ subject: title, decision: 'failure: request', reason: `conclusion ${job.conclusion}; no result from runner ${job.runner_name ?? 'none'}` });
+  if (!leg) {
+    const resultRunners = new Set(usable.map((r) => r.runner).filter((r) => r !== null));
+    for (const job of jobs) {
+      if (!['failure', 'cancelled', 'timed_out'].includes(job.conclusion ?? '')) continue;
+      if (job.runner_name && resultRunners.has(job.runner_name)) continue;
+      const steps = (job.steps ?? []).filter((s) => s.conclusion !== 'success' && s.conclusion !== 'skipped').map((s) => `${s.name ?? 'unnamed step'}: ${s.conclusion ?? 'no conclusion'}`);
+      const subject = jobFailed(job, runLine, `A job ended with conclusion \`${job.conclusion}\` and left no usable result.`, 'Steps that did not succeed', steps);
+      subjects.push(subject);
+      decisions.push({ subject: subject.title, decision: 'failure: request', reason: `conclusion ${job.conclusion}; no result from runner ${job.runner_name ?? 'none'}` });
+    }
+  } else if (usable.length === 0) {
+    const own = allJobs.find((j) => j.runner_name === leg.runner);
+    if (!own) {
+      decisions.push({ subject: `job on runner ${leg.runner}`, decision: 'not found, left to the final report', reason: 'no job of this run has this runner name' });
+    } else {
+      // Steps still running or queued have no conclusion yet; list only the ones that ended badly.
+      const steps = (own.steps ?? []).filter((s) => s.conclusion && s.conclusion !== 'success' && s.conclusion !== 'skipped').map((s) => `${s.name ?? 'unnamed step'}: ${s.conclusion}`);
+      const subject = jobFailed(own, runLine, 'This job left no usable result; its leg filed this from its final step, before the job ended.', 'Steps that did not succeed so far', steps);
+      subjects.push(subject);
+      decisions.push({ subject: subject.title, decision: 'failure: request', reason: `no usable result from runner ${leg.runner}` });
+    }
   }
   const failureCount = subjects.length;
 
@@ -318,10 +350,16 @@ export async function report(input: ReportInput): Promise<{ output: ReportOutput
 
   const filed: Filed[] = [];
   if (subjects.length) {
-    const ctx = await filingContext(gh, env.runId, run.created_at);
+    const ctx = await filingContext(gh, env.runId, run.created_at, subjects.map((s) => s.title));
     for (const s of subjects) filed.push(await fileSubject(ctx, s));
   }
   for (const f of filed) decisions.push({ subject: f.title, decision: f.decision, reason: f.url ? `${f.url}: ${f.reason}` : f.reason });
+  const filingFailed = filed.some((f) => f.decision === 'failed');
+
+  if (leg) {
+    // A leg fails only for its own failures and filings; the final report judges the rest.
+    return { output: { decisions, filed, coverage: null, summary: decisionTable('Gate report for this leg', decisions) }, failed: failureCount > 0 || filingFailed };
+  }
 
   const coverage = plan?.coverage ?? null;
   decisions.push({
@@ -335,6 +373,6 @@ export async function report(input: ReportInput): Promise<{ output: ReportOutput
   // plan the gate cannot tell whether the run was `--all`, so it fails.
   const coverageFails = plan === null || (plan.selection.all && plan.coverage.passed !== true);
   const selectedGaps = plan?.gaps.length ?? 0;
-  const failed = failureCount > 0 || selectedGaps > 0 || filed.some((f) => f.decision === 'failed') || coverageFails;
+  const failed = failureCount > 0 || selectedGaps > 0 || filingFailed || coverageFails;
   return { output: { decisions, filed, coverage, summary: decisionTable('Gate report', decisions) }, failed };
 }

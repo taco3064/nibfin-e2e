@@ -183,3 +183,155 @@ test('a missing or unusable plan is a decision and fails the coverage check', as
     equal(output.coverage, null);
   }
 });
+
+test('report runs once per leg, then once at the end, filing each request once', async () => {
+  const gh = gate();
+  const windows = job('run (windows-2025)', null, 'host-w', 'in_progress');
+  const ubuntu = job('run (ubuntu-24.04)', null, 'host-l', 'in_progress');
+  const select = job('select', 'success', 's');
+  const winResult = {
+    path: 'leg/result.json',
+    text: result('windows', 'host-w', { provisioning: [{ id: 'host', status: 'failed', reason: 'gh nibfin runner add failed' }], teardown: [{ id: 'host', status: 'failed', reason: 'runner left' }] }),
+  };
+  const linResult = { path: 'leg/result.json', text: result('linux', 'host-l', { provisioning: [{ id: 'host', status: 'failed', reason: 'no podman' }] }) };
+  const issues = () => gh.repo(E2E);
+  const writes = () => gh.writes.splice(0);
+
+  // (a) The windows leg ends first and files its own failures at once.
+  gh.jobs.set('7', [select, windows]);
+  const a = await report({ gh, env, plan: { error: 'not read in leg mode' }, results: [winResult], registry, leg: { runner: 'host-w' } });
+  equal(a.failed, true);
+  deepEqual(a.output.filed.map((f) => [f.title, f.decision]), [
+    ['Provisioning failed: host', 'created'],
+    ['Teardown failed: host', 'created'],
+  ]);
+  deepEqual(writes(), ['POST /repos/taco3064/nibfin-e2e/issues', 'POST /repos/taco3064/nibfin-e2e/issues']);
+  const first = issues()[0]?.body ?? '';
+  match(first, /\*\*Provisioning failed\*\* in 1 leg\./);
+  match(first, /- Job: https:\/\/github.com\/taco3064\/nibfin-e2e\/actions\/runs\/7\/job\/run \(windows-2025\)/);
+  match(first, /<!-- nibfin-e2e:run 7 leg windows -->$/);
+  equal(a.output.coverage, null);
+  match(a.output.summary, /\| plan \| left to the final report \|/);
+  equal(/\| no plan \||\| coverage check \|/.test(a.output.summary), false);
+
+  // (b) The ubuntu leg fails the same step: one comment with only its occurrence, no Job failed for windows.
+  windows.status = 'completed';
+  windows.conclusion = 'failure';
+  gh.jobs.set('7', [select, windows, ubuntu]);
+  const b = await report({ gh, env, plan: { error: 'not read in leg mode' }, results: [linResult], registry, leg: { runner: 'host-l' } });
+  equal(b.failed, true);
+  deepEqual(b.output.filed.map((f) => [f.title, f.decision, f.number]), [['Provisioning failed: host', 'commented', 1]]);
+  deepEqual(writes(), ['POST /repos/taco3064/nibfin-e2e/issues/1/comments']);
+  const comment = issues()[0]?.comments[0]?.body ?? '';
+  match(comment, /^<!-- nibfin-e2e:run 7 -->\n/);
+  match(comment, /\*\*Provisioning failed\*\* in 1 leg\.\n\n### 1\. linux, runner `host-l`\n\n- Job: https:\/\/github.com\/taco3064\/nibfin-e2e\/actions\/runs\/7\/job\/run \(ubuntu-24\.04\)/);
+  equal(comment.includes('windows'), false);
+  match(comment, /<!-- nibfin-e2e:run 7 leg linux -->$/);
+
+  // (c) The final report with both results and a plan gap files only the gap.
+  ubuntu.status = 'completed';
+  ubuntu.conclusion = 'failure';
+  gh.jobs.set('7', [select, windows, ubuntu, job('report', null, 'r', 'in_progress')]);
+  const finalResults = [
+    { ...winResult, path: 'results/result-windows-2025/result.json' },
+    { ...linResult, path: 'results/result-ubuntu-24.04/result.json' },
+  ];
+  const c = await report({ gh, env, plan: plan({ gaps: [{ id: 'R5.13', missing: ['windows'] }] }), results: finalResults, registry });
+  equal(c.failed, true);
+  deepEqual(c.output.filed.map((f) => [f.title, f.decision]), [
+    ['Provisioning failed: host', 'already filed'],
+    ['Teardown failed: host', 'already filed'],
+    ['Coverage gap: R5.13', 'created'],
+  ]);
+  deepEqual(writes(), ['POST /repos/taco3064/nibfin-e2e/issues']);
+  deepEqual(issues().map((i) => i.title), ['Provisioning failed: host', 'Teardown failed: host', 'Coverage gap: R5.13']);
+  equal(issues()[0]?.comments.length, 1);
+
+  // (f) A re-run of either leg, or of the final report, writes nothing new.
+  windows.status = ubuntu.status = 'in_progress';
+  gh.jobs.set('7', [select, windows]);
+  const again = await report({ gh, env, plan: { error: 'not read in leg mode' }, results: [winResult], registry, leg: { runner: 'host-w' } });
+  deepEqual(again.output.filed.map((f) => f.decision), ['already filed', 'already filed']);
+  gh.jobs.set('7', [select, windows, ubuntu]);
+  const againB = await report({ gh, env, plan: { error: 'not read in leg mode' }, results: [linResult], registry, leg: { runner: 'host-l' } });
+  deepEqual(againB.output.filed.map((f) => f.decision), ['already filed']);
+  const againC = await report({ gh, env, plan: plan({ gaps: [{ id: 'R5.13', missing: ['windows'] }] }), results: finalResults, registry });
+  deepEqual(againC.output.filed.map((f) => f.decision), ['already filed', 'already filed', 'already filed']);
+  deepEqual(writes(), []);
+});
+
+test('a leg without a usable result files "Job failed" for its own job once; a closed leg request is not filed again', async () => {
+  const gh = gate();
+  const windows = {
+    ...job('run (windows-2025)', null, 'host-w', 'in_progress'),
+    steps: [
+      { name: 'checkout', conclusion: 'success' },
+      { name: 'Run the harness', conclusion: 'failure' },
+      { name: 'Upload result', conclusion: 'success' },
+      { name: "File this leg's requests", conclusion: null },
+    ],
+  };
+  const ubuntu = job('run (ubuntu-24.04)', null, 'host-l', 'in_progress');
+  const empty = { path: 'leg/result.json', text: '' };
+  const writes = () => gh.writes.splice(0);
+
+  // (d) The leg has no usable result: its own in-progress job is filed, with the steps that failed so far.
+  gh.jobs.set('7', [windows]);
+  const d = await report({ gh, env, plan: { error: 'not read in leg mode' }, results: [empty], registry, leg: { runner: 'host-w' } });
+  equal(d.failed, true);
+  deepEqual(d.output.filed.map((f) => [f.title, f.decision]), [['Job failed: run (windows-2025)', 'created']]);
+  const body = gh.repo(E2E)[0]?.body ?? '';
+  match(body, /left no usable result; its leg filed this/);
+  match(body, /- Steps that did not succeed so far:\n\n```text\nRun the harness: failure\n```/);
+  match(body, /- Job: https:\/\/github.com\/taco3064\/nibfin-e2e\/actions\/runs\/7\/job\/run \(windows-2025\)/);
+  writes();
+
+  // The ubuntu leg then fails a step the windows leg never reached, but its step crashes before filing.
+  // Meanwhile Scope closes the windows request.
+  const filed = gh.repo(E2E)[0];
+  if (filed) {
+    filed.state = 'closed';
+    filed.updated_at = gh.now();
+  }
+
+  // (e) The final report sees the failed windows job without a result: the closed request stays the
+  // filing and no new issue is created; the ubuntu failure the leg could not file is filed now.
+  windows.status = ubuntu.status = 'completed';
+  windows.conclusion = ubuntu.conclusion = 'failure';
+  gh.jobs.set('7', [windows, ubuntu, job('report', null, 'r', 'in_progress')]);
+  const results = [
+    { path: 'results/result-windows-2025/result.json', text: '' },
+    { path: 'results/result-ubuntu-24.04/result.json', text: result('linux', 'host-l', { provisioning: [{ id: 'host', status: 'failed', reason: 'no podman' }] }) },
+  ];
+  const e = await report({ gh, env, plan: plan(), results, registry });
+  equal(e.failed, true);
+  deepEqual(e.output.filed.map((f) => [f.title, f.decision, f.number]), [
+    ['Provisioning failed: host', 'created', 2],
+    ['Job failed: run (windows-2025)', 'already filed', 1],
+  ]);
+  match(e.output.filed[1]?.reason ?? '', /#1, which is closed/);
+  deepEqual(writes(), ['POST /repos/taco3064/nibfin-e2e/issues']);
+  match(gh.repo(E2E)[1]?.body ?? '', /<!-- nibfin-e2e:run 7 leg linux -->$/);
+
+  // A leg request for a platform closed meanwhile: the other leg's new occurrence goes on a new request.
+  const p = gh.repo(E2E)[1];
+  if (p) {
+    p.state = 'closed';
+    p.updated_at = gh.now();
+  }
+  const winHost = { path: 'w.json', text: result('windows', 'host-w', { provisioning: [{ id: 'host', status: 'failed', reason: 'no machine' }] }) };
+  const linHost = results[1] as ResultFile;
+  const later = await report({ gh, env, plan: plan(), results: [winHost, linHost], registry });
+  deepEqual(later.output.filed.map((f) => [f.title, f.decision, f.number]), [['Provisioning failed: host', 'created', 3]]);
+  const third = gh.repo(E2E)[2]?.body ?? '';
+  match(third, /in 1 leg\.\n\n### 1\. windows/);
+  equal(third.includes('leg linux'), false);
+  match(third, /<!-- nibfin-e2e:run 7 leg windows -->$/);
+  deepEqual(writes(), ['POST /repos/taco3064/nibfin-e2e/issues']);
+
+  // A leg whose own job is not in the run files nothing and leaves it to the final report.
+  const lost = await report({ gh: gate([]), env, plan: { error: 'not read in leg mode' }, results: [empty], registry, leg: { runner: 'gone' } });
+  equal(lost.failed, false);
+  deepEqual(lost.output.filed, []);
+  match(lost.output.summary, /\| job on runner gone \| not found, left to the final report \|/);
+});

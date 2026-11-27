@@ -47,6 +47,9 @@ test('bad input exits 2 with one JSON document and makes no GitHub call', async 
     [['select', '--all', '--bogus'], base, {}, /Unknown option/],
     [['select', '--all'], { ...base, NIBFIN_GITHUB_TOKEN: '' }, {}, /missing environment variable NIBFIN_GITHUB_TOKEN/],
     [['report'], base, {}, /needs --results/],
+    [['report', '--leg', '--plan', 'plan.json', '--results', 'r'], { ...base, RUNNER_NAME: 'host-w' }, { 'plan.json': '{}' }, /--leg cannot take --plan/],
+    [['report', '--leg', '--results', 'r'], base, {}, /--leg needs RUNNER_NAME/],
+    [['report', '--leg', '--results', 'r'], { ...base, RUNNER_NAME: ' ' }, {}, /--leg needs RUNNER_NAME/],
     [['report', '--results', 'r'], { ...base, GITHUB_REPOSITORY: 'someone/fork' }, {}, /GITHUB_REPOSITORY must be taco3064\/nibfin-e2e/],
     [['report', '--results', 'r'], { ...base, GITHUB_RUN_ID: undefined }, {}, /GITHUB_RUN_ID/],
     [['proposal-updated'], base, {}, /cannot read GITHUB_EVENT_PATH/],
@@ -98,6 +101,18 @@ test('report and proposal-updated exit 1 on a failure and 0 when all is well', a
   const gh = new FakeGate();
   gh.dropOnCreate = { assignees: true };
   equal((await gate(['proposal-updated'], { files: { 'event.json': event }, gh })).code, 1);
+});
+
+test('report --leg files its own job when it left no result, and exits 0 when its job is not in the run', async () => {
+  const gh = new FakeGate();
+  gh.jobs.set('7', [{ name: 'run (ubuntu-24.04)', status: 'in_progress', conclusion: null, runner_name: 'host-l', html_url: 'j', steps: [] }]);
+  const r = await gate(['report', '--leg', '--results', 'leg'], { env: { ...base, RUNNER_NAME: 'host-l' }, gh });
+  equal(r.code, 1);
+  deepEqual(r.json.filed.map((f: { title: string }) => f.title), ['Job failed: run (ubuntu-24.04)']);
+  match(r.json.summary, /^## Gate report for this leg/);
+  const quiet = await gate(['report', '--leg', '--results', 'leg'], { env: { ...base, RUNNER_NAME: 'gone' } });
+  equal(quiet.code, 0);
+  deepEqual([quiet.json.filed, quiet.gh.writes], [[], []]);
 });
 
 test('a GitHub read error exits 1 and names it', async () => {

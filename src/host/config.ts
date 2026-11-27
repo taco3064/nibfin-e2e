@@ -72,6 +72,15 @@ export function runMarker(runId: string): string {
   return `<!-- nibfin-e2e:run ${runId} -->`;
 }
 
+/**
+ * Hidden marker for one leg's occurrences in a body or comment the gate writes, next to the run
+ * marker, so a later filing in the same run (another leg or the final report) adds only the legs
+ * not yet filed.
+ */
+export function legMarker(runId: string, platform: string): string {
+  return `<!-- nibfin-e2e:run ${runId} leg ${platform} -->`;
+}
+
 /** Hidden markers around the gate-managed times of a "Proposal updated" request. */
 export const PROPOSAL_STATE_MARKER = '<!-- nibfin-e2e:proposal-updated ';
 export const PROPOSAL_STATE_END = '<!-- nibfin-e2e:proposal-updated-end -->';
