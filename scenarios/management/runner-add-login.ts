@@ -1,6 +1,7 @@
 // Proposal R5.30: `runner add` for a provider that is not logged in yet goes on to guide
 // the CLI's own login. Codex has no login on the gate host, so `runner add codex` takes
-// that path; the scenario stops at the guide and never authorizes.
+// that path; the scenario stops at the guide and never authorizes. The same check is
+// Proposal R5.34's first-login clause ("the first login is guided by runner add").
 import { CODEX_VOLUME } from '../../src/host/config.ts';
 import type { RunContext } from '../../src/types.ts';
 import { claudeLoggedIn, defineScenario, providerLogin, statusJson } from '../dashboard/support.ts';
@@ -116,7 +117,7 @@ async function attempt(ctx: RunContext, secrets: Secrets, child: ReturnType<RunC
 
 export const runnerAddLogin = defineScenario({
   id: 'runner-add-login',
-  rules: ['R5.30'],
+  rules: ['R5.30', 'R5.34'],
   requires: ['nibfin'],
   async run(ctx, secrets) {
     let before: Registration[];
