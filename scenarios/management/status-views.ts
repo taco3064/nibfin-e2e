@@ -1,6 +1,6 @@
 import type { GitHub } from '../../src/host/github.ts';
 import type { RunContext, Scenario } from '../../src/types.ts';
-import { Check, tail } from '../lib/check.ts';
+import { Check, precondition, redact, tail } from '../lib/check.ts';
 import { isNibfinRunFor } from '../lib/gh.ts';
 import { createIssue, deleteFile, json, putFile, readFile, registrations, whoami } from '../lib/github.ts';
 import type { Issue } from '../lib/github.ts';
@@ -40,8 +40,9 @@ interface RepoView {
   nibfinRepos: NibfinRepo[] | null;
 }
 
-interface Run {
+export interface Run {
   id: number;
+  run_attempt: number;
   display_title: string;
   status: string;
   conclusion: string | null;
@@ -52,22 +53,107 @@ interface Run {
 const runs = async (gh: GitHub, repo: string, since: string) =>
   (await gh.rest<{ workflow_runs: Run[] }>('GET', `/repos/${repo}/actions/runs?per_page=100&created=${encodeURIComponent('>=' + since)}`)).data.workflow_runs;
 
+const isNibfin = (r: Run) => r.display_title.startsWith('Nibfin');
+
+/** The statuses of a run that is not finished; the API filter takes one value per call. */
+const UNFINISHED = ['queued', 'in_progress', 'waiting', 'pending', 'requested'];
+
+/** Every Nibfin run of `repo` that is queued, in progress or otherwise not finished. */
+async function unfinishedRuns(gh: GitHub, repo: string): Promise<Run[]> {
+  const out: Run[] = [];
+  for (const s of UNFINISHED) out.push(...(await gh.list<Run>(`/repos/${repo}/actions/runs?status=${s}`, 'workflow_runs')).filter(isNibfin));
+  return out;
+}
+
+/** Every Nibfin run of `repo` created at or after `since` (a GitHub timestamp), all pages. */
+async function nibfinRunsSince(gh: GitHub, repo: string, since: string): Promise<Run[]> {
+  return (await gh.list<Run>(`/repos/${repo}/actions/runs?created=${encodeURIComponent('>=' + since)}`, 'workflow_runs')).filter(isNibfin);
+}
+
+/** A run attempt's identity: a re-run keeps the id and raises `run_attempt`. */
+const runKey = (r: Pick<Run, 'id' | 'run_attempt'>) => `${r.id}:${r.run_attempt}`;
+
+/** The keys of the runs that were completed when `runs` was read; unfinished runs are left out. */
+export function completedKeys(runs: Run[]): Set<string> {
+  return new Set(runs.filter((r) => r.status === 'completed').map(runKey));
+}
+
+/**
+ * The runs that may have written during the window: every run not completed at the
+ * baseline read (its key is missing) and every run not completed now. Leans toward
+ * overlap, because an overlap only leads to a retry or a reported failure, never a pass.
+ */
+export function overlapping(baseline: Set<string>, runs: Run[]): Run[] {
+  const seen = new Set<string>();
+  const out: Run[] = [];
+  for (const r of runs) {
+    const key = runKey(r);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (!baseline.has(key) || r.status !== 'completed') out.push(r);
+  }
+  return out;
+}
+
+export const FIELDS = ['labels', 'issues', 'pulls', 'secrets', 'variables', 'runners'] as const;
+export type Field = (typeof FIELDS)[number];
+export type Snapshot = Record<string, Partial<Record<Field, string[]>>>;
+
+/** One line per changed repository and field with the entries added and removed; `[]` when nothing changed. */
+export function snapshotDiff(before: Snapshot, after: Snapshot): string[] {
+  const lines: string[] = [];
+  const repos = [...new Set([...Object.keys(before), ...Object.keys(after)])].sort();
+  const show = (xs: string[]) => `[${xs.map(redact).join(', ')}]`;
+  for (const repo of repos) {
+    for (const field of FIELDS) {
+      const b = before[repo]?.[field] ?? [];
+      const a = after[repo]?.[field] ?? [];
+      const inB = new Set(b);
+      const inA = new Set(a);
+      const added = a.filter((x) => !inB.has(x));
+      const removed = b.filter((x) => !inA.has(x));
+      if (!added.length && !removed.length) continue;
+      const parts = [added.length ? `added ${show(added)}` : '', removed.length ? `removed ${show(removed)}` : ''].filter(Boolean);
+      lines.push(`${repo} ${field}: ${parts.join('; ')}`);
+    }
+  }
+  return lines;
+}
+
+export type R542Decision = { kind: 'pass' } | { kind: 'retry' } | { kind: 'fail'; reason: string };
+
+/** What one R5.42 measurement means: an unexplained change fails at once; a change while Nibfin runs overlapped is measured again. */
+export function r542Decision(m: { diff: string[]; overlapUrls: string[]; attempt: number; maxAttempts: number }): R542Decision {
+  if (!m.diff.length) return { kind: 'pass' };
+  if (!m.overlapUrls.length) {
+    return { kind: 'fail', reason: `status changed GitHub state of the sandboxes with no Nibfin run overlapping: ${m.diff.join('; ')}` };
+  }
+  if (m.attempt < m.maxAttempts) return { kind: 'retry' };
+  return {
+    kind: 'fail',
+    reason: `GitHub state of the sandboxes changed across two status calls while Nibfin runs overlapped (cause not shown to be status): ${m.diff.join('; ')}; overlapping runs: ${m.overlapUrls.join(', ')}`,
+  };
+}
+
+const MAX_ATTEMPTS = 3;
+
 /** Everything `status` must leave as it is (Proposal R5.42); runner busy/online state is GitHub's own and not compared. */
-async function snapshot(gh: GitHub, repos: string[]): Promise<string> {
-  const out: Record<string, unknown> = {};
+async function snapshot(gh: GitHub, repos: string[]): Promise<Snapshot> {
+  const out: Snapshot = {};
   for (const repo of repos) {
     const r = `/repos/${repo}`;
     const issues = await gh.list<{ number: number; labels: { name: string }[]; pull_request?: unknown }>(`${r}/issues?state=open`);
     out[repo] = {
       labels: (await gh.list<{ name: string }>(`${r}/labels`)).map((l) => l.name).sort(),
       issues: issues.map((i) => `${i.number}:${i.labels.map((l) => l.name).sort().join('+')}`).sort(),
-      pulls: (await gh.list<{ number: number }>(`${r}/pulls?state=all`)).map((p) => p.number).sort(),
+      pulls: (await gh.list<{ number: number }>(`${r}/pulls?state=all`)).map((p) => String(p.number)).sort(),
+      // Names only: a secret's value is never read.
       secrets: (await gh.list<{ name: string }>(`${r}/actions/secrets`, 'secrets')).map((s) => s.name).sort(),
       variables: (await gh.list<{ name: string; value: string }>(`${r}/actions/variables`, 'variables')).map((v) => `${v.name}=${v.value}`).sort(),
       runners: (await registrations(gh, repo)).map((x) => `${x.id}:${x.name}:${x.labels.map((l) => l.name).sort().join('+')}`).sort(),
     };
   }
-  return JSON.stringify(out);
+  return out;
 }
 
 async function status<T>(ctx: RunContext, args: string[]): Promise<T> {
@@ -117,11 +203,36 @@ export const statusViews: Scenario = {
       { what: `a successful Nibfin run on ${execution} after ${lastChange.sha.slice(0, 7)}`, deadlineMs: 10 * 60_000, intervalMs: 15_000, signal: ctx.signal },
     );
 
-    const before = await snapshot(gh, [execution, peer]);
-    const person = await status<PersonView>(ctx, []);
-    const repoView = await status<RepoView>(ctx, ['-R', execution]);
-    const after = await snapshot(gh, [execution, peer]);
-    c.that(before === after, 'R5.42', 'GitHub state of the sandboxes (labels, open Issues, PRs, secrets, variables, registrations) changed across two status calls');
+    // R5.42 measures only the two status calls: start with no Nibfin run unfinished, and count
+    // every run not completed at the baseline read as overlapping the window.
+    const sandboxes = [execution, peer];
+    const since = issueA.created_at;
+    let person!: PersonView;
+    let repoView!: RepoView;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await waitFor(
+          async () => (await Promise.all(sandboxes.map((r) => unfinishedRuns(gh, r)))).flat().map((r) => r.html_url),
+          (urls) => urls.length === 0,
+          { what: `no unfinished Nibfin run on ${execution} or ${peer}`, deadlineMs: 10 * 60_000, intervalMs: 15_000, signal: ctx.signal },
+        );
+      } catch (error) {
+        if (ctx.signal.aborted) throw error;
+        return precondition(error instanceof Error ? error.message : String(error));
+      }
+      const baseline = completedKeys((await Promise.all(sandboxes.map((r) => nibfinRunsSince(gh, r, since)))).flat());
+      const before = await snapshot(gh, sandboxes);
+      person = await status<PersonView>(ctx, []);
+      repoView = await status<RepoView>(ctx, ['-R', execution]);
+      const after = await snapshot(gh, sandboxes);
+      const diff = snapshotDiff(before, after);
+      const listing = (await Promise.all(sandboxes.map(async (r) => [...(await nibfinRunsSince(gh, r, since)), ...(await unfinishedRuns(gh, r))]))).flat();
+      const overlapUrls = overlapping(baseline, listing).map((r) => r.html_url);
+      const decision = r542Decision({ diff, overlapUrls, attempt, maxAttempts: MAX_ATTEMPTS });
+      if (decision.kind === 'retry') continue;
+      if (decision.kind === 'fail') c.fail('R5.42', decision.reason);
+      break;
+    }
 
     for (const [name, v] of [['person', person], ['repo', repoView]] as const) {
       const errors = validate(v);
