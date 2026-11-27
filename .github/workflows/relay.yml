@@ -1,0 +1,59 @@
+name: Relay
+
+# Deploys the Notion Proposal relay (relay/) to Cloudflare and sets its secrets from
+# this repository's secrets. Nibfin's own project setup, not a product Worker
+# (Proposal R8.13). Re-run it by hand after NOTION_VERIFICATION_TOKEN is added.
+on:
+  push:
+    branches: [main]
+    paths:
+      - relay/**
+      - package.json
+      - package-lock.json
+      - .github/workflows/relay.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: relay
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      # wrangler comes from the lockfile.
+      - run: npm ci
+      - name: Deploy
+        run: npx wrangler deploy --config relay/wrangler.jsonc
+      # A fine-grained token that can only send repository_dispatch to nibfin-e2e.
+      - name: Set the relay's GitHub token
+        env:
+          RELAY_TOKEN: ${{ secrets.RELAY_GITHUB_TOKEN }}
+        run: |
+          if [[ -z "$RELAY_TOKEN" ]]; then echo "::error::RELAY_GITHUB_TOKEN is not set"; exit 1; fi
+          printf '%s' "$RELAY_TOKEN" | npx wrangler secret put GITHUB_TOKEN --config relay/wrangler.jsonc
+      # Unset on the first deploy: the Worker then logs the token Notion sends once,
+      # and the Owner stores it here and re-runs this workflow.
+      - name: Set the Notion verification token
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_VERIFICATION_TOKEN }}
+        run: |
+          if [[ -z "$NOTION_TOKEN" ]]; then
+            echo "NOTION_VERIFICATION_TOKEN is not set yet; the relay will log the token Notion sends." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          printf '%s' "$NOTION_TOKEN" | npx wrangler secret put NOTION_VERIFICATION_TOKEN --config relay/wrangler.jsonc
