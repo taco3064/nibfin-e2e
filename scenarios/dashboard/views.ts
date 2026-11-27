@@ -1,7 +1,7 @@
 // Proposal R9.14–R9.17, R9.19, R9.1–R9.5, R9.7, R9.8: the three views and what each shows.
 import type { Locator, Page } from 'playwright-core';
 import type { RunContext } from '../../src/types.ts';
-import { check, dateTexts, fail, lightProblem, localeProblems, shiftedBy, stageOf, stateOf, statusValue } from './checks.ts';
+import { check, countNear, dateTexts, fail, hasCount, lightProblem, localeProblems, shiftedBy, stageOf, stateOf, statusValue } from './checks.ts';
 import { blockedBy, ensureFixtures, me, openIssues, readIssue, sleep, until } from './github.ts';
 import type { Fixtures, Issue } from './github.ts';
 import {
@@ -87,13 +87,6 @@ async function searchSet(ctx: RunContext): Promise<Listed> {
   };
 }
 
-/** A number near a word in a text: "Shape 3", "3 Shape", "Shape: 3". */
-function numberNear(text: string, word: RegExp): number | undefined {
-  const w = word.source;
-  const m = new RegExp(`(?:${w})\\D{0,16}?(\\d+)|(\\d+)\\D{0,16}?(?:${w})`, 'i').exec(text);
-  return m ? Number(m[1] ?? m[2]) : undefined;
-}
-
 const CONCLUSIONS: [string, RegExp][] = [
   ['success', /\b(success|succeeded|passed)\b/i],
   ['failure', /\b(failure|failed)\b/i],
@@ -101,6 +94,33 @@ const CONCLUSIONS: [string, RegExp][] = [
   ['skipped', /\bskipped\b/i],
   ['in progress', /\b(in progress|running|queued)\b/i],
 ];
+
+/**
+ * The Runs summary tile's legend buckets (Proposal R9.1), each with the strip tally names
+ * it sums. The tile shows skipped and cancelled runs as one count.
+ */
+const RUN_BUCKETS: [string, RegExp, string[]][] = [
+  ['succeeded', /succeeded/, ['success']],
+  ['failed', /failed/, ['failure']],
+  ['running', /running/, ['in progress']],
+  ['skipped or cancelled', /skipped or cancell?ed/, ['skipped', 'cancelled']],
+];
+
+const quote = (t: string) => `"${t.replace(/\s+/g, ' ').trim().slice(0, 200)}"`;
+
+/**
+ * The text of one R9.1 summary tile: the region named by its title. Re-read until it shows
+ * a standalone count (the tile may still be loading); never the whole view.
+ */
+async function summaryTile(page: Page, name: string, title: RegExp): Promise<string> {
+  const tile = page.getByRole('region', { name: title }).first();
+  if (!(await tile.count())) {
+    const group = page.getByRole('group', { name: /summary/i }).first();
+    const seen = (await group.count()) ? await group.innerText().catch(() => '') : await bodyText(page);
+    fail('R9.1', `a ${name} summary tile`, `none (summary: ${quote(seen)})`);
+  }
+  return until(() => tile.innerText().catch(() => ''), hasCount, 30_000, 1000);
+}
 
 /** Conclusions of the runs an Issue's run strip lists, read from each run row's text or label. */
 async function stripConclusions(page: Page, el: Locator): Promise<string[] | undefined> {
@@ -144,19 +164,18 @@ async function personView(page: Page, ctx: RunContext, f: Fixtures, notes: strin
 
   // R9.1: tiles computed from the Issues the page lists, read back from GitHub.
   const listed = await renderedIssues(page, ctx);
-  const tiles = page.locator('section, [role="region"], [role="group"], dl, article').filter({ hasText: /open/i }).first();
-  const tileText = (await tiles.innerText().catch(() => '')) || text;
-  const open = numberNear(tileText, /open(?: issues?)?/);
-  check(open === listed.length, 'R9.1', `the open tile to show ${listed.length}`, String(open));
+  const openTile = await summaryTile(page, 'Open Issues', /^open\b/i);
+  const open = countNear(openTile, /open(?: issues?)?/);
+  check(open === listed.length, 'R9.1', `the open tile to show ${listed.length}`, () => `${open} (tile: ${quote(openTile)})`);
   for (const stage of ['Shape', 'Deliver'] as const) {
     const want = listed.filter((i) => stageOf(i.labels) === stage).length;
-    const got = numberNear(tileText, new RegExp(stage));
-    check(got === want, 'R9.1', `the stage stack to show ${stage} ${want}`, String(got));
+    const got = countNear(openTile, new RegExp(stage));
+    check(got === want, 'R9.1', `the stage stack to show ${stage} ${want}`, () => `${got} (tile: ${quote(openTile)})`);
   }
   const held = listed.filter((i) => i.labels.includes('pause') || i.labels.includes('pending'));
   const needs = page.getByRole('button', { name: /intervention|needs (you|attention)/i }).first();
   check(await needs.count(), 'R9.1', 'a clickable needs-intervention tile', 'none');
-  const needsN = numberNear(`${await needs.innerText()} ${(await needs.getAttribute('aria-label')) ?? ''}`, /intervention|attention|needs/);
+  const needsN = countNear(`${await needs.innerText()} ${(await needs.getAttribute('aria-label')) ?? ''}`, /intervention|attention|needs/);
   check(needsN === held.length, 'R9.1', `the needs-intervention count ${held.length}`, String(needsN));
   await needs.click();
   await sleep(800);
@@ -173,13 +192,15 @@ async function personView(page: Page, ctx: RunContext, f: Fixtures, notes: strin
   }
   const unknown = [...tally.keys()].filter((c) => c.startsWith('unknown:'));
   check(!unknown.length, 'R9.1', 'each listed run to show its conclusion', unknown.join(' | '));
-  for (const [name, re] of CONCLUSIONS) {
-    const want = tally.get(name) ?? 0;
-    const got = numberNear(tileText, new RegExp(re.source.replace(/\\b/g, '')));
-    if (want || got !== undefined) check((got ?? 0) === want, 'R9.1', `the run statistics to show ${want} ${name} (from the listed Issues' run strips)`, String(got));
+  const runsTile = await summaryTile(page, 'Runs', /^runs?\b/i);
+  for (const [name, word, names] of RUN_BUCKETS) {
+    const want = names.reduce((n, c) => n + (tally.get(c) ?? 0), 0);
+    const got = countNear(runsTile, word);
+    if (want || got !== undefined) check((got ?? 0) === want, 'R9.1', `the run statistics to show ${want} ${name} (from the listed Issues' run strips)`, () => `${got} (tile: ${quote(runsTile)})`);
   }
-  check(numberNear(tileText, /online/) !== undefined && numberNear(tileText, /busy/) !== undefined, 'R9.1', 'local Runner online and busy counts', tileText.slice(0, 200));
-  check(/\d+(?:\.\d+)?\s*(?:[KMG]i?B|%)/i.test(tileText), 'R9.1', 'the podman machine memory use', tileText.slice(0, 200));
+  const runnersTile = await summaryTile(page, 'Runners', /^runners?\b/i);
+  check(countNear(runnersTile, /online/) !== undefined && countNear(runnersTile, /busy/) !== undefined, 'R9.1', 'local Runner online and busy counts', () => `tile: ${quote(runnersTile)}`);
+  check(/\d+(?:\.\d+)?\s*(?:[KMG]i?B|%)/i.test(runnersTile), 'R9.1', 'the podman machine memory use', () => `tile: ${quote(runnersTile)}`);
   notes.push(`person view: ${listed.length} open, ${held.length} need intervention, tiles agree`);
 
   // R9.2, R9.19 on the fixtures.
