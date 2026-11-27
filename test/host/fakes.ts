@@ -288,6 +288,9 @@ export const fakeHostContext: HostContext = {
   sandbox: { execution: 'o/exec', peer: 'o/peer' },
   executionDir: '/tmp/none',
   ghNibfin: async () => ({ code: 0, stdout: '', stderr: '' }),
+  gh: async () => ({ code: 0, stdout: '', stderr: '' }),
+  workPath: (...parts) => ['/tmp/none', ...parts].join('/'),
+  claudeSettings: async () => undefined,
   github: {
     rest: async () => {
       throw new Error('no GitHub in this test');

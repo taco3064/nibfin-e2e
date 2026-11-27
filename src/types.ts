@@ -28,6 +28,12 @@ export interface RunTarget {
   platform: Platform;
 }
 
+/** What a scenario may pass to a child: stdin and extra variables (never `GH_TOKEN` or `E2E_*`). */
+export interface ChildOptions {
+  input?: string;
+  env?: Record<string, string>;
+}
+
 /** The host and sandboxes as scenarios see them; the host operations are Linux only. */
 export interface HostContext extends HostOperations {
   /** The two fixed sandboxes (Proposal R8.19). */
@@ -35,7 +41,13 @@ export interface HostContext extends HostOperations {
   /** The clone of the execution sandbox where `runner add` ran. */
   executionDir: string;
   /** Runs `gh nibfin …` in the execution clone, logged in with the sandbox token. */
-  ghNibfin(args: string[]): Promise<ExecResult>;
+  ghNibfin(args: string[], options?: ChildOptions): Promise<ExecResult>;
+  /** Runs `gh …` logged in with the sandbox token. */
+  gh(args: string[], options?: ChildOptions & { cwd?: string }): Promise<ExecResult>;
+  /** A path under the run's `.e2e-work/` directory. */
+  workPath(...parts: string[]): string;
+  /** The `nibfin-home-claude` volume's settings.json, compared in memory only (it holds the token). */
+  claudeSettings(): Promise<Record<string, unknown> | undefined>;
   /** GitHub REST and GraphQL with the sandbox token. */
   github: GitHub;
   /** Sets the execution sandbox's visibility, runs `fn`, then restores public; each change is read back. */
@@ -44,8 +56,8 @@ export interface HostContext extends HostOperations {
   startGhNibfin(args: string[], options?: { path?: string }): Running;
   /** Starts another long-lived child (for example `podman events`); it gets no secret. */
   start(argv: string[]): Running;
-  /** Runs one child to its end without any secret (for example `podman ps`). */
-  exec(argv: string[]): Promise<ExecResult>;
+  /** Runs one child to its end without any secret (for example `podman ps`), with optional stdin, cwd and extra variables. */
+  exec(argv: string[], options?: ChildOptions & { cwd?: string }): Promise<ExecResult>;
   /** `<repo root>/.e2e-work/`. */
   workDir(): string;
   /** The environment a browser gets: the host's, without any `E2E_*` variable and without `GH_TOKEN`. */

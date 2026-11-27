@@ -16,6 +16,11 @@ export interface ExecOptions {
   input?: string;
   /** Adds `GH_TOKEN` (the sandbox token) to the child's environment. Only for `gh`. */
   ghToken?: string;
+  /**
+   * Extra variables set after the filter (for example `PATH` or `XDG_DATA_HOME`). A key
+   * that is `GH_TOKEN` or starts with `E2E_` throws, so the credential rule holds.
+   */
+  env?: Record<string, string>;
 }
 
 /** Runs one child process from an argv array, never through a shell. */
@@ -32,12 +37,17 @@ export function envKey(env: Env, name: string, platform = process.platform): str
  * the Owner's `NIBFIN_GITHUB_TOKEN` and without an inherited `GH_TOKEN`; `GH_TOKEN` is set
  * only when the caller passes one.
  */
-export function childEnv(env: Env, ghToken?: string): Env {
+export function childEnv(env: Env, ghToken?: string, extra: Record<string, string> = {}, platform = process.platform): Env {
   const out: Env = {};
   for (const [k, v] of Object.entries(env)) {
     const upper = k.toUpperCase();
     if (upper.startsWith('E2E_') || upper === 'GH_TOKEN' || upper === 'NIBFIN_GITHUB_TOKEN') continue;
     out[k] = v;
+  }
+  for (const [k, v] of Object.entries(extra)) {
+    const upper = k.toUpperCase();
+    if (upper.startsWith('E2E_') || upper === 'GH_TOKEN') throw new Error(`exec: the variable ${k} cannot be set for a child`);
+    out[envKey(out, k, platform)] = v;
   }
   if (ghToken !== undefined) out.GH_TOKEN = ghToken;
   return out;
@@ -60,10 +70,16 @@ export function createExec(env: Env, log: (message: string) => void): Exec {
     new Promise((resolve, reject) => {
       const [cmd, ...args] = resolveArgv(argv, env);
       if (cmd === undefined) return reject(new Error('exec: empty argv'));
+      let childVars: Env;
+      try {
+        childVars = childEnv(env, options.ghToken, options.env);
+      } catch (error) {
+        return reject(error);
+      }
       log(`$ ${argv.join(' ')}${options.cwd ? ` (in ${options.cwd})` : ''}`);
       const child = spawn(cmd, args, {
         cwd: options.cwd,
-        env: childEnv(env, options.ghToken),
+        env: childVars,
         shell: false,
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,

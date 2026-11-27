@@ -1,4 +1,4 @@
-import { deepEqual, equal, rejects } from 'node:assert/strict';
+import { deepEqual, equal, rejects, throws } from 'node:assert/strict';
 import { test } from 'node:test';
 import { childEnv, createExec, mustRun, resolveArgv } from '../../src/host/exec.ts';
 
@@ -43,4 +43,15 @@ test('the stream delivers lines, filters the environment and stops on request', 
   await s.closed;
   deepEqual(lines, ['a', '0']);
   s.stop();
+});
+
+test('extra child variables are set after the filter, but never GH_TOKEN or E2E_*', async () => {
+  deepEqual(childEnv({ PATH: '/bin', E2E_X: 's' }, undefined, { PATH: '/only', XDG_DATA_HOME: '/d' }), { PATH: '/only', XDG_DATA_HOME: '/d' });
+  deepEqual(childEnv({ Path: 'C:\\bin' }, undefined, { PATH: 'C:\\only' }, 'win32'), { Path: 'C:\\only' });
+  throws(() => childEnv({}, undefined, { GH_TOKEN: 'x' }), /GH_TOKEN cannot be set/);
+  throws(() => childEnv({}, undefined, { e2e_sandbox_token: 'x' }), /e2e_sandbox_token cannot be set/);
+  const exec = createExec({ ...process.env }, () => {});
+  await rejects(exec([process.execPath, '-e', '0'], { env: { E2E_CLAUDE_TOKEN: 'x' } }), /cannot be set/);
+  const r = await exec([process.execPath, '-e', 'console.log(process.env.NIBFIN_E2E_X)'], { env: { NIBFIN_E2E_X: 'y' } });
+  equal(r.stdout.trim(), 'y');
 });

@@ -9,7 +9,7 @@ import type { Exec } from '../src/host/exec.ts';
 import { createGitHub } from '../src/host/github.ts';
 import { readTemplate, treeSha } from '../src/host/sandbox.ts';
 import type { HostServices } from '../src/host/services.ts';
-import { createProvisioning } from '../src/provisioning.ts';
+import { claudeRunnersLeft, createProvisioning } from '../src/provisioning.ts';
 import type { Platform, RunContext, StepOutcome } from '../src/types.ts';
 import { FakeGitHub, cleanRepo, fakeExec, fakeStart } from './host/fakes.ts';
 
@@ -254,4 +254,31 @@ test('podman: Linux checks podman runs; macOS is out of scope; a Windows MSI wit
   const win = harness({ platform: 'windows', fetch: async () => new Response('not the msi') });
   await rejects(win.runStep('podman'), /Podman MSI checksum mismatch/);
   deepEqual(win.calls, []);
+});
+
+test('nibfin: teardown passes without runner remove when status lists no claude Runner', async () => {
+  const { exec, calls } = fakeExec((argv) =>
+    argv[2] === 'status' ? { stdout: JSON.stringify({ host: { runners: { runners: [{ provider: 'codex' }] } } }) } : undefined,
+  );
+  const h = harness({ exec });
+  initPr(h.repo(EXEC), 5, { 'nibfin-issue.yml': image(DIGEST) });
+  initPr(h.repo(PEER), 3, { 'nibfin-issue.yml': 'on: issues\n' });
+  equal((await h.runStep('nibfin')).status, 'passed');
+  deepEqual(await h.teardown('nibfin'), { status: 'passed', reason: 'no local Runners left' });
+  equal(calls.some((c) => c.argv[3] === 'remove'), false);
+  deepEqual([claudeRunnersLeft('{"host":{"runners":{"runners":null}}}'), claudeRunnersLeft('not json'), claudeRunnersLeft('{"host":{"runners":{"runners":[{"provider":"claude"}]}}}')], [false, undefined, true]);
+});
+
+test('nibfin: the host state before runner add is a fact', async () => {
+  const { exec } = fakeExec((argv) => {
+    if (argv[0] === 'systemctl') return { stdout: 'a.service enabled enabled\nb.timer static -\n' };
+    if (argv[0] === 'loginctl') return { stdout: 'no\n' };
+    return undefined;
+  });
+  const h = harness({ exec });
+  initPr(h.repo(EXEC), 5, { 'nibfin-issue.yml': image(DIGEST) });
+  initPr(h.repo(PEER), 3, { 'nibfin-issue.yml': 'on: issues\n' });
+  const out = await h.runStep('nibfin');
+  const before = out.facts?.hostBefore as { platform: string; units: unknown; linger: string };
+  deepEqual([before.platform, before.units, before.linger], ['linux', [{ name: 'a.service', state: 'enabled' }, { name: 'b.timer', state: 'static' }], 'no']);
 });

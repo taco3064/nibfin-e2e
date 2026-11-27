@@ -3,6 +3,7 @@ import { IMAGE_DIGEST, KNOWN_VISIBILITY, SANDBOX } from './host/config.ts';
 import { mustRun } from './host/exec.ts';
 import type { ExecResult } from './host/exec.ts';
 import { installGhNibfin } from './host/ghnibfin.ts';
+import { readHostState, seedWslconfig } from './host/hoststate.ts';
 import type { GitHub } from './host/github.ts';
 import { writeClaudeLogin } from './host/login.ts';
 import { preparePeer, teardownPeer } from './host/peer.ts';
@@ -26,6 +27,20 @@ async function resetBoth(host: HostServices, ctx: RunContext): Promise<string> {
   ];
   if (left.length) throw new Error(`sandbox read-back is not clean: ${left.join('; ')}`);
   return `${SANDBOX.execution} (public) and ${SANDBOX.peer} (private) reset and read back clean`;
+}
+
+/** Whether `status --json` lists a local claude Runner; undefined when the output cannot tell. */
+export function claudeRunnersLeft(stdout: string): boolean | undefined {
+  let v: unknown;
+  try {
+    v = JSON.parse(stdout);
+  } catch {
+    return undefined;
+  }
+  const runners = (v as { host?: { runners?: { runners?: unknown } } } | null)?.host?.runners?.runners;
+  if (runners === null) return false;
+  if (!Array.isArray(runners)) return undefined;
+  return runners.some((r) => (r as { provider?: unknown } | null)?.provider === 'claude');
 }
 
 export interface InitPr {
@@ -122,6 +137,9 @@ export function createProvisioning(host: HostServices): ProvisioningStep[] {
         };
         try {
           await mustRun(host.exec, ['git', 'clone', '--quiet', `https://github.com/${SANDBOX.execution}.git`, ctx.executionDir]);
+          // The host state before runner add, so scenarios can see what the always-on setup changed.
+          if (ctx.target.platform === 'windows') seedWslconfig();
+          facts.hostBefore = await readHostState((argv, env) => host.exec(argv, { env }), ctx.target.platform);
           facts.runnerAdd = true;
           await nibfin(['runner', 'add', 'claude', '--count', '2', '--yes']);
           await nibfin(['init', '--yes']);
@@ -150,6 +168,9 @@ export function createProvisioning(host: HostServices): ProvisioningStep[] {
       },
       async teardown(ctx) {
         if (ctx.facts('nibfin')?.runnerAdd !== true) return { status: 'passed', reason: 'runner add did not run; nothing to remove' };
+        // A scenario may already have removed every Runner (runner-remove); then runner remove has nothing to do.
+        const status = await ctx.ghNibfin(['status', '--json']);
+        if (status.code === 0 && claudeRunnersLeft(status.stdout) === false) return { status: 'passed', reason: 'no local Runners left' };
         const r = await ctx.ghNibfin(['runner', 'remove', 'claude', '--yes']);
         if (r.code !== 0) return { status: 'failed', reason: `gh nibfin runner remove claude --yes exited ${r.code}: ${tail(r)}` };
         return { status: 'passed', reason: 'local Runners removed' };
