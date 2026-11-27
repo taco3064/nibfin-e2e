@@ -6,6 +6,20 @@ import type { Issue, Job, Pull, Run } from './analysis.ts';
 import { DEADLINE, changeRequest } from './kit.ts';
 import type { Kit } from './kit.ts';
 import type { Snapshot } from './observe.ts';
+import { waitFor } from '../lib/wait.ts';
+
+type Gone = (s: Snapshot) => Promise<string | undefined>;
+
+/** A `gonePast` check giving the first reason any of `checks` gives. */
+const firstOf =
+  (...checks: Gone[]): Gone =>
+  async (s) => {
+    for (const c of checks) {
+      const reason = await c(s);
+      if (reason !== undefined) return reason;
+    }
+    return undefined;
+  };
 
 export interface Journey {
   a: Issue;
@@ -159,9 +173,16 @@ export interface HoldJourney {
   pausedAt: number;
   /** Why the pause did not land while Shape ran, if so. */
   pauseLate?: string;
-  /** Deliver runs of P after the Shape was published while `pause` was on. */
+  /** Deliver runs of P created while `pause` was on, once P's runs settled. */
   deliverWhilePaused: number;
-  shapedWhilePaused: boolean;
+  /**
+   * How the Shape that was running when `pause` was added ended: `published` (`shaped`
+   * appeared while `pause` was on) or `held` (it completed without `shaped`; the Shape
+   * is redone once `pause` is removed).
+   */
+  pauseOutcome: 'published' | 'held';
+  /** When `pause` was removed to let the Shape be redone (`held` only). */
+  unpausedAt?: number;
   editedAt: number;
   /** Deliver removed `shaped` after the edit (sent the Shape back). */
   sentBack: boolean;
@@ -175,6 +196,21 @@ export interface HoldJourney {
 }
 
 const hasLabel = (k: Kit, s: Snapshot, n: number, l: string) => k.labels(s, k.exec, n).includes(l);
+
+export type PauseOutcome = { kind: 'published' } | { kind: 'held' } | { kind: 'fault'; reason: string };
+
+/**
+ * How the Shape running when `pause` was added ended, from P's state once its runs
+ * settled with `pause` still on. Proposal R4.12 does not say whether a running Shape
+ * publishes before it stops, so both `published` and `held` are valid.
+ */
+export function pauseOutcome(i: { open: boolean; labels: string[]; shapedAddedWhilePaused: boolean }): PauseOutcome {
+  if (!i.open) return { kind: 'fault', reason: 'P closed while pause was on' };
+  if (i.labels.includes('pending')) return { kind: 'fault', reason: 'P got pending while pause was on' };
+  if (i.labels.includes('shaped')) return { kind: 'published' };
+  if (i.shapedAddedWhilePaused) return { kind: 'fault', reason: '`shaped` was added and removed while pause was on' };
+  return { kind: 'held' };
+}
 
 /** P: `pause` at a stage boundary, an edit that contradicts its Shape, then `pending` during Deliver. */
 export function holdJourney(k: Kit): Promise<HoldJourney> {
@@ -208,17 +244,70 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
     return j.status === 'completed' ? j : undefined;
   }, DEADLINE.stage, show);
   const pauseLate = time(shapeDone.completed_at) <= pausedAt ? `P's shape job ${shapeDone.id} completed before pause was added` : undefined;
-  const shaped = await k.obs.until('P\'s Shape to be published', (s) => (hasLabel(k, s, n, 'shaped') ? s : undefined), DEADLINE.stage, show);
+  // With `pause` on, the running Shape may be published and then held, or held before it
+  // is published (Proposal R4.12 allows both). Settle P's runs woken after `pause` (for
+  // example by `shaped` being added) and judge it from P's state while still paused.
   const ofP = k.runsOf(exec, n);
-  const calm = await k.settle('P shaped', shaped.at, ofP);
-  const deliverWhilePaused = k.stages(calm, exec, n, ['deliver']).length;
-  const shapedWhilePaused = hasLabel(k, calm, n, 'shaped');
-
-  await k.gh.rest('PATCH', `/repos/${exec}/issues/${n}`, {
-    body: changeRequest(slug, 'quadruple', 'returns its argument times four', 'This replaces the earlier `triple` request: there must be no `triple` function.'),
+  const calm = await k.settle('P paused', pausedAt, ofP);
+  const pi = k.issue(calm, exec, n);
+  const decided = pauseOutcome({
+    open: pi?.state === 'open',
+    labels: k.labels(calm, exec, n),
+    shapedAddedWhilePaused: (await k.labeledAt(exec, n, 'shaped', time(shapeJob.started_at))) !== undefined,
   });
-  const editedAt = k.now();
-  await k.removeLabel(exec, n, 'pause');
+  if (decided.kind === 'fault') throw new Error(`${decided.reason}: ${await k.summary(calm, exec, n)}`);
+  const deliverWhilePaused = k.stages(calm, exec, n, ['deliver']).length;
+  const edit = async () => {
+    await k.gh.rest('PATCH', `/repos/${exec}/issues/${n}`, {
+      body: changeRequest(slug, 'quadruple', 'returns its argument times four', 'This replaces the earlier `triple` request: there must be no `triple` function.'),
+    });
+    return k.now();
+  };
+
+  let editedAt: number;
+  let unpausedAt: number | undefined;
+  if (decided.kind === 'published') {
+    editedAt = await edit();
+    await k.removeLabel(exec, n, 'pause');
+  } else {
+    // Held before publishing: removing `pause` is the event that lets the Shape be redone
+    // (Proposal R1.12, R3.41). The edit must land before any Deliver of P starts, so the
+    // labels are read directly at a short interval once the redone shape job has started.
+    await k.removeLabel(exec, n, 'pause');
+    unpausedAt = k.now();
+    const since = unpausedAt;
+    await k.obs.until(
+      'P\'s Shape to be redone after pause was removed',
+      async (s) => (await k.agentJobs(s, exec, n, ['shape'])).find((j) => time(j.started_at) >= since),
+      DEADLINE.stage,
+      show,
+      { gonePast: k.stageGone(exec, n, 'shape', { since: since - 60_000 }) },
+    );
+    const read = async () => (await k.gh.rest<Issue>('GET', `/repos/${exec}/issues/${n}`)).data;
+    const names = (i: Issue) => i.labels.map((l) => l.name);
+    const published = await waitFor(read, (i) => i.state !== 'open' || names(i).includes('shaped') || names(i).includes('pending'), {
+      what: 'P\'s Shape to be published after pause was removed',
+      deadlineMs: Math.max(0, DEADLINE.stage - (k.now() - since)),
+      intervalMs: 5_000,
+      now: () => k.now(),
+      sleep: k.sleep,
+      signal: k.ctx.signal,
+    });
+    if (!names(published).includes('shaped') || published.state !== 'open') {
+      const state = published.state !== 'open' ? 'is closed' : 'has pending';
+      throw new Error(`P ${state} while waiting for its Shape to be published after pause was removed: ${await k.summary(await k.obs.fresh(), exec, n)}`);
+    }
+    editedAt = await edit();
+  }
+  // Held case: a Deliver that started before the edit cannot meet the contradicted Shape.
+  const deliverBeforeEdit = async (s: Snapshot) => {
+    if (unpausedAt === undefined) return undefined;
+    const from = unpausedAt;
+    const j = (await k.agentJobs(s, exec, n, ['deliver'])).find((x) => time(x.started_at) >= from && time(x.started_at) < editedAt);
+    return j
+      ? `P's deliver job ${j.id} started at ${String(j.started_at)}, before the edit at ${new Date(editedAt).toISOString()} that followed the Shape redone after pause; the contradicted-Shape steps cannot be exercised`
+      : undefined;
+  };
 
   const outcome = (s: Snapshot) => {
     if (!hasLabel(k, s, n, 'shaped')) return 'sent back' as const;
@@ -230,10 +319,11 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
   // `pending` comes off for the re-Shape and goes on again during the next Deliver.
   const first = await k.obs.until(
     'P\'s first Deliver after the edit',
-    async (s) => outcome(s) ?? ((await running('deliver', editedAt)(s)) ? ('running' as const) : undefined),
+    // A Deliver that started before the edit is left to `gonePast`, which names it.
+    async (s) => ((await deliverBeforeEdit(s)) ? undefined : (outcome(s) ?? ((await running('deliver', editedAt)(s)) ? ('running' as const) : undefined))),
     DEADLINE.stage,
     show,
-    { gonePast: k.stageGone(exec, n, 'deliver', { since: editedAt - 60_000, allowPending: true }) },
+    { gonePast: firstOf(deliverBeforeEdit, k.stageGone(exec, n, 'deliver', { since: editedAt - 60_000, allowPending: true })) },
   );
   let pendingAt: number | undefined;
   if (first === 'running') {
@@ -280,5 +370,5 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
   await k.removeLabel(exec, n, 'pending');
   const unpendedAt = k.now();
   await k.obs.until('P to close with delivered', (s) => k.delivered(s, exec, n), DEADLINE.delivery, show, { gonePast: k.closeGone(exec, n) });
-  return { p, pausedAt, pauseLate, deliverWhilePaused, shapedWhilePaused, editedAt, sentBack: next === 'sent back', reshapedAt, pendingAt, reviewWhilePending, pendingLate, unpendedAt };
+  return { p, pausedAt, pauseLate, deliverWhilePaused, pauseOutcome: decided.kind, unpausedAt, editedAt, sentBack: next === 'sent back', reshapedAt, pendingAt, reviewWhilePending, pendingLate, unpendedAt };
 }
