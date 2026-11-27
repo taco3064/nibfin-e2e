@@ -298,7 +298,7 @@ async function windowsLeg(ctx: RunContext, c: Check, run: HostRun, before: Windo
       });
     } catch (error) {
       if (ctx.signal.aborted) throw error;
-      c.fail(RULE, `task ${name} still ${last.state} after 300 s (last run ${last.lastRunTime || 'never'}, last result ${hex(last.lastResult)})`);
+      c.fail(RULE, `task ${name} still ${last.state} after 300 s (last run ${last.lastRunTime || 'never'}, last result ${hex(last.lastResult)}; ${message(error)})`);
       return {};
     }
 
