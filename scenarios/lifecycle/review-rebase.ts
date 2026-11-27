@@ -8,7 +8,7 @@
 // fixture gets an add of its own new source file with a different first line.
 import type { Scenario } from '../../src/types.ts';
 import { Checks, reasonOf, time } from './analysis.ts';
-import type { Activity, Pull } from './analysis.ts';
+import type { Activity, Pull, Stage } from './analysis.ts';
 import { DEADLINE, changeRequest, lifecycle, message } from './kit.ts';
 import type { Kit } from './kit.ts';
 
@@ -39,8 +39,8 @@ export interface RebaseEvidence {
   sha: string;
   /** The fixture's deliver agent jobs. */
   delivers: DeliverJob[];
-  /** The fixture's review stage runs. */
-  reviews: { id: number; created_at: string }[];
+  /** The fixture Issue's stage runs (every stage), oldest first. */
+  runs: { id: number; stage: Stage; created_at: string }[];
   /** Force pushes to the fixture's branch. */
   forced: Pick<Activity, 'timestamp' | 'before' | 'after'>[];
   /** The fixture's merged PR, if any. */
@@ -59,7 +59,7 @@ const forcedAfter = (e: RebaseEvidence) => e.forced.filter((a) => after(a.timest
  */
 export function notExercisedWhy(kind: 'behind' | 'conflict', e: RebaseEvidence): string | undefined {
   if (e.merged && !after(e.merged.merged_at, e.at)) return `${e.issue}'s PR #${e.merged.number} merged at ${String(e.merged.merged_at)}, before main advanced to ${e.sha}`;
-  if (kind === 'behind' && !e.reviews.some((r) => after(r.created_at, e.at))) return `no review run of ${e.issue} was created after main advanced to ${e.sha}`;
+  if (kind === 'behind' && !e.runs.some((r) => r.stage === 'review' && after(r.created_at, e.at))) return `no review run of ${e.issue} was created after main advanced to ${e.sha}`;
   return undefined;
 }
 
@@ -76,14 +76,24 @@ export function behindProblems(e: RebaseEvidence): string[] {
   return out;
 }
 
-/** What breaks R3.54 for a PR that really conflicted: no review-then-Deliver, no force push, or a merged head without the conflicting commit. */
+/** The stages that make up the Review stage (R5.72, R5.74): `finish` runs its steps that need no agent. */
+const REVIEW_STAGE: readonly Stage[] = ['review', 'finish'];
+
+/**
+ * What breaks R3.54 for a PR that really conflicted: no Review-stage (`review` or `finish`)
+ * run before the Deliver, no force push, or a merged head without the conflicting commit.
+ */
 export function conflictProblems(e: RebaseEvidence): string[] {
   const out: string[] = [];
   const late = e.delivers.filter((j) => after(j.started_at, e.at)).sort((a, b) => time(a.started_at) - time(b.started_at));
   const first = late[0];
   if (!first) out.push(`no deliver job for ${e.issue} started after the conflicting commit ${e.sha}`);
-  else if (!e.reviews.some((r) => after(r.created_at, e.at) && time(r.created_at) <= time(first.started_at))) {
-    out.push(`no review run of ${e.issue} was created between the conflicting commit and deliver job ${first.id} (started ${String(first.started_at)})`);
+  else {
+    const inWindow = e.runs.filter((r) => after(r.created_at, e.at) && time(r.created_at) <= time(first.started_at));
+    if (!inWindow.some((r) => REVIEW_STAGE.includes(r.stage))) {
+      const seen = inWindow.length ? inWindow.map((r) => `${r.id} ${r.stage} ${r.created_at}`).join(', ') : 'none';
+      out.push(`no review or finish run of ${e.issue} was created between the conflicting commit and deliver job ${first.id} (REASON ${first.reason ?? 'unknown'}, started ${String(first.started_at)}); stage runs in that window: ${seen}`);
+    }
   }
   if (!forcedAfter(e).length) out.push(`${e.branch} was not force-pushed after the conflicting commit`);
   if (!e.merged) out.push(`${e.issue} has no merged PR`);
@@ -222,7 +232,7 @@ async function heldHalf(k: Kit, c: Checks, spec: HalfSpec, n: number, harness: s
   const delivers: DeliverJob[] = [];
   for (const j of await k.agentJobs(s, exec, n, ['deliver'])) {
     let reason: string | undefined;
-    if (spec.kind === 'behind' && time(j.started_at) >= moved.at && j.status === 'completed') {
+    if (time(j.started_at) >= moved.at && j.status === 'completed') {
       try {
         reason = reasonOf(await k.obs.log(exec, j.id));
       } catch (error) {
@@ -237,7 +247,7 @@ async function heldHalf(k: Kit, c: Checks, spec: HalfSpec, n: number, harness: s
     at: moved.at,
     sha: moved.sha,
     delivers,
-    reviews: k.stages(s, exec, n, ['review']),
+    runs: k.stages(s, exec, n).map((r) => ({ id: r.id, stage: r.stage, created_at: r.created_at })),
     forced: await k.obs.activity(exec, { ref: `refs/heads/${branch}`, type: 'force_push' }),
     merged: merged ? { number: merged.number, head: merged.head.sha, merged_at: merged.merged_at } : undefined,
     descends: merged ? await k.obs.descends(exec, moved.sha, merged.head.sha) : false,
