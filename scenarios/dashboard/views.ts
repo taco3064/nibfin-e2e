@@ -8,6 +8,7 @@ import {
   bodyText,
   button,
   closeDialog,
+  currentStage,
   defineScenario,
   dialog,
   escapeRe,
@@ -37,14 +38,6 @@ export async function issueFeatures(el: Locator, issue: Issue): Promise<Record<s
     toggle: (await el.getByRole('button', { name: /pause|resume/i }).count()) > 0,
     link: (await el.locator(`a[href="${issue.html_url}"]`).count()) > 0,
   };
-}
-
-/** The stage the track marks current: aria-current, or "stage: X" text. */
-async function currentStage(el: Locator): Promise<string | undefined> {
-  const marked = el.locator('[aria-current="step"], [aria-current="true"], [aria-current="page"]');
-  if (await marked.count()) return (await marked.first().innerText()).trim() || ((await marked.first().getAttribute('aria-label')) ?? undefined);
-  const m = /\b(?:stage|current)\W+(shape|deliver|done)\b/i.exec(await el.innerText());
-  return m?.[1];
 }
 
 async function mustIssue(page: Page, issue: Issue, rule: string, where: string): Promise<Locator> {

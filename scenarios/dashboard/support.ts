@@ -244,6 +244,14 @@ export function issueElement(scope: Page | Locator, title: string): Locator {
   return scope.locator('li, article, [role="listitem"], [role="row"], [role="article"]').filter({ hasText: title }).last();
 }
 
+/** The stage the track marks current: aria-current, or "stage: X" text. */
+export async function currentStage(el: Locator): Promise<string | undefined> {
+  const marked = el.locator('[aria-current="step"], [aria-current="true"], [aria-current="page"]');
+  if (await marked.count()) return (await marked.first().innerText()).trim() || ((await marked.first().getAttribute('aria-label')) ?? undefined);
+  const m = /\b(?:stage|current)\W+(shape|deliver|done)\b/i.exec(await el.innerText());
+  return m?.[1];
+}
+
 const MARKER_WAIT_MS = 20_000;
 const MARKER_POLL_MS = 500;
 
