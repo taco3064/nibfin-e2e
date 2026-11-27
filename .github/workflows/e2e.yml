@@ -182,6 +182,19 @@ jobs:
           name: result-${{ matrix.os }}
           path: result.json
           if-no-files-found: ignore
+      - name: File this leg's requests
+        if: always()
+        timeout-minutes: 10
+        env:
+          NIBFIN_GITHUB_TOKEN: ${{ secrets.NIBFIN_GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          mkdir -p leg
+          [[ -f result.json ]] && cp result.json leg/
+          npm run --silent gate -- report --leg --results leg > leg-report.json
+          code=$?
+          jq -r '.summary // empty' leg-report.json >> "$GITHUB_STEP_SUMMARY" || cat leg-report.json
+          exit $code
 
   # Files one request per root failure, failed job without a result and plan gap.
   # Runs even when earlier jobs fail, time out or are cancelled.
