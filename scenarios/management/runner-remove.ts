@@ -5,7 +5,7 @@ import { Check, tail } from '../lib/check.ts';
 import { parseRemaining } from '../lib/gh.ts';
 import { nibfinFacts, openPulls, registrations } from '../lib/github.ts';
 import { finishHold, removeHold, startHold } from '../lib/hold.ts';
-import { hostRun, newEnabledUnits, newTasks } from './runner-add-setup.ts';
+import { hostRun, newTasks, wslconfigChanges } from './runner-add-setup.ts';
 
 /** The new scheduled tasks that run `podman machine start` (other tasks may appear on the host meanwhile). */
 async function podmanStartTasks(run: HostRun, tasks: string[]): Promise<string[]> {
@@ -40,14 +40,11 @@ export const runnerRemove: Scenario = {
     const facts = nibfinFacts(ctx);
     const run = hostRun(ctx);
 
-    // What the always-on setup added, read before anything is removed.
+    // The host after runner add, read before anything is removed. R5.16 names only
+    // Windows here (scheduled task removed, .wslconfig kept); it names nothing on Linux.
+    const windows = ctx.target.platform === 'windows';
     const setup = await readHostState(run, ctx.target.platform);
-    const added =
-      setup.platform === 'linux' && facts.hostBefore.platform === 'linux'
-        ? newEnabledUnits(facts.hostBefore, setup)
-        : setup.platform === 'windows' && facts.hostBefore.platform === 'windows'
-          ? await podmanStartTasks(run, newTasks(facts.hostBefore, setup))
-          : [];
+    const added = setup.platform === 'windows' && facts.hostBefore.platform === 'windows' ? await podmanStartTasks(run, newTasks(facts.hostBefore, setup)) : [];
 
     try {
       const hold = await startHold(gh, execution, 120);
@@ -69,14 +66,22 @@ export const runnerRemove: Scenario = {
       const none = await registrations(gh, execution);
       c.that(none.length === 0, 'R5.31', `after removing all Runners, ${execution} still lists [${none.map((r) => `${r.name} (${r.status})`).join(', ')}]`);
 
-      if (ctx.target.platform === 'windows') await ctx.exec(['podman', 'machine', 'start']);
+      if (windows) await ctx.exec(['podman', 'machine', 'start']);
       const vols = await ctx.exec(['podman', 'volume', 'ls', '--format', '{{.Name}}']);
       c.that(vols.code === 0 && !vols.stdout.split('\n').map((s) => s.trim()).includes('nibfin-home-claude'), 'R6.23', `the login volume nibfin-home-claude ${vols.code === 0 ? 'still exists' : `cannot be listed (${tail(vols, 200)})`} after --delete-login`);
 
-      const now = await readHostState(run, ctx.target.platform);
-      const still = now.platform === 'linux' ? added.filter((u) => now.units.some((x) => x.name === u)) : now.platform === 'windows' ? added.filter((t) => now.tasks.includes(t)) : [];
-      c.that(added.length > 0, 'R5.16', `runner add's always-on setup could not be found to check its removal (no new ${ctx.target.platform === 'windows' ? 'scheduled task' : 'user unit'} against the host before runner add)`);
-      c.that(!still.length, 'R5.16', `the last Runner's removal left the autostart setup ${still.join(', ')}`);
+      if (windows) {
+        const now = await readHostState(run, ctx.target.platform);
+        if (setup.platform !== 'windows' || now.platform !== 'windows') c.fail('R5.16', 'the Windows host state could not be read to check the last removal');
+        else {
+          c.that(added.length > 0, 'R5.16', "runner add's scheduled task that runs podman machine start could not be found to check its removal (no new such task against the host before runner add)");
+          const still = added.filter((t) => now.tasks.includes(t));
+          c.that(!still.length, 'R5.16', `the last Runner's removal left the scheduled task ${still.join(', ')}`);
+          const w = wslconfigChanges(setup.wslconfig, now.wslconfig);
+          c.that(!w.changed.length, 'R5.16', `the last Runner's removal changed or removed .wslconfig keys (kept unchanged since runner add): ${w.changed.join(', ')}`);
+          c.that(!w.added.length, 'R5.16', `the last Runner's removal added .wslconfig keys (kept unchanged since runner add): ${w.added.join(', ')}`);
+        }
+      }
 
       // R5.36: init needs local Runners; it installs none and logs nothing in.
       const prs = (await openPulls(gh, peer)).map((p) => p.number);
@@ -88,6 +93,7 @@ export const runnerRemove: Scenario = {
     } finally {
       await removeHold(gh, execution);
     }
-    return c.outcome(`runner remove took the idle Runner first, waited for the busy one, read back 1 then 0, deleted the login volume and the autostart setup; init then refused`);
+    const host = windows ? ', removed the podman machine start scheduled task and kept .wslconfig unchanged' : '';
+    return c.outcome(`runner remove took the idle Runner first, waited for the busy one, read back 1 then 0, deleted the login volume${host}; init then refused`);
   },
 };
