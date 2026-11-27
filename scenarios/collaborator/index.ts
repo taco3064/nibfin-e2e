@@ -2,10 +2,10 @@ import { join } from 'node:path';
 import type { Outcome, Scenario } from '../../src/types.ts';
 import { createProber } from './hook.ts';
 import type { ProbeCase, ProbeResult } from './hook.ts';
-import { hasLabel, registrations } from './observe.ts';
+import { hasLabel, message, registrations } from './observe.ts';
 import type { Registration } from './observe.ts';
 import { checkStatus, keyBody, parseRequestBody } from './parse.ts';
-import { privatePhase, publicRegistration, publicRemoval } from './phases.ts';
+import { privatePhase, publicRegistration, publicRemoval, retire } from './phases.ts';
 import type { LocalState, Registered } from './phases.ts';
 
 const TEN_MINUTES = 10 * 60_000;
@@ -249,4 +249,36 @@ export const collaboratorPrivate: Scenario = {
   },
 };
 
-export const collaboratorScenarios: Scenario[] = [collaboratorRegister, collaboratorStatus, collaboratorHook, collaboratorRemove, collaboratorPrivate];
+const all = [collaboratorRegister, collaboratorStatus, collaboratorHook, collaboratorRemove, collaboratorPrivate];
+const ids = new Set(all.map((s) => s.id));
+
+/**
+ * The last collaborator scenario a run starts, in any selection, retires the collaborator's
+ * Runner afterwards (`retire`), so no registration of it is left for the later scenarios.
+ * A retirement that leaves something fails that scenario with the reason.
+ */
+export function retiring(s: Scenario): Scenario {
+  return {
+    ...s,
+    async run(ctx) {
+      let out: Outcome;
+      try {
+        out = await s.run(ctx);
+      } catch (error) {
+        out = { status: 'failed', reason: message(error) };
+      }
+      if (ctx.upcoming().some((id) => ids.has(id))) return out;
+      let left: string[];
+      try {
+        left = await retire(ctx);
+      } catch (error) {
+        left = [message(error)];
+      }
+      if (!left.length) return out;
+      const reason = `setup: the collaborator's Runner was not retired after the collaborator scenarios: ${left.join('; ')}`;
+      return { status: 'failed', reason: out.status === 'passed' ? reason : `${out.reason}; ${reason}` };
+    },
+  };
+}
+
+export const collaboratorScenarios: Scenario[] = all.map(retiring);
