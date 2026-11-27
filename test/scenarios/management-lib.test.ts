@@ -345,12 +345,21 @@ test('waitForOutput: found when the step line streams in, exited when the child 
   e.exit();
 });
 
-test('statusRunners picks one provider from either runners shape', () => {
-  const s = { runners: { runners: [{ provider: 'claude' }, { provider: 'codex' }] }, providers: [{ provider: 'codex', loggedIn: false }] };
-  equal(statusRunners(s, 'codex').length, 1);
-  equal(statusRunners({ runners: [{ provider: 'codex' }, { provider: 'codex' }] }, 'codex').length, 2);
-  equal(statusRunners({ runners: { runners: null } }, 'codex').length, 0);
-  equal(statusRunners(null, 'codex').length, 0);
+test('statusRunners reads one provider from .host.runners.runners; an unreadable list is undefined', () => {
+  const s = {
+    host: {
+      host: { running: true },
+      runners: { runners: [{ provider: 'claude', status: 'online' }, { provider: 'codex', status: 'offline' }] },
+      providers: [{ provider: 'codex', loggedIn: false }],
+    },
+    repos: null,
+  };
+  deepEqual(statusRunners(s, 'codex'), [{ provider: 'codex', status: 'offline' }]);
+  deepEqual(statusRunners(s, 'claude')?.length, 1);
+  deepEqual(statusRunners({ host: { runners: { runners: null } } }, 'codex'), []);
+  equal(statusRunners({ runners: { runners: [{ provider: 'codex' }] } }, 'codex'), undefined);
+  equal(statusRunners({ host: {} }, 'codex'), undefined);
+  equal(statusRunners(null, 'codex'), undefined);
 });
 
 test('providerLogin: true, false and undefined; claudeLoggedIn keeps its results', () => {

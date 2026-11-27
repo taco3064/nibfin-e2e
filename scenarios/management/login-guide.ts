@@ -108,9 +108,13 @@ export async function waitForOutput<T>(
   }
 }
 
-/** Runners of `provider` that `status --json` lists (`runners.runners[]` or `runners[]`). */
-export function statusRunners(status: unknown, provider: string): unknown[] {
-  const runners = (status as { runners?: unknown } | null)?.runners;
-  const list = Array.isArray(runners) ? runners : (runners as { runners?: unknown } | null | undefined)?.runners;
-  return Array.isArray(list) ? list.filter((r) => (r as { provider?: unknown } | null)?.provider === provider) : [];
+/**
+ * Local Runners of `provider` that `status --json` lists under `.host.runners.runners`
+ * (null when there are none); undefined when the status has no such list to read.
+ */
+export function statusRunners(status: unknown, provider: string): unknown[] | undefined {
+  const list = (status as { host?: { runners?: { runners?: unknown } | null } | null } | null)?.host?.runners?.runners;
+  if (list === null) return [];
+  if (!Array.isArray(list)) return undefined;
+  return list.filter((r) => (r as { provider?: unknown } | null)?.provider === provider);
 }

@@ -39,6 +39,7 @@ async function precondition(ctx: RunContext): Promise<void> {
   const login = providerLogin(status, PROVIDER);
   if (login !== false) throw new Error(`gh nibfin status --json reports codex ${login ? 'logged in' : 'with no login entry'}; expected codex not logged in`);
   const runners = statusRunners(status, PROVIDER);
+  if (!runners) throw new Error('gh nibfin status --json has no .host.runners.runners list to check for codex Runners');
   if (runners.length) throw new Error(`gh nibfin status --json lists ${runners.length} codex Runner(s) before runner add`);
   if (await volumeExists(ctx)) {
     const files = await listVolume(ctx.exec, CODEX_VOLUME);
@@ -84,7 +85,8 @@ async function cleanup(ctx: RunContext, before: Registration[], stop: () => Prom
     if (extra.length) problems.push(`${execution} still lists new registrations [${extra.map((r) => r.name).join(', ')}]`);
     const status = await statusJson(ctx);
     const codex = statusRunners(status, PROVIDER);
-    if (codex.length) problems.push(`gh nibfin status still lists ${codex.length} codex Runner(s)`);
+    if (!codex) problems.push('gh nibfin status --json has no .host.runners.runners list to check for codex Runners');
+    else if (codex.length) problems.push(`gh nibfin status still lists ${codex.length} codex Runner(s)`);
     // Run-state guard, as in dashboard-login-relay: later scenarios need claude's login and Runners.
     if (!claudeLoggedIn(status)) problems.push('claude is no longer logged in');
     const online = before.filter((r) => r.status === 'online');
