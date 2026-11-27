@@ -1,9 +1,9 @@
 // Phase 1: scenarios that change the whole host (the login, the Runner services), so
 // each runs alone.
 import type { Scenario } from '../../src/types.ts';
-import { AGENT_STAGES, Checks, busyTogether, describeJob, duplicateMarkers, githubHosted, issueKey, jobWindow, markerOf, overlap, queuedHoldProblems, selfHosted, startedBefore, time } from './analysis.ts';
+import { AGENT_STAGES, Checks, busyTogether, describeJob, duplicateMarkers, githubHosted, issueKey, jobWindow, markerOf, overlap, queuedHoldProblems, ranOnRunner, selfHosted, startedBefore, time } from './analysis.ts';
 import type { Comment, Issue, Job, Run } from './analysis.ts';
-import { DEADLINE, changeRequest, finishAt, hostedRunProblems, stageSeen, lifecycle, message } from './kit.ts';
+import { DEADLINE, changeRequest, finishAt, hostedRunProblems, stageSeen, lifecycle, message, redact } from './kit.ts';
 import type { Kit } from './kit.ts';
 import { AWAITS_REVIEW, RELOGIN, SHAPE_MARKER } from './marks.ts';
 import type { Snapshot } from './observe.ts';
@@ -40,6 +40,57 @@ export const APPROVAL_RULE = {
     required_review_thread_resolution: false,
   },
 };
+
+/**
+ * Why the redone shape run does not count as a redo (Proposal R1.12): it has no
+ * self-hosted agent job that ran on a Runner and concluded `success`. Undefined when it has one.
+ */
+export function redoneShapeProblem(run: Pick<Run, 'id' | 'conclusion'>, jobs: Job[]): string | undefined {
+  const agent = jobs.filter((j) => selfHosted(j) && ranOnRunner(j));
+  if (agent.some((j) => j.conclusion === 'success')) return undefined;
+  const last = agent.at(-1);
+  if (last) return `the redone shape run ${run.id} (${String(run.conclusion)}): its agent job ${last.id} concluded ${String(last.conclusion)}`;
+  const list = jobs.map((j) => `${j.name} (runner ${j.runner_name ?? 'none'}, ${j.status}/${j.conclusion ?? 'none'})`).join('; ');
+  return `the redone shape run ${run.id} concluded ${String(run.conclusion)} with no agent job that ran on a Runner; jobs: ${list || 'none'}`;
+}
+
+/**
+ * A `gonePast` check for login-expiry's waits after the re-login (Proposal R1.14): the Issue
+ * gained `pause` or `pending` the scenario did not add. The scenario adds neither during
+ * these waits, and its token may be the Owner's, so a label is told apart by time, not by
+ * login: any `pause`, and a `pending` labeled at or after `after` (when the scenario
+ * removed `pending`). The reason names the label, when and by whom, from the timeline; a
+ * `pause` not yet on the timeline ends the wait one snapshot later. Otherwise undefined,
+ * so `stageGone`'s own reasons still apply.
+ */
+export function foreignLabelGone(k: Kit, repo: string, n: number, after: number): (s: Snapshot) => Promise<string | undefined> {
+  const since = Math.floor(after / 1000) * 1000;
+  let pauseSeen: number | undefined;
+  const labeled = async (label: string, from: number) =>
+    (await k.obs.timeline(repo, n)).filter((e) => e.event === 'labeled' && e.label?.name === label && time(e.created_at) >= from).at(-1);
+  const by = (e: { actor?: { login: string } | null }) => e.actor?.login ?? 'unknown';
+  return async (s) => {
+    const reason = await (async () => {
+      const labels = k.labels(s, repo, n);
+      if (labels.includes('pause')) {
+        const e = await labeled('pause', 0);
+        if (e) return `#${n} gained pause at ${new Date(time(e.created_at)).toISOString()} by ${by(e)}, which the scenario did not add`;
+        if (pauseSeen === undefined) {
+          pauseSeen = s.at;
+          return undefined;
+        }
+        return `#${n} gained pause, first seen at ${new Date(pauseSeen).toISOString()}, by an actor not yet on the timeline, which the scenario did not add`;
+      }
+      pauseSeen = undefined;
+      if (labels.includes('pending')) {
+        const e = await labeled('pending', since);
+        if (e) return `#${n} has pending, added at ${new Date(time(e.created_at)).toISOString()} by ${by(e)}`;
+      }
+      return undefined;
+    })();
+    return reason === undefined ? undefined : redact(reason, k.ctx.secretValues());
+  };
+}
 
 export const loginExpiry: Scenario = lifecycle({
   id: 'login-expiry',
@@ -87,10 +138,19 @@ export const loginExpiry: Scenario = lifecycle({
       c.check('R3.43', next.stage === 'shape', `removing pending (a legal event) led to ${next.stage}, not a redo of shape`);
       // No `pause` until `shaped`: Core reads the Issue when it starts and again before it
       // publishes, and a paused Issue is not published (Proposal R4.12, R4.35).
+      // A `pause` or `pending` the scenario did not add ends both waits at once (Proposal R1.14).
       const gone = k.stageGone(exec, n, 'shape', { since: woke - 60_000, publishes: 'shaped' });
-      const done = await k.obs.until('the redone shape run to complete', (s) => s.runs.find((r) => r.id === next.id && r.status === 'completed'), DEADLINE.stage, show, { gonePast: gone });
-      c.check('R1.12', done.conclusion === 'success', `the redone shape run concluded ${String(done.conclusion)}`);
-      await k.obs.until('`shaped`', (s) => (k.labels(s, exec, n).includes('shaped') ? true : undefined), DEADLINE.event, show, { gonePast: gone });
+      const foreign = foreignLabelGone(k, exec, n, woke);
+      const exit = async (s: Snapshot) => (await foreign(s)) ?? (await gone(s));
+      const done = await k.obs.until('the redone shape run to complete', (s) => s.runs.find((r) => r.id === next.id && r.status === 'completed'), DEADLINE.stage, show, { gonePast: exit });
+      // R1.12 counts the redone run's agent job, not the run: a run whose agent job never ran also concludes success.
+      const r112 = redoneShapeProblem(done, await k.obs.jobs(exec, done.id));
+      if (r112) {
+        c.fail('R1.12', r112);
+        c.notExercised('R3.42', 'the redone shape run published nothing to check');
+        return c.outcome(`#${n}: shape failed on an invalid login with pending and a re-login comment; after re-login the redone shape did not run`);
+      }
+      await k.obs.until('`shaped`', (s) => (k.labels(s, exec, n).includes('shaped') ? true : undefined), DEADLINE.event, show, { gonePast: exit });
       await k.addLabels(exec, n, ['pause']);
       const comments = await k.obs.comments(exec, n);
       const shapes = comments.filter((x) => SHAPE_MARKER.test(markerOf(x.body) ?? ''));
