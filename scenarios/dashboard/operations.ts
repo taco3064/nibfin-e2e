@@ -39,6 +39,9 @@ const PREVIEW = /^(preview|next|continue|plan|check)\b/i;
 /** Open dialogs only, so controls elsewhere on the page (for example run strips) never count as a confirm step. */
 const openDialogs = (page: Page) => page.getByRole('dialog').or(page.getByRole('alertdialog'));
 const CONFIRM = /^(confirm|apply|run|yes|proceed)\b/i;
+/** The Runner view's add and remove controls: the whole word anywhere in the name, as in the R9.17 check. */
+export const RUNNER_ADD = /\badd\b/i;
+export const RUNNER_REMOVE = /\bremove\b/i;
 
 /** Sets a dialog field by its label: a select, a combobox, a checkbox or a text field. */
 export async function setField(d: Locator, label: RegExp, value: string | boolean): Promise<void> {
@@ -116,8 +119,8 @@ async function commandDialogs(page: Page, ctx: RunContext, schema: Map<string, S
     else problems.push(...fieldProblems(command, inputs, await dialogFields(d)));
     await closeDialog(page);
   };
-  await open('runner', /^(runner )?add\b/i, 'runner add');
-  await open('runner', /^(runner )?remove\b/i, 'runner remove');
+  await open('runner', RUNNER_ADD, 'runner add');
+  await open('runner', RUNNER_REMOVE, 'runner remove');
   await open('runner', /^log ?in\b/i, 'login');
   await open('repo', /^init\b/i, 'init');
   await open('repo', /^upgrade\b/i, 'upgrade');
@@ -221,7 +224,7 @@ async function runnerCycleSteps(ctx: RunContext, secrets: Secrets, regs: () => P
     const { page } = await openPage(ctx);
     await openDashboard(page, dash);
     await gotoView(page, 'runner');
-    await (await mustButton(page, /^(runner )?remove\b/i, 'R9.21', 'the Runner view')).click();
+    await (await mustButton(page, RUNNER_REMOVE, 'R9.21', 'the Runner view')).click();
     const d = await dialog(page);
     await setField(d, /provider/i, 'claude');
     const del = d.getByLabel(/delete.?login/i);
@@ -240,7 +243,7 @@ async function runnerCycleSteps(ctx: RunContext, secrets: Secrets, regs: () => P
     check((await activeView(page)) === 'runner', 'R9.18', 'the Runner view first when the host has no Runner', String(await activeView(page)));
     const t = await bodyText(page);
     check(/runner add/i.test(t) && /\binit\b/i.test(t), 'R9.18', 'a runner add → init guide', t.slice(0, 300));
-    await (await mustButton(page, /^(runner )?add\b/i, 'R9.21', 'the Runner view')).click();
+    await (await mustButton(page, RUNNER_ADD, 'R9.21', 'the Runner view')).click();
     const d = await dialog(page);
     await setField(d, /provider/i, 'claude');
     await setField(d, /count/i, '2');
