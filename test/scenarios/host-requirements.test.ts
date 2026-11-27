@@ -38,11 +38,20 @@ function memFs(entries: Record<string, Entry>): HostFs & { entries: Record<strin
   };
 }
 
-test('host requirements: .runner parsing tolerates a BOM and missing fields', () => {
-  deepEqual(parseRunnerFile('\uFEFF{"AgentId":7,"AgentName":"h-1","GitHubUrl":"https://github.com/o/exec","PoolId":1}'), { agentId: 7, agentName: 'h-1', gitHubUrl: 'https://github.com/o/exec' });
+test('host requirements: .runner parsing reads the camelCase keys the official runner writes, tolerating a BOM and missing fields', () => {
+  const expected = { agentId: 7, agentName: 'h-1', gitHubUrl: 'https://github.com/o/exec' };
+  deepEqual(parseRunnerFile('\uFEFF{"agentId":7,"agentName":"h-1","poolId":1,"poolName":"Default","serverUrl":"https://pipelines.actions.githubusercontent.com/x","gitHubUrl":"https://github.com/o/exec","workFolder":"_work"}'), expected);
+  deepEqual(parseRunnerFile('{"agentId":"8"}'), { agentId: 8, agentName: undefined, gitHubUrl: undefined });
+  // The PascalCase spelling still parses.
+  deepEqual(parseRunnerFile('\uFEFF{"AgentId":7,"AgentName":"h-1","GitHubUrl":"https://github.com/o/exec","PoolId":1}'), expected);
   deepEqual(parseRunnerFile('{"AgentId":"8"}'), { agentId: 8, agentName: undefined, gitHubUrl: undefined });
   equal(parseRunnerFile('not json'), undefined);
   equal(parseRunnerFile('[1]'), undefined);
+});
+
+test('host requirements: a camelCase .runner matches its registration', () => {
+  const file = parseRunnerFile(`\uFEFF${JSON.stringify({ agentId: 3, agentName: 'myhost-claude-3', gitHubUrl: `https://github.com/${EXEC}` })}`);
+  deepEqual(matchRunners([{ root: '/h/r3', file }], [{ id: 3, name: 'myhost-claude-3' }]), { unregistered: [], unbacked: [], duplicated: [] });
 });
 
 test('host requirements: the version comes from the last Listener header line', () => {
@@ -131,7 +140,7 @@ function host() {
     [`/sys/fs/cgroup/u/r${n}.service/cgroup.procs`]: { ctimeMs: 0, text: `${n}01\n${n}02\n` },
     [`/proc/${n}01/exe`]: { ctimeMs: 0, link: `/h/runners/r${n}/externals/node20/bin/node` },
     [`/proc/${n}02/exe`]: { ctimeMs: 0, link: `/h/runners/r${n}/bin/Runner.Listener` },
-    [`/h/runners/r${n}/.runner`]: { ctimeMs: 1500, text: `\uFEFF${JSON.stringify({ AgentId: n, AgentName: `myhost-1a2b3c4d-claude-${n}`, GitHubUrl: `https://github.com/${EXEC}` })}` },
+    [`/h/runners/r${n}/.runner`]: { ctimeMs: 1500, text: `\uFEFF${JSON.stringify({ agentId: n, agentName: `myhost-1a2b3c4d-claude-${n}`, gitHubUrl: `https://github.com/${EXEC}` })}` },
     [`/h/runners/r${n}/_diag`]: { ctimeMs: 1500, dir: true },
     [`/h/runners/r${n}/_diag/Runner_20261127-010000-utc.log`]: { ctimeMs: 1600, text: '[2026-11-27 01:00:00Z INFO RunnerServer] Version: 2.338.2\n' },
     [`/h/runners/r${n}/_diag/Worker_20261127-010000-utc.log`]: { ctimeMs: 1600, text: '[2026-11-27 01:00:00Z INFO Worker] Version: 9.9.9\n' },

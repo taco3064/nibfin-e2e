@@ -52,7 +52,19 @@ export interface RunnerFile {
   gitHubUrl?: string;
 }
 
-/** Parses `.runner` (JSON, possibly with a UTF-8 BOM); undefined when it is not a JSON object. */
+/** The value of `name` in `o` regardless of key case: the exact key first, otherwise the first key equal to it ignoring case. */
+function field(o: Record<string, unknown>, name: string): unknown {
+  if (Object.hasOwn(o, name)) return o[name];
+  const lower = name.toLowerCase();
+  const key = Object.keys(o).find((k) => k.toLowerCase() === lower);
+  return key === undefined ? undefined : o[key];
+}
+
+/**
+ * Parses `.runner` (JSON, possibly with a UTF-8 BOM); undefined when it is not a JSON object.
+ * The official runner writes camelCase keys (`agentId`, `agentName`, `gitHubUrl`); keys are read
+ * regardless of case, so the PascalCase spelling (`AgentId`, ...) is accepted too.
+ */
 export function parseRunnerFile(text: string): RunnerFile | undefined {
   let v: unknown;
   try {
@@ -62,11 +74,14 @@ export function parseRunnerFile(text: string): RunnerFile | undefined {
   }
   if (typeof v !== 'object' || v === null || Array.isArray(v)) return undefined;
   const o = v as Record<string, unknown>;
-  const id = typeof o.AgentId === 'number' ? o.AgentId : typeof o.AgentId === 'string' && /^\d+$/.test(o.AgentId) ? Number(o.AgentId) : undefined;
+  const rawId = field(o, 'agentId');
+  const name = field(o, 'agentName');
+  const url = field(o, 'gitHubUrl');
+  const id = typeof rawId === 'number' ? rawId : typeof rawId === 'string' && /^\d+$/.test(rawId) ? Number(rawId) : undefined;
   return {
     agentId: id,
-    agentName: typeof o.AgentName === 'string' ? o.AgentName : undefined,
-    gitHubUrl: typeof o.GitHubUrl === 'string' ? o.GitHubUrl : undefined,
+    agentName: typeof name === 'string' ? name : undefined,
+    gitHubUrl: typeof url === 'string' ? url : undefined,
   };
 }
 
