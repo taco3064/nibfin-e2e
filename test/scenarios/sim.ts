@@ -87,6 +87,7 @@ export function ctxFor(facts: Record<string, Record<string, unknown>> = {}): Run
     target: { ghNibfinCommit: 'a'.repeat(40), platform: 'linux' },
     log: () => {},
     defer: () => {},
+    upcoming: () => [],
     facts: (id) => facts[id] ?? (id === 'nibfin' ? { imageDigest: DIGEST } : undefined),
   };
 }

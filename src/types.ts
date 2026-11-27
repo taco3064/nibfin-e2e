@@ -67,6 +67,11 @@ export interface RunContext extends HostContext {
    * `start` and `startGhNibfin` register their child's `stop()` themselves.
    */
   defer(cleanup: () => Promise<unknown>): void;
+  /**
+   * Ids of the scenarios this run still starts after the current one (and its concurrent
+   * group), in run order; for a provisioning step, every scenario to run, and for a teardown, none.
+   */
+  upcoming(): string[];
 }
 
 export interface ProvisioningStep {

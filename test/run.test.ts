@@ -306,3 +306,18 @@ test('a waiting scenario among concurrent ones is not run; the others still star
   deepEqual(events.slice(0, 2), ['start a', 'start c']);
   deepEqual(r.scenarios.map((s) => [s.id, s.status]), [['a', 'passed'], ['b', 'waiting'], ['c', 'passed']]);
 });
+
+test('upcoming lists the scenarios still to start: all for a step, the later groups for a scenario, none for a teardown', async () => {
+  const seen: Record<string, string[]> = {};
+  const probe = (id: string, concurrent = false): Scenario => ({
+    id,
+    rules: ['R1.1'],
+    platforms: ['linux'],
+    concurrent,
+    requires: ['s'],
+    run: async (ctx) => ((seen[id] = ctx.upcoming()), passed),
+  });
+  const steps: ProvisioningStep[] = [{ id: 's', run: async (ctx) => ((seen.step = ctx.upcoming()), passed), teardown: async (ctx) => ((seen.teardown = ctx.upcoming()), passed) }];
+  await runAll([probe('a'), probe('b', true), probe('c', true), probe('d')], steps);
+  deepEqual(seen, { step: ['a', 'b', 'c', 'd'], a: ['b', 'c', 'd'], b: ['d'], c: ['d'], d: [], teardown: [] });
+});

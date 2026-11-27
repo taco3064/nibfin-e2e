@@ -134,7 +134,7 @@ export async function run(input: RunInput): Promise<RunResult> {
   const results = new Map<string, StepResult>();
   const cleanupTimeoutMs = input.cleanupTimeoutMs ?? 60_000;
   /** A context whose deferred cleanups and started children go to `cleanups`; each scenario gets its own, so concurrent ones never run each other's. */
-  const contextWith = (cleanups: (() => Promise<unknown>)[]): RunContext => {
+  const contextWith = (cleanups: (() => Promise<unknown>)[], next: () => number): RunContext => {
     const defer = (fn: () => Promise<unknown>) => void cleanups.push(fn);
     return {
       ...input.host,
@@ -142,6 +142,7 @@ export async function run(input: RunInput): Promise<RunResult> {
       log: input.log,
       facts: (id) => results.get(id)?.facts,
       defer,
+      upcoming: () => groups.slice(next()).flat().map((s) => s.id),
       startGhNibfin(args, options) {
         const child = input.host.startGhNibfin(args, options);
         defer(() => child.stop());
@@ -155,7 +156,10 @@ export async function run(input: RunInput): Promise<RunResult> {
     };
   };
   const cleanups: (() => Promise<unknown>)[] = [];
-  const ctx = contextWith(cleanups);
+  /** The scenario groups, in run order, and the index of the first group not yet started (for steps and teardowns). */
+  let groups: Scenario[][] = [];
+  let started = 0;
+  const ctx = contextWith(cleanups, () => started);
 
   const onThisPlatform: Scenario[] = selected.scenarios.filter((s) => s.platforms.includes(target.platform));
   const selectedRules = new Set(selected.entries.filter((e) => !isExcluded(e)).map((e) => e.id));
@@ -166,6 +170,7 @@ export async function run(input: RunInput): Promise<RunResult> {
     if (w) waitingScenarios.set(s.id, w);
   }
   const toRun = onThisPlatform.filter((s) => !waitingScenarios.has(s.id));
+  groups = scenarioGroups(toRun);
   const byId = new Map(input.steps.map((s) => [s.id, s]));
   const needed = new Set<string>();
   const need = (id: string) => {
@@ -193,21 +198,23 @@ export async function run(input: RunInput): Promise<RunResult> {
     results.set(step.id, r);
   }
 
-  const runScenario = async (s: Scenario): Promise<ScenarioResult> => {
+  const runScenario = async (s: Scenario, next: number): Promise<ScenarioResult> => {
     let outcome: (Outcome & { blockedBy?: string }) | undefined = blocker(s.requires ?? [], results);
     if (!outcome) {
       input.log(`scenario ${s.id}`);
       const own: (() => Promise<unknown>)[] = [];
-      outcome = plain(await attempt(() => s.run(contextWith(own))));
+      outcome = plain(await attempt(() => s.run(contextWith(own, () => next))));
       await runCleanups(own, `scenario ${s.id}`, cleanupTimeoutMs, input.log);
     }
     return { id: s.id, rules: s.rules, ...outcome };
   };
   const ranResults = new Map<string, ScenarioResult>();
-  for (const group of scenarioGroups(toRun)) {
+  for (const [i, group] of groups.entries()) {
+    started = i + 1;
     // A group of concurrent scenarios starts together.
-    for (const r of await Promise.all(group.map(runScenario))) ranResults.set(r.id, r);
+    for (const r of await Promise.all(group.map((s) => runScenario(s, i + 1)))) ranResults.set(r.id, r);
   }
+  started = groups.length;
   // Waiting scenarios are not run; results keep registry order.
   const scenarios: ScenarioResult[] = onThisPlatform.map((s) => {
     const w = waitingScenarios.get(s.id);

@@ -48,6 +48,7 @@ function harness(opts: { exec?: Exec; env?: Record<string, string>; fetch?: type
     log: () => {},
     facts: (id) => facts.get(id),
     defer: () => {},
+    upcoming: () => [],
   };
   const runStep = async (id: string): Promise<StepOutcome> => {
     const out = await (steps.get(id)?.run(ctx) as Promise<StepOutcome>);
