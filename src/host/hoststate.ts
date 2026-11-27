@@ -31,6 +31,11 @@ export interface WindowsHostState {
   tasks: string[];
   /** The periodic mechanisms inside the podman machine VM before `runner add` (Proposal R5.17); set only by provisioning. */
   vm?: Baseline<Periodic>;
+  /**
+   * `powercfg /requestsoverride`, the Power Request overrides (Proposal R5.11): `ok` when it
+   * exited 0, with its stdout; otherwise its output. The read never throws; a reader judges `ok`.
+   */
+  requestsOverride: { ok: boolean; output: string };
 }
 
 export type HostState = LinuxHostState | WindowsHostState;
@@ -187,6 +192,17 @@ export async function readLinuxHostState(run: HostRun, options: LinuxReadOptions
   return { platform: 'linux', units, linger, systemFiles, readAt, pathDirs: pathDirectories((options.env ?? process.env).PATH) };
 }
 
+/** `powercfg /requestsoverride`, recorded rather than thrown when it fails. */
+export async function readRequestsOverride(run: HostRun): Promise<{ ok: boolean; output: string }> {
+  try {
+    const r = await run(['powercfg', '/requestsoverride']);
+    if (r.code === 0) return { ok: true, output: r.stdout };
+    return { ok: false, output: `powercfg /requestsoverride exited ${r.code}: ${(r.stderr.trim() || r.stdout.trim()).slice(-2000)}` };
+  } catch (error) {
+    return { ok: false, output: `powercfg /requestsoverride: ${error instanceof Error ? error.message : String(error)}` };
+  }
+}
+
 /** The host state the always-on setup changes (Proposal R5.13, R5.15, R5.16, R5.28), read without any product name. */
 export async function readHostState(run: HostRun, platform: Platform, linux: LinuxReadOptions = {}): Promise<HostState> {
   if (platform === 'linux') return readLinuxHostState(run, linux);
@@ -194,7 +210,7 @@ export async function readHostState(run: HostRun, platform: Platform, linux: Lin
     const path = wslconfigPath();
     const wslconfig = existsSync(path) ? readFileSync(path, 'utf8') : null;
     const tasks = parseJsonList(await must(run, ['powershell', '-NoProfile', '-NonInteractive', '-Command', TASKS]));
-    return { platform, wslconfig, tasks };
+    return { platform, wslconfig, tasks, requestsOverride: await readRequestsOverride(run) };
   }
   throw new Error('macOS host state is not supported (Phase 5)');
 }
