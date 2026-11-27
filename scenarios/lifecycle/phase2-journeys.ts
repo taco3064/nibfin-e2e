@@ -17,13 +17,14 @@ import {
   markerOf,
   pushWakeSha,
   pushesWithin,
+  ranOnRunner,
   routePodmanProblems,
   sameIssueOverlaps,
   time,
 } from './analysis.ts';
 import type { Activity, Window } from './analysis.ts';
 import { holdJourney, journey } from './journeys.ts';
-import { DEADLINE, finishAt, hostedRunProblems, stageSeen, lifecycle } from './kit.ts';
+import { DEADLINE, finishAt, hostedRunProblems, message, stageSeen, lifecycle } from './kit.ts';
 import type { Kit } from './kit.ts';
 import { ACCEPT_END, ACCEPT_START, BLOCKER_REPORT, NO_ASSIGNEE_REPORT, SHAPE_MARKER, VALIDATOR_VERDICT } from './marks.ts';
 import type { Snapshot } from './observe.ts';
@@ -261,15 +262,34 @@ export const deliveryParallel: Scenario = lifecycle({
   },
 });
 
-/** Whether the route of an Issue reported something, in its job log or a marked comment. */
-async function reported(k: Kit, s: Snapshot, n: number, pattern: RegExp, before = Infinity): Promise<boolean> {
+/** What the route of an Issue reported: whether a readable job log or marked comment matched, and the route job logs that could not be read. */
+export interface RouteReport {
+  reported: boolean;
+  unreadable: string[];
+}
+
+/**
+ * Whether the route of an Issue reported something, in its job log or a marked comment.
+ * A route job no runner took is not read; a log that cannot be read gives no evidence and
+ * is named in `unreadable`, so a missing report can be told apart from an unreadable log.
+ */
+export async function routeReport(k: Kit, s: Snapshot, n: number, pattern: RegExp, before = Infinity): Promise<RouteReport> {
+  const unreadable: string[] = [];
   for (const job of await k.stageJobs(s, k.exec, n, ['route'])) {
-    if (job.status !== 'completed' || time(job.completed_at) > before) continue;
-    if ((await k.obs.log(k.exec, job.id)).some((l) => pattern.test(l.text))) return true;
+    if (job.status !== 'completed' || !ranOnRunner(job) || time(job.completed_at) > before) continue;
+    const lines = await k.obs.log(k.exec, job.id).catch((e: unknown) => {
+      unreadable.push(`route job ${job.id} (run ${job.run.id}): ${message(e)}`);
+      return [];
+    });
+    if (lines.some((l) => pattern.test(l.text))) return { reported: true, unreadable };
   }
   // Only comments written by then: a later Shape or closing comment may name the dependency too.
-  return (await k.obs.comments(k.exec, n)).some((x) => markerOf(x.body) && pattern.test(x.body ?? '') && time(x.created_at) <= before);
+  const reported = (await k.obs.comments(k.exec, n)).some((x) => markerOf(x.body) && pattern.test(x.body ?? '') && time(x.created_at) <= before);
+  return { reported, unreadable };
 }
+
+/** A failure message for a route report, naming the route job logs that could not be read. */
+export const reportFailure = (why: string, r: RouteReport) => (r.unreadable.length ? `${why}; route job logs unreadable: ${r.unreadable.join('; ')}` : why);
 
 export const blockedByChain: Scenario = lifecycle({
   id: 'delivery-blocked-by-chain',
@@ -296,7 +316,8 @@ export const blockedByChain: Scenario = lifecycle({
       c.check('R4.29', early.length === 0, `${name} started ${early.map((r) => r.stage).join(', ')} before ${upName} closed`);
       const routed = k.stages(s, exec, n, ['route']).some((r) => r.status === 'completed' && time(r.updated_at) < upClosed);
       c.check('R3.32', routed, `${name} had no completed route run while ${upName} was open`);
-      c.check('R3.32', await reported(k, s, n, BLOCKER_REPORT, upClosed), `${name}'s route did not report its open blocker`);
+      const blocker = await routeReport(k, s, n, BLOCKER_REPORT, upClosed);
+      c.check('R3.32', blocker.reported, reportFailure(`${name}'s route did not report its open blocker`, blocker));
       const start = firstAgent(n);
       c.check('R4.29', !!start && time(start.created_at) >= upClosed, `${name}'s first agent stage run (${String(start?.created_at)}) is not after ${upName} closed`);
       c.check('R4.30', lastWrite < upClosed && !!start, `${name} was not woken without a harness write after ${upName} closed`);
@@ -317,7 +338,8 @@ export const blockedByChain: Scenario = lifecycle({
     const u = j.u.number;
     c.check('R3.32', k.stages(s, exec, u, ['route']).some((r) => r.status === 'completed'), 'U had no completed route run');
     c.check('R3.32', k.stages(s, exec, u, AGENT_STAGES).length === 0, 'U, with no Assignee, got an agent stage');
-    c.check('R3.32', await reported(k, s, u, NO_ASSIGNEE_REPORT), 'U\'s route did not report the missing Assignee');
+    const noAssignee = await routeReport(k, s, u, NO_ASSIGNEE_REPORT);
+    c.check('R3.32', noAssignee.reported, reportFailure('U\'s route did not report the missing Assignee', noAssignee));
 
     // R4.11: Closed with delivered is final.
     const after = k.stages(s, exec, j.a.number, ['shape', 'deliver', 'review']).filter((r) => time(r.created_at) > closed(j.a.number));
