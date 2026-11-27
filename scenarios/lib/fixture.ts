@@ -4,8 +4,9 @@ import { excerpt, redact } from './checks.ts';
 import { runningJobContainers, watchJobContainers } from './containers.ts';
 import { baselineOf } from './kit.ts';
 import type { Kit } from './kit.ts';
-import { localRunners, requireIdle } from './runners.ts';
-import { DEADLINE } from './waits.ts';
+import { idleProblem, localRunners } from './runners.ts';
+import type { LocalRunner } from './runners.ts';
+import { DEADLINE, remoteWait } from './waits.ts';
 
 /** Repository variables the library manages; variables `init` owns are never touched. */
 export const LIBRARY_VARIABLES = ['NIBFIN_MODEL', 'NIBFIN_CONTAINER_LIMITS', 'NIBFIN_MEMORY'] as const;
@@ -77,6 +78,40 @@ async function waitForContainers(kit: Kit, repo: string): Promise<void> {
   }
 }
 
+/**
+ * Re-reads the execution sandbox's Runners every 10 s until both are online and idle,
+ * within the quiesce deadline: a Runner stays busy through a Job's post steps after its
+ * container ended, and while a Job starts. A wrong set of registrations or a failed read
+ * fails at once; the timeout names every Runner still busy or offline and the time waited.
+ */
+async function waitForIdleRunners(kit: Kit): Promise<void> {
+  const execution = kit.sandbox.execution;
+  const start = kit.now();
+  let last: LocalRunner[] | undefined;
+  let readError: unknown;
+  let logged = false;
+  try {
+    await remoteWait(kit, `both Runners of ${execution} to be online and idle`, DEADLINE.quiesce, 10_000, async () => {
+      try {
+        last = await localRunners(kit.github, execution);
+      } catch (error) {
+        readError = error;
+        throw error;
+      }
+      const problem = idleProblem(last);
+      if (problem === undefined) return last;
+      if (!logged) {
+        logged = true;
+        kit.log(`${execution}: waiting for the Runners: ${problem}`);
+      }
+      return undefined;
+    });
+  } catch (error) {
+    if (kit.signal.aborted || error === readError || last === undefined) throw error;
+    throw new Error(`${idleProblem(last) ?? 'Runners not online and idle'} (after waiting ${Math.round((kit.now() - start) / 1000)} s)`, { cause: error });
+  }
+}
+
 interface Variable {
   name: string;
   value: string;
@@ -123,7 +158,7 @@ async function writeContent(kit: Kit, repo: string, files: FixtureFile[]): Promi
 /**
  * Puts the sandbox into a state that depends only on the arguments, in four phases that
  * each must succeed before the next: quiesce (no open Issue, no running Job container,
- * both Runners online and idle), clear settings (library variables and `e2e-` rulesets),
+ * then a wait of up to DEADLINE.quiesce for both Runners to be online and idle), clear settings (library variables and `e2e-` rulesets),
  * content (main = baseline + `files`), then the fixture ruleset. Every fixture runs it first.
  */
 export async function prepareFixture(kit: Kit, repo: string, state: FixtureState): Promise<{ tree: string }> {
@@ -134,7 +169,7 @@ export async function prepareFixture(kit: Kit, repo: string, state: FixtureState
   // 1. Quiesce. The Runners register only on the execution sandbox, whatever `repo` is.
   await closeOpenIssues(kit, repo);
   await waitForContainers(kit, repo);
-  requireIdle(await localRunners(kit.github, kit.sandbox.execution));
+  await waitForIdleRunners(kit);
   // 2. Clear settings: nothing may refuse or change the content write.
   await setVariables(kit, repo, state.variables ?? {});
   await clearE2eRulesets(kit, repo);

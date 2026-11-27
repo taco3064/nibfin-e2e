@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { approvalRuleset, prepareFixture } from '../../scenarios/lib/fixture.ts';
 import type { FixtureState } from '../../scenarios/lib/fixture.ts';
 import { localRunners, runnerSlot } from '../../scenarios/lib/runners.ts';
+import { DEADLINE } from '../../scenarios/lib/waits.ts';
 import { createGitHub } from '../../src/host/github.ts';
 import { EXEC, PEER, BASE_TREE, mainFiles, runner, setup } from './kit.ts';
 
@@ -31,14 +32,61 @@ test('localRunners resolves host-style names to both slots and fails on any othe
   }
 });
 
-test('a busy or offline Runner stops prepareFixture before any write, naming its slot and registration', async () => {
+const runnerReads = (h: ReturnType<typeof setup>) => h.fake.reads.filter((r) => r === `/repos/${EXEC}/actions/runners`).length;
+
+test('a busy or offline Runner that becomes online and idle within the quiesce deadline lets prepareFixture continue', async () => {
   for (const state of [{ busy: true }, { status: 'offline' }]) {
     const h = setup();
     h.repo(EXEC).runners = [runner(1, 'claude-1'), runner(2, 'claude-2', state)];
-    const err = await prepareFixture(h.kit, EXEC, { files: [] }).catch((e: Error) => e.message);
-    match(String(err), /claude-2 \(registration myhost-1a2b3c4d-claude-2\) is (offline|online and busy)/);
+    let sleeps = 0;
+    const kit = {
+      ...h.kit,
+      sleep: async (ms: number) => {
+        await h.kit.sleep(ms);
+        if (++sleeps === 3) h.repo(EXEC).runners = [runner(1, 'claude-1'), runner(2, 'claude-2')];
+      },
+    };
+    await prepareFixture(kit, EXEC, { files: [{ path: 'a.txt', content: 'a\n' }] });
+    equal(runnerReads(h), 4, JSON.stringify(state));
+    ok(h.fake.writes.length > 0);
+    ok(h.logs.some((l) => /waiting for the Runners: .*claude-2 \(registration myhost-1a2b3c4d-claude-2\)/.test(l)), h.logs.join('\n'));
+  }
+});
+
+test('a Runner still busy or offline when the quiesce deadline ends fails before any write, naming its slot, registration and the time waited', async () => {
+  for (const state of [{ busy: true }, { status: 'offline' }]) {
+    const h = setup();
+    h.repo(EXEC).runners = [runner(1, 'claude-1'), runner(2, 'claude-2', state)];
+    const err = await prepareFixture(h.kit, EXEC, { files: [{ path: 'a.txt', content: 'a\n' }] }).catch((e: Error) => e.message);
+    match(String(err), /^Runners not online and idle: claude-2 \(registration myhost-1a2b3c4d-claude-2\) is (offline|online and busy) \(after waiting 900 s\)$/);
+    equal(h.kit.now(), DEADLINE.quiesce);
+    ok(runnerReads(h) > 1);
     deepEqual(h.fake.writes, []);
   }
+});
+
+test('a wrong set of Runner registrations fails prepareFixture at once, without waiting or writing', async () => {
+  const h = setup();
+  h.repo(EXEC).runners = [runner(1, 'claude-1')];
+  await rejects(prepareFixture(h.kit, EXEC, { files: [{ path: 'a.txt', content: 'a\n' }] }), /expected exactly two runner registrations ending in -claude-1 and -claude-2/);
+  equal(runnerReads(h), 1);
+  equal(h.kit.now(), 0);
+  deepEqual(h.fake.writes, []);
+});
+
+test('an abort during the Runner wait ends it with the abort reason and no write', async () => {
+  const h = setup();
+  h.repo(EXEC).runners = [runner(1, 'claude-1'), runner(2, 'claude-2', { busy: true })];
+  let sleeps = 0;
+  const kit = {
+    ...h.kit,
+    sleep: async (ms: number) => {
+      if (++sleeps === 2) h.abort();
+      await h.kit.sleep(ms);
+    },
+  };
+  await rejects(prepareFixture(kit, EXEC, { files: [{ path: 'a.txt', content: 'a\n' }] }), /^Error: harness budget of 190 min ran out$/);
+  deepEqual(h.fake.writes, []);
 });
 
 test('a dirty main is rebuilt from the baseline tree, committed on the current head and fast-forwarded', async () => {
