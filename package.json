@@ -11,7 +11,8 @@
     "lint": "eslint .",
     "test": "node --test \"test/**/*.test.ts\"",
     "verify": "npm run typecheck && npm run lint && npm test",
-    "e2e": "node src/cli.ts"
+    "e2e": "node src/cli.ts",
+    "gate": "node src/gate/cli.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
