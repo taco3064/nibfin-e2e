@@ -168,3 +168,30 @@ test('interrupted-deliver step 5: a queued job counts when the jobs\' own window
   equal(allBusyAt(Date.parse('2026-11-26T10:13:00Z'), [deliver, shape], runners), false);
   equal(allBusyAt(Date.parse('2026-11-26T10:11:00Z'), [deliver, shape], []), false);
 });
+
+test('a wait is not judged on a snapshot taken before it began, such as one still showing the harness\'s own pending', async () => {
+  let labels = [{ name: 'scope' }, { name: 'pending' }];
+  let state = 'open';
+  const f = routes({ ...base, 'GET /repos/o/exec/actions/runs': { workflow_runs: [] }, 'GET /repos/o/exec/issues': () => [issue(6, { labels, state, closed_at: state === 'closed' ? '2026-11-26T10:01:00Z' : null })] });
+  const c = clock();
+  const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
+  await k.obs.next();
+  // The harness removes pending; the cached snapshot still shows it.
+  labels = [{ name: 'scope' }];
+  let polls = 0;
+  const closed = await k.obs.until(
+    'P to close with delivered',
+    (s) => {
+      if (++polls === 1) {
+        state = 'closed';
+        labels = [{ name: 'delivered' }];
+      }
+      return k.delivered(s, 'o/exec', 6);
+    },
+    DEADLINE.delivery,
+    undefined,
+    { gonePast: k.closeGone('o/exec', 6) },
+  );
+  equal(closed.number, 6);
+  equal(polls, 2);
+});
