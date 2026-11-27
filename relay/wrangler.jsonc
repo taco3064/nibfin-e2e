@@ -1,0 +1,16 @@
+// The Proposal relay: Notion webhook events for the Nibfin Proposal page become a
+// `repository_dispatch` of type `proposal-updated` on nibfin-e2e (Proposal R8.13).
+// Nibfin's own project setup, not a product Worker. Secrets (set by the Owner with
+// `wrangler secret put`): NOTION_VERIFICATION_TOKEN, GITHUB_TOKEN.
+{
+  "name": "nibfin-proposal-relay",
+  "main": "worker.ts",
+  "compatibility_date": "2026-11-27",
+  "workers_dev": true,
+  // Persistent Workers Logs stay off; `wrangler tail` still streams live logs.
+  "observability": { "enabled": false },
+  "vars": {
+    "PROPOSAL_PAGE_ID": "40006b64-4a20-80da-b1a8-c2e562f95373",
+    "DISPATCH_REPOSITORY": "taco3064/nibfin-e2e"
+  }
+}

@@ -14,5 +14,5 @@
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true
   },
-  "include": ["src", "test", "scenarios"]
+  "include": ["src", "test", "scenarios", "relay"]
 }

@@ -252,3 +252,41 @@ followed without the token.
   spending Runner time.
 - A rule whose triggering situation did not happen is reported `failed` as
   "not exercised", never `passed`.
+
+## Proposal relay
+
+`relay/` is a small Cloudflare Worker, Nibfin's own project setup rather than a
+product component (Proposal R8.13). It turns Notion webhook events for the
+Proposal page into a `repository_dispatch` of type `proposal-updated` on this
+repository. Its `client_payload` carries `event_id`, `type`, `timestamp`,
+`page_id`, `attempt_number`, `updated_blocks` and `updated_properties` (both id
+lists are emptied and `ids_omitted: true` is set when they would exceed
+GitHub's payload limit). It carries no content and holds no Notion API token: the
+diff is read later from the page's version history using the event times.
+
+- Every event must carry a valid `X-Notion-Signature` (HMAC-SHA256 of the raw
+  body keyed with the verification token); anything else gets 401.
+- Only `page.content_updated` and `page.properties_updated` for the configured
+  page are forwarded; other signed events get 200 and are dropped.
+- A failed dispatch gets 502, so Notion redelivers on its own backoff.
+- Persistent Workers Logs are disabled. The log has fixed reason codes only, and
+  never a token, a signature or a request body, except for the bootstrap line
+  below.
+
+Its unit tests run with `npm run verify`. Deploying is manual (Owner only):
+
+1. `npx wrangler@4.168.0 deploy --config relay/wrangler.jsonc`
+2. In Notion, create a webhook subscription to the `workers.dev` URL, selecting
+   the page content and page property update events.
+3. Run `npx wrangler@4.168.0 tail --config relay/wrangler.jsonc`. While
+   `NOTION_VERIFICATION_TOKEN` is unset, the Worker logs the token Notion sends
+   there once, as `verification_token: …`.
+4. `npx wrangler@4.168.0 secret put NOTION_VERIFICATION_TOKEN --config relay/wrangler.jsonc`
+   with that token, then paste it into Notion's verification form.
+5. `npx wrangler@4.168.0 secret put GITHUB_TOKEN --config relay/wrangler.jsonc`
+   with a fine-grained token for this repository only, with Contents: write
+   (the minimum `repository_dispatch` accepts).
+
+Once the secret is set, a resent verification token is rejected and not logged.
+To verify again or recreate the subscription, first run
+`npx wrangler@4.168.0 secret delete NOTION_VERIFICATION_TOKEN --config relay/wrangler.jsonc`.
