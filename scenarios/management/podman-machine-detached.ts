@@ -223,6 +223,18 @@ async function windowsLeg(ctx: RunContext, c: Check, run: HostRun, before: Windo
   const { execution } = ctx.sandbox;
   const regs = () => registrations(ctx.github, execution);
 
+  // Teardown backstop, even when a leg is skipped or the body aborted: only what fits the cleanup timeout.
+  ctx.defer(async () => {
+    const r = await ctx.exec(['podman', 'machine', 'inspect']);
+    let state: string | undefined;
+    try {
+      state = r.code === 0 ? machineState(r.stdout) : undefined;
+    } catch {
+      state = undefined;
+    }
+    if (state !== 'running') await ctx.exec(['podman', 'machine', 'start']);
+  });
+
   // Leg 1: the provisioning runner add, which started the machine (R5.27), has exited.
   await c.part(RULE, async () => {
     const add = facts.commands[0];
@@ -264,17 +276,6 @@ async function windowsLeg(ctx: RunContext, c: Check, run: HostRun, before: Windo
     return {};
   }
 
-  // Backstop for an aborted body: only what fits the cleanup timeout.
-  ctx.defer(async () => {
-    const r = await ctx.exec(['podman', 'machine', 'inspect']);
-    let state: string | undefined;
-    try {
-      state = r.code === 0 ? machineState(r.stdout) : undefined;
-    } catch {
-      state = undefined;
-    }
-    if (state !== 'running') await ctx.exec(['podman', 'machine', 'start']);
-  });
   try {
     const runBefore = await readTaskRun(run, name);
     const snap1 = await snapshot(run);
