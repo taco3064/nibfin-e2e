@@ -4,9 +4,9 @@ import { mkdirSync } from 'node:fs';
 import { request } from 'node:http';
 import { connect, createServer } from 'node:net';
 import { join } from 'node:path';
-import { chromium } from 'playwright-core';
+import { chromium, selectors } from 'playwright-core';
 import type { BrowserContext, Locator, Page } from 'playwright-core';
-import type { Running } from '../../src/host/exec.ts';
+import type { Env, Running } from '../../src/host/exec.ts';
 import type { Outcome, RunContext, RuleId, Scenario } from '../../src/types.ts';
 import { buttonNamesFromAriaSnapshot, fieldsFromAriaSnapshot, missingButtonMessage, parseJobStarts, parseSessionUrl, redact, updateMarkerState } from './checks.ts';
 import type { ContainerStart, FormField, Reply, SessionUrl } from './checks.ts';
@@ -127,20 +127,30 @@ export interface OpenedPage {
 
 let profiles = 0;
 
-/** A headless Google Chrome page with a fresh profile under `.e2e-work/browser/`, closed when the scenario ends. */
-export async function openPage(ctx: RunContext, opts: { width?: number; height?: number; locale?: string; timezoneId?: string } = {}): Promise<OpenedPage> {
-  const work = ctx.workDir();
-  const dir = join(work, 'browser', String(++profiles));
-  const tmp = join(work, 'browser', 'tmp');
+export interface BrowserOptions {
+  width?: number;
+  height?: number;
+  locale?: string;
+  timezoneId?: string;
+}
+
+/**
+ * Options for `chromium.launchPersistentContext` that keep every browser write under `base`:
+ * a fresh profile `<base>/<n>`, temporary files and downloads in `<base>/tmp`, artifacts in
+ * `<base>/artifacts`, and HOME with the XDG directories under `<base>/home`, merged over `env`.
+ */
+export function browserLaunchOptions(base: string, env: Env, opts: BrowserOptions = {}) {
+  const profileDir = join(base, String(++profiles));
+  const tmp = join(base, 'tmp');
   // Chrome and fontconfig write under HOME and the XDG directories (for example ~/.pki/nssdb).
-  const home = join(work, 'browser', 'home');
-  mkdirSync(dir, { recursive: true });
+  const home = join(base, 'home');
+  mkdirSync(profileDir, { recursive: true });
   mkdirSync(tmp, { recursive: true });
   mkdirSync(home, { recursive: true });
   const options = {
     headless: true,
     env: {
-      ...ctx.browserEnv(),
+      ...env,
       TMPDIR: tmp,
       TMP: tmp,
       TEMP: tmp,
@@ -153,8 +163,15 @@ export async function openPage(ctx: RunContext, opts: { width?: number; height?:
     locale: opts.locale ?? 'en-US',
     timezoneId: opts.timezoneId ?? 'UTC',
     downloadsPath: tmp,
-    artifactsDir: join(work, 'browser', 'artifacts'),
+    artifactsDir: join(base, 'artifacts'),
   };
+  return { profileDir, options };
+}
+
+/** A headless Google Chrome page with a fresh profile under `.e2e-work/browser/`, closed when the scenario ends. */
+export async function openPage(ctx: RunContext, opts: BrowserOptions = {}): Promise<OpenedPage> {
+  await registerIssueEngine();
+  const { profileDir: dir, options } = browserLaunchOptions(join(ctx.workDir(), 'browser'), ctx.browserEnv(), opts);
   let context: BrowserContext;
   try {
     context = await chromium.launchPersistentContext(dir, { ...options, channel: 'chrome' });
@@ -239,9 +256,114 @@ export async function bodyText(page: Page): Promise<string> {
   return (await page.locator('body').innerText().catch(() => '')).replace(/\s+/g, ' ');
 }
 
-/** The innermost list item, article, row or group that holds the text. */
+/** The minimal DOM the Issue selector engine reads; the project has no DOM typings. */
+interface EngineNode {
+  nodeType: number;
+  nodeName: string;
+  data?: string;
+  childNodes: ArrayLike<EngineNode>;
+}
+interface EngineElement extends EngineNode {
+  href?: string;
+  parentElement: EngineElement | null;
+  matches(s: string): boolean;
+  closest(s: string): EngineElement | null;
+  querySelectorAll(s: string): ArrayLike<EngineElement>;
+}
+
+/**
+ * The Issue selector engine (`nibfin_issue="<title>"`), evaluated in the page. It must stay
+ * self-contained: Playwright sends its source text, so it cannot use imports or outer names.
+ *
+ * - A candidate is a list item, article or row; an Issue link is an `a[href]` to
+ *   `https://github.com/<owner>/<repo>/issues/<n>`; a link's owner is its nearest candidate.
+ * - An Issue element is a candidate that owns an Issue link; it is top-level when no Issue
+ *   element inside the scope root contains it. Its own text leaves out nested Issue elements.
+ * - The match is the top-level Issue element whose own text contains the title (whitespace
+ *   collapsed, case-insensitive); among several, the one owning the fewest distinct Issue
+ *   URLs, then the first. Without one, the last candidate outside every Issue element whose
+ *   own text contains the title; otherwise nothing.
+ */
+export function issueEngine() {
+  const SEL = 'li, article, [role="listitem"], [role="row"], [role="article"]';
+  const ISSUE = /^https:\/\/github\.com\/[^/?#]+\/[^/?#]+\/issues\/\d+(?=$|[?#])/;
+  const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'HEAD']);
+  const norm = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
+  const titleOf = (body: string) => {
+    try {
+      const v: unknown = JSON.parse(body);
+      return typeof v === 'string' ? v : body;
+    } catch {
+      return body;
+    }
+  };
+  const queryAll = (root: EngineElement, body: string): EngineElement[] => {
+    const title = norm(titleOf(body));
+    if (!title) return [];
+    const candidates = Array.from(root.querySelectorAll(SEL));
+    const owned = new Map<EngineElement, Set<string>>();
+    for (const a of Array.from(root.querySelectorAll('a[href]'))) {
+      const m = ISSUE.exec(a.href ?? '');
+      const owner = m ? a.closest(SEL) : null;
+      if (!m || !owner || !candidates.includes(owner)) continue;
+      const urls = owned.get(owner) ?? new Set<string>();
+      urls.add(m[0]);
+      owned.set(owner, urls);
+    }
+    /** The nearest Issue element strictly above `el`, inside the scope root. */
+    const issueAncestor = (el: EngineElement): EngineElement | undefined => {
+      for (let p = el.parentElement; p && p !== root; p = p.parentElement) if (owned.has(p)) return p;
+      return undefined;
+    };
+    const ownText = (el: EngineElement): string => {
+      let out = '';
+      const walk = (n: EngineNode) => {
+        for (const c of Array.from(n.childNodes)) {
+          if (c.nodeType === 3) out += c.data ?? '';
+          else if (c.nodeType === 1 && !SKIP.has(c.nodeName.toUpperCase()) && !owned.has(c as EngineElement)) walk(c);
+        }
+      };
+      walk(el);
+      return norm(out);
+    };
+    const top = candidates.filter((el) => owned.has(el) && !issueAncestor(el) && ownText(el).includes(title));
+    if (top.length) {
+      let best = top[0] as EngineElement;
+      for (const el of top) if ((owned.get(el)?.size ?? 0) < (owned.get(best)?.size ?? 0)) best = el;
+      return [best];
+    }
+    const plain = candidates.filter((el) => !owned.has(el) && !issueAncestor(el) && ownText(el).includes(title));
+    const last = plain[plain.length - 1];
+    return last ? [last] : [];
+  };
+  return {
+    query: (root: EngineElement, body: string) => queryAll(root, body)[0] ?? null,
+    queryAll,
+  };
+}
+
+let issueEngineRegistered: Promise<void> | undefined;
+
+/**
+ * Registers the Issue selector engine once per process; later calls share the first
+ * registration. Call it before creating the browser context that uses `issueElement`.
+ */
+export function registerIssueEngine(): Promise<void> {
+  issueEngineRegistered ??= selectors.register('nibfin_issue', issueEngine, { contentScript: true }).catch((error: unknown) => {
+    issueEngineRegistered = undefined;
+    throw error;
+  });
+  return issueEngineRegistered;
+}
+
+/**
+ * The Issue's own element: the list item, article or row that holds its Issue link and its
+ * title and is not nested inside another Issue's element, so a "Waiting on" entry naming the
+ * Issue is never returned (see `issueEngine`). Matches nothing when the Issue is not shown.
+ * Needs `registerIssueEngine`, which `openPage` awaits.
+ */
 export function issueElement(scope: Page | Locator, title: string): Locator {
-  return scope.locator('li, article, [role="listitem"], [role="row"], [role="article"]').filter({ hasText: title }).last();
+  return scope.locator(`nibfin_issue=${JSON.stringify(title)}`);
 }
 
 /** The stage the track marks current: aria-current, or "stage: X" text. */
