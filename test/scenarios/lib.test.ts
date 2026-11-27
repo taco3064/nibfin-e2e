@@ -71,17 +71,31 @@ test('a watch inspects on start, keeps the projection, counts died events and fa
 
 test('init events, the image line, build output and cause codes are read from a Job log', () => {
   const log = [
-    '2026-11-26T10:00:00.0000000Z Nibfin image: ghcr.io/taco3064/nibfin@sha256:abc',
+    `2026-11-26T10:00:00.0000000Z Nibfin image: ghcr.io/taco3064/nibfin@sha256:${'a'.repeat(64)}`,
     '2026-11-26T10:00:01.0000000Z {"type":"system","subtype":"init","model":"claude-opus-4-5","mcp_servers":[{"name":"e2e-probe","status":"connected"}]}',
     '2026-11-26T10:00:02.0000000Z {"type":"assistant","message":"init"}',
     '2026-11-26T10:00:03.0000000Z error TOOL_INSTALL_FAILED: uv python install exited 2',
   ].join('\n');
   deepEqual(initEvents(log), [{ model: 'claude-opus-4-5', mcpServers: [{ name: 'e2e-probe', status: 'connected' }] }]);
-  equal(imageLine(log), 'ghcr.io/taco3064/nibfin@sha256:abc');
+  equal(imageLine(log), `ghcr.io/taco3064/nibfin@sha256:${'a'.repeat(64)}`);
   equal(buildOutput(log), undefined);
   equal(buildOutput('STEP 1/3: FROM x'), 'STEP 1/3');
   deepEqual(causeCodes(log), ['TOOL_INSTALL_FAILED']);
   deepEqual(causeCodes('Not a CODE, nor A_, but CONFIG_INVALID and E2E_X'), ['CONFIG_INVALID', 'E2E_X']);
+});
+
+test('the image line skips echoed script text and takes only a digest-pinned reference', () => {
+  const ref = `ghcr.io/taco3064/nibfin@sha256:${'b'.repeat(64)}`;
+  const echoed = '2026-11-26T10:00:00.0000000Z \x1b[36;1mecho "Nibfin image: $IMAGE_REF"\x1b[0m';
+  const printed = `2026-11-26T10:00:05.0000000Z Nibfin image: ${ref}`;
+  equal(imageLine([echoed, printed].join('\n')), ref);
+  equal(imageLine([echoed, printed].join('\r\n') + '\r\n'), ref);
+  equal(imageLine('Nibfin image: $IMAGE_REF"\x1b[0m\n' + printed), ref);
+  equal(imageLine(`Nibfin image: localhost:5000/nibfin@sha256:${'c'.repeat(64)}`), `localhost:5000/nibfin@sha256:${'c'.repeat(64)}`);
+  equal(imageLine(echoed), undefined);
+  equal(imageLine('Nibfin image: ghcr.io/taco3064/nibfin:latest'), undefined);
+  equal(imageLine(`Nibfin image: ghcr.io/taco3064/nibfin@sha256:${'b'.repeat(63)}`), undefined);
+  equal(imageLine(`Nibfin image: ghcr.io/taco3064/nibfin@sha256:${'b'.repeat(65)}`), undefined);
 });
 
 test('the stage Job is the one on a local Runner; its runner_name maps to a slot, and an unmatched set fails naming every Job', async () => {

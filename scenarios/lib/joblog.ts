@@ -84,9 +84,13 @@ export function initEvents(log: string): InitEvent[] {
   return out;
 }
 
-/** The image reference the generated workflow prints (`Nibfin image: <ref>`). */
+/**
+ * The first digest-pinned image reference (`<image>@sha256:<64 hex>`) the generated workflow
+ * prints on a `Nibfin image: <ref>` line, or `undefined` when there is none. Echoed script text
+ * such as `Nibfin image: $IMAGE_REF"` with ANSI escapes does not match and is skipped.
+ */
 export function imageLine(log: string): string | undefined {
-  return /Nibfin image: (\S+)/.exec(log)?.[1];
+  return /Nibfin image: ([a-z0-9][a-z0-9._/:-]*@sha256:[0-9a-f]{64})(?=\s|$)/.exec(log)?.[1];
 }
 
 /** Output an image build would print; the host must never build (Proposal R8.2). */
