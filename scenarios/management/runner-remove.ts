@@ -43,8 +43,8 @@ export const runnerRemove: Scenario = {
     // The host after runner add, read before anything is removed. R5.16 names only
     // Windows here (scheduled task removed, .wslconfig kept); it names nothing on Linux.
     const windows = ctx.target.platform === 'windows';
-    const setup = await readHostState(run, ctx.target.platform);
-    const added = setup.platform === 'windows' && facts.hostBefore.platform === 'windows' ? await podmanStartTasks(run, newTasks(facts.hostBefore, setup)) : [];
+    const setup = windows ? await readHostState(run, ctx.target.platform) : undefined;
+    const added = setup?.platform === 'windows' && facts.hostBefore.platform === 'windows' ? await podmanStartTasks(run, newTasks(facts.hostBefore, setup)) : [];
 
     try {
       const hold = await startHold(gh, execution, 120);
@@ -72,7 +72,7 @@ export const runnerRemove: Scenario = {
 
       if (windows) {
         const now = await readHostState(run, ctx.target.platform);
-        if (setup.platform !== 'windows' || now.platform !== 'windows') c.fail('R5.16', 'the Windows host state could not be read to check the last removal');
+        if (setup?.platform !== 'windows' || now.platform !== 'windows') c.fail('R5.16', 'the Windows host state could not be read to check the last removal');
         else {
           c.that(added.length > 0, 'R5.16', "runner add's scheduled task that runs podman machine start could not be found to check its removal (no new such task against the host before runner add)");
           const still = added.filter((t) => now.tasks.includes(t));
