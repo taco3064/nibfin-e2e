@@ -77,6 +77,13 @@ test('host diffs: new enabled units and changed .wslconfig keys', () => {
   deepEqual([w.changed, w.added, w.now.wsl2?.vmidletimeout], [['[wsl2] memory'], ['[wsl2] vmidletimeout'], '-1']);
 });
 
+test('host diffs: a .wslconfig that differs only in formatting is unchanged (Proposal R5.16)', () => {
+  const kept = wslconfigChanges('[wsl2]\nnestedVirtualization=true\nvmIdleTimeout=-1\n', '\r\n[WSL2]\r\n  vmidletimeout = -1 \r\n# note\r\nNestedVirtualization=true\r\n');
+  deepEqual([kept.changed, kept.added], [[], []]);
+  const lost = wslconfigChanges('[wsl2]\nvmIdleTimeout=-1\n', '[wsl2]\n');
+  deepEqual([lost.changed, lost.added], [['[wsl2] vmidletimeout'], []]);
+});
+
 test('upgrade helpers: the provider line is dropped alone; settings changes name keys only', () => {
   equal(withoutProvider('NIBFIN_PROVIDER=claude\nNIBFIN_MODEL=x\n'), 'NIBFIN_MODEL=x\n');
   deepEqual(changedKeys({ env: { T: 's1' }, a: 1 }, { env: { T: 's2' }, a: 1, b: 2 }), ['b', 'env']);
