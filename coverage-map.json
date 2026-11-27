@@ -128,7 +128,7 @@
   {"id": "R5.6", "notE2e": "Nibfin 自身設定"},
   {"id": "R5.7", "platforms": ["linux"], "scenarios": ["init-files", "delivery-lifecycle"]},
   {"id": "R5.8", "notE2e": "無法證明不存在"},
-  {"id": "R5.9", "platforms": ["linux"], "scenarios": []},
+  {"id": "R5.9", "platforms": ["linux"], "scenarios": ["host-requirements"]},
   {"id": "R5.10", "platforms": ["linux", "macos", "windows"], "scenarios": []},
   {"id": "R5.11", "platforms": ["linux", "macos", "windows"], "scenarios": []},
   {"id": "R5.12", "platforms": ["linux", "macos", "windows"], "scenarios": []},
