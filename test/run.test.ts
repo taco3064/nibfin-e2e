@@ -296,3 +296,13 @@ test('blocked steps and scenarios name the step that blocked them', async () => 
   deepEqual(r.provisioning.map((p) => [p.id, p.blockedBy]), [['base', undefined], ['login', 'base'], ['later', undefined]]);
   deepEqual(r.scenarios.map((s) => [s.id, s.blockedBy]), [['a', 'login'], ['b', 'later']]);
 });
+
+test('a waiting scenario among concurrent ones is not run; the others still start together and order is kept', async () => {
+  const events: string[] = [];
+  const list = [timed('a', true, events), timed('b', true, events), timed('c', true, events)];
+  const { selected } = select(entriesFor(list), list, { all: true });
+  const waiting = [{ id: 'R1.98', issues: ['u'] }];
+  const r = await run({ selection: { all: true }, selected, steps: [], target, host, log: () => {}, waiting });
+  deepEqual(events.slice(0, 2), ['start a', 'start c']);
+  deepEqual(r.scenarios.map((s) => [s.id, s.status]), [['a', 'passed'], ['b', 'waiting'], ['c', 'passed']]);
+});
