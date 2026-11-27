@@ -1,9 +1,11 @@
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { IMAGE_DIGEST, KNOWN_VISIBILITY, SANDBOX } from './host/config.ts';
 import { mustRun } from './host/exec.ts';
 import type { ExecResult } from './host/exec.ts';
 import { installGhNibfin } from './host/ghnibfin.ts';
-import { readHostState, seedWslconfig } from './host/hoststate.ts';
+import { baselineOf, hasUserManager, hostPeriodicRun, readHostState, readPeriodic, readVmPeriodic, seedWslconfig, userRuntimeDir } from './host/hoststate.ts';
+import type { HostRun, HostState } from './host/hoststate.ts';
 import type { GitHub } from './host/github.ts';
 import { writeClaudeLogin } from './host/login.ts';
 import { preparePeer, teardownPeer } from './host/peer.ts';
@@ -84,6 +86,28 @@ async function baseline(gh: GitHub, repo: string): Promise<{ commit: string; tre
   return head;
 }
 
+/**
+ * Adds the periodic baseline (Proposal R5.17) to the host state before runner add. A failed
+ * read is kept as `{ error }`, so only the scenario that needs it fails. On Windows the
+ * podman machine is started to read inside the VM and stopped again, so that runner add
+ * still finds it stopped; a failed stop throws.
+ */
+export async function readPeriodicBaseline(run: HostRun, host: Pick<HostServices, 'env' | 'exec'>, before: HostState): Promise<void> {
+  if (before.platform === 'linux') {
+    const runtime = userRuntimeDir(host.env);
+    before.periodic = await baselineOf(() => readPeriodic(hostPeriodicRun(run, runtime), { noManagerOk: !hasUserManager(runtime, existsSync) }));
+    return;
+  }
+  const start = await host.exec(['podman', 'machine', 'start']);
+  if (start.code !== 0) {
+    before.vm = { error: `podman machine start exited ${start.code}: ${tail(start) || 'no output'}` };
+    return;
+  }
+  before.vm = await baselineOf(() => readVmPeriodic(run));
+  const stop = await host.exec(['podman', 'machine', 'stop']);
+  if (stop.code !== 0) throw new Error(`podman machine stop after reading the VM baseline exited ${stop.code}: ${tail(stop)}`);
+}
+
 /** Host provisioning, in the order the steps run (Issue #283). */
 export function createProvisioning(host: HostServices): ProvisioningStep[] {
   return [
@@ -139,7 +163,10 @@ export function createProvisioning(host: HostServices): ProvisioningStep[] {
           await mustRun(host.exec, ['git', 'clone', '--quiet', `https://github.com/${SANDBOX.execution}.git`, ctx.executionDir]);
           // The host state before runner add, so scenarios can see what the always-on setup changed.
           if (ctx.target.platform === 'windows') seedWslconfig();
-          facts.hostBefore = await readHostState((argv, env) => host.exec(argv, { env }), ctx.target.platform, { env: host.env });
+          const run: HostRun = (argv, env) => host.exec(argv, { env });
+          const before = await readHostState(run, ctx.target.platform, { env: host.env });
+          await readPeriodicBaseline(run, host, before);
+          facts.hostBefore = before;
           facts.runnerAdd = true;
           await nibfin(['runner', 'add', 'claude', '--count', '2', '--yes']);
           await nibfin(['init', '--yes']);
