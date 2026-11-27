@@ -87,7 +87,8 @@ has). `scenarios/site/` checks the public site's Live page and the site's deploy
 workflows in gh-nibfin. Elements are found by accessible role, name and visible
 text only, and the Dashboard's responses are never mocked or intercepted.
 
-- Browser profiles and temporary files live under `.e2e-work/browser/`. The
+- Browser profiles, temporary files and the browser's `HOME` live under
+  `.e2e-work/browser/`. The
   browser gets the host environment without any `E2E_*` variable or `GH_TOKEN`.
   Session proofs and sessions stay in memory and are redacted from every reason.
 - Children (`ctx.start`, `ctx.startGhNibfin`) and browsers a scenario starts are

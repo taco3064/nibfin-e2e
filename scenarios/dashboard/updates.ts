@@ -146,7 +146,8 @@ async function localJob(ctx: RunContext, secrets: Secrets, markers: Record<strin
     // The 20 s count from the later of the Job start and E's first appearance on the page.
     const listed = await seenWithin(person, async () => (await issueElement(person, issue.title).count()) > 0, POLL_MS + TOLERANCE_MS);
     check(listed !== undefined, 'R9.24', `E listed in the repo view within ${(POLL_MS + TOLERANCE_MS) / 1000} s`, 'not listed');
-    const startedAt = Math.max(jobStart, Date.now() - (listed as number));
+    // seenWithin returns as soon as E is seen, so now is E's first appearance.
+    const startedAt = Math.max(jobStart, Date.now());
     const inProgress = async () => /in progress|running|queued/i.test(`${await issueElement(person, issue.title).innerText().catch(() => '')} ${await issueElement(person, issue.title).locator('[aria-label]').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')).join(' ')).catch(() => '')}`);
     const stripMs = await seenWithin(person, inProgress, Math.max(0, 20_000 - (Date.now() - startedAt)));
     check(stripMs !== undefined && (await sameDocument(person)), 'R9.23', "E's run strip to show an in-progress run within 20 s of the Job start (or of E's first appearance, if later), without navigation", 'not shown');
