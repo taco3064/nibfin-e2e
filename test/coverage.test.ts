@@ -2,6 +2,7 @@ import { deepEqual, equal, match, ok } from 'node:assert/strict';
 import { test } from 'node:test';
 import { computeCoverage, crossCheck, loadMap, parseRuleId, validateMap, validateRegistry } from '../src/coverage.ts';
 import { provisioning, scenarios as registered } from '../src/registry.ts';
+import { isExcluded } from '../src/types.ts';
 import { map, passed, scenario, scenarioA, scenarios, step } from './fixtures.ts';
 
 test('parseRuleId accepts R<section>.<n> only', () => {
@@ -91,6 +92,16 @@ test('the real coverage map is valid and consistent with the real registry', () 
   ok(entries.length > 0);
   deepEqual(validateRegistry(registered, provisioning), []);
   deepEqual(crossCheck(entries, registered), []);
+});
+
+test('the real coverage map requires no macOS coverage (Proposal R8.24)', () => {
+  const { entries } = loadMap(new URL('../coverage-map.json', import.meta.url));
+  const onMacos = entries.filter((e) => !isExcluded(e) && e.platforms.includes('macos')).map((e) => e.id);
+  deepEqual(onMacos, [], `Proposal R8.24: e2e does not verify macOS, but these entries list it: ${onMacos.join(', ')}`);
+  for (const id of ['R5.14', 'R8.24']) {
+    const e = entries.find((x) => x.id === id);
+    ok(e && isExcluded(e), `Proposal R8.24: ${id} must be a notE2e entry`);
+  }
 });
 
 test('loadMap reports an unreadable file', () => {
