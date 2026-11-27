@@ -33,10 +33,9 @@ export async function localRunners(gh: GitHub, execution: string): Promise<Local
   return out.sort((a, b) => (a.slot < b.slot ? -1 : 1));
 }
 
-/** Throws naming every Runner that is not online and idle. */
-export function requireIdle(runners: LocalRunner[]): void {
+/** The problem naming every Runner that is not online and idle, or undefined when all are. */
+export function idleProblem(runners: LocalRunner[]): string | undefined {
   const bad = runners.filter((r) => r.status !== 'online' || r.busy);
-  if (bad.length) {
-    throw new Error(`Runners not online and idle: ${bad.map((r) => `${r.slot} (registration ${r.name}) is ${r.status}${r.busy ? ' and busy' : ''}`).join('; ')}`);
-  }
+  if (!bad.length) return undefined;
+  return `Runners not online and idle: ${bad.map((r) => `${r.slot} (registration ${r.name}) is ${r.status}${r.busy ? ' and busy' : ''}`).join('; ')}`;
 }
