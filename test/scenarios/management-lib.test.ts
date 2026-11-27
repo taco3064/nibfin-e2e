@@ -9,6 +9,8 @@ import { isNibfinRunFor, leafCommands, parseHelp, parseRemaining } from '../../s
 import { mainDigest, requireCurrentImage } from '../../scenarios/lib/image.ts';
 import { schemaValidator } from '../../scenarios/lib/schema.ts';
 import { waitFor } from '../../scenarios/lib/wait.ts';
+import { guideTail, GUIDE_LINE, loginGuide, statusRunners, SUCCESS_LINE, waitForOutput } from '../../scenarios/management/login-guide.ts';
+import { claudeLoggedIn, providerLogin } from '../../scenarios/dashboard/support.ts';
 import { readWorkflow } from '../../scenarios/lib/workflows.ts';
 
 const D1 = 'sha256:' + '1'.repeat(64);
@@ -237,4 +239,130 @@ test('waitFor ends with the abort reason once its signal aborts', async () => {
     /harness budget of 190 min ran out/,
   );
   equal(reads, 2);
+});
+
+// ---- runner-add-login (Proposal R5.30) -------------------------------------------
+
+const CGROUP = 'WARNING: cgroup v2 delegation is missing; see https://rootlesscontaine.rs/getting-started/common/cgroup2/ for how to enable it.';
+
+test('loginGuide: the open and enter code step lines, across CRLF, interleaved stdout and ANSI colour', () => {
+  const out = `Preview:\r\n  linger: ok\r\n\x1b[1mopen https://auth.openai.com/codex/device\x1b[0m\r\nwaiting for login…\r\n\x1b[33menter code ABCD-12345\x1b[0m\r\n`;
+  const g = loginGuide(out);
+  equal(g.url, 'https://auth.openai.com/codex/device');
+  equal(g.code, 'ABCD-12345');
+  deepEqual(g.secrets, ['https://auth.openai.com/codex/device', 'ABCD-12345']);
+  equal(loginGuide('a\ropen https://x.example/a\rb').url, 'https://x.example/a');
+});
+
+test('loginGuide: an advisory URL is no guide, but stays a secret', () => {
+  const g = loginGuide(`${CGROUP}\n`);
+  equal(g.url, undefined);
+  equal(GUIDE_LINE.test(CGROUP), false);
+  deepEqual(g.secrets, ['https://rootlesscontaine.rs/getting-started/common/cgroup2/']);
+});
+
+test('loginGuide: open mid-sentence does not count; GitHub URLs are not secrets', () => {
+  const g = loginGuide('please open https://example.com/login in a browser\nsee https://github.com/o/r and https://api.github.com/x and https://objects.githubusercontent.com/y\n');
+  equal(g.url, undefined);
+  equal(GUIDE_LINE.test('please open https://example.com/login in a browser'), false);
+  deepEqual(g.secrets, ['https://example.com/login']);
+});
+
+test('loginGuide: an enter code line or a code-shaped token alone is a secret, not a guide', () => {
+  const a = loginGuide('enter code WXYZ-9876\n');
+  equal(a.url, undefined);
+  equal(a.code, 'WXYZ-9876');
+  deepEqual(a.secrets, ['WXYZ-9876']);
+  const b = loginGuide('Your one-time code: QRST-5678 (expires in 15 minutes)\n');
+  equal(b.url, undefined);
+  equal(b.code, undefined);
+  deepEqual(b.secrets, ['QRST-5678']);
+});
+
+test('guideTail hides every login value before cutting, and strips ANSI', () => {
+  const out = `x`.repeat(50) + `\n\x1b[1mopen https://auth.example/device?user_code=ABCD-EFGH\x1b[0m\nenter code ABCD-EFGH\n`;
+  const t = guideTail(out, 40);
+  equal(t.includes('auth.example'), false);
+  equal(t.includes('ABCD'), false);
+  equal(t.includes('\x1b'), false);
+  match(t, /^…/);
+  match(guideTail(out), /open <redacted>/);
+  equal(guideTail(`${CGROUP}`).includes('rootlesscontaine'), false);
+});
+
+test('SUCCESS_LINE matches a finished login, not "not logged in"', () => {
+  equal(SUCCESS_LINE.test('Successfully logged in'), true);
+  equal(SUCCESS_LINE.test('login complete'), true);
+  equal(SUCCESS_LINE.test('codex: not logged in'), false);
+});
+
+/** A child whose output and exit the test drives. */
+function drivenChild() {
+  let out = '';
+  let exited = false;
+  const waiters = new Set<() => void>();
+  return {
+    write: (s: string) => void (out += s),
+    exit() {
+      exited = true;
+      for (const w of waiters) w();
+    },
+    output: () => out,
+    waitFor: (_p: RegExp, ms: number) =>
+      new Promise<RegExpExecArray>((_resolve, reject) => {
+        if (exited) return reject(new Error('exited'));
+        const t = setTimeout(() => reject(new Error('timeout')), ms);
+        waiters.add(() => (clearTimeout(t), reject(new Error('exited'))));
+      }),
+  };
+}
+
+test('waitForOutput: found when the step line streams in, exited when the child ends first, timeout otherwise', async () => {
+  const find = (o: string) => loginGuide(o).url;
+  const a = drivenChild();
+  setTimeout(() => a.write(`${CGROUP}\n`), 5);
+  setTimeout(() => a.write('open https://auth.example/d\n'), 20);
+  deepEqual(await waitForOutput(a, find, 2000, { pollMs: 5 }), { end: 'found', value: 'https://auth.example/d' });
+  a.exit();
+
+  const b = drivenChild();
+  b.write(`${CGROUP}\n`);
+  setTimeout(() => b.exit(), 10);
+  deepEqual(await waitForOutput(b, find, 2000, { pollMs: 5 }), { end: 'exited' });
+
+  const c = drivenChild();
+  setTimeout(() => (c.write('open https://auth.example/late\n'), c.exit()), 10);
+  deepEqual(await waitForOutput(c, find, 2000, { pollMs: 50 }), { end: 'found', value: 'https://auth.example/late' });
+
+  const d = drivenChild();
+  deepEqual(await waitForOutput(d, find, 30, { pollMs: 5 }), { end: 'timeout' });
+  d.exit();
+
+  const e = drivenChild();
+  const ac = new AbortController();
+  ac.abort();
+  deepEqual(await waitForOutput(e, find, 2000, { pollMs: 5, signal: ac.signal }), { end: 'aborted' });
+  e.exit();
+});
+
+test('statusRunners picks one provider from either runners shape', () => {
+  const s = { runners: { runners: [{ provider: 'claude' }, { provider: 'codex' }] }, providers: [{ provider: 'codex', loggedIn: false }] };
+  equal(statusRunners(s, 'codex').length, 1);
+  equal(statusRunners({ runners: [{ provider: 'codex' }, { provider: 'codex' }] }, 'codex').length, 2);
+  equal(statusRunners({ runners: { runners: null } }, 'codex').length, 0);
+  equal(statusRunners(null, 'codex').length, 0);
+});
+
+test('providerLogin: true, false and undefined; claudeLoggedIn keeps its results', () => {
+  const s = { providers: [{ provider: 'claude', loggedIn: true }, { provider: 'codex', loggedIn: false, error: 'x' }] };
+  equal(providerLogin(s, 'claude'), true);
+  equal(providerLogin(s, 'codex'), false);
+  equal(providerLogin({ providers: [{ provider: 'claude', loggedIn: true }] }, 'codex'), undefined);
+  equal(providerLogin({ logins: { codex: { loggedIn: 'not logged in' } } }, 'codex'), false);
+  equal(providerLogin({ logins: { codex: { signedIn: 'yes' } } }, 'codex'), true);
+  equal(claudeLoggedIn(s), true);
+  equal(claudeLoggedIn({ providers: [{ provider: 'claude', loggedIn: false }] }), false);
+  equal(claudeLoggedIn({ claude: { login: 'logged-in' } }), true);
+  equal(claudeLoggedIn({ providers: [{ provider: 'codex', loggedIn: true }] }), false);
+  equal(claudeLoggedIn({}), false);
 });
