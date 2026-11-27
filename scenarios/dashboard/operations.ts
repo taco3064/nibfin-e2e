@@ -1,7 +1,7 @@
 // Proposal R9.12, R9.13, R9.18, R9.20–R9.22 and R9.6: operations through the Dashboard.
 import type { Locator, Page } from 'playwright-core';
 import type { RunContext } from '../../src/types.ts';
-import { check, commandInputs, fail, fieldProblems, pauseResumePreconditions, startsInWindow } from './checks.ts';
+import { check, commandSchemaFrom, fail, fieldProblems, pauseResumePreconditions, sessionFrom, startsInWindow } from './checks.ts';
 import type { SchemaInput } from './checks.ts';
 import { assertQuietSandboxes, blockedBy, ensureFixtures, readIssue, sleep, until } from './github.ts';
 import type { Fixtures } from './github.ts';
@@ -9,6 +9,7 @@ import {
   activeView,
   bodyText,
   button,
+  call,
   closeDialog,
   defineScenario,
   dialog,
@@ -79,16 +80,24 @@ export async function confirmedRun(page: Page, d: Locator, rule: string, what: s
   return text;
 }
 
+/**
+ * Reads the command schema straight from `GET /api/commands` on a Dashboard of its own
+ * (Proposal R9.13, R5.23). The proof is one-time (R9.26), so the page under test keeps
+ * its own Dashboard and proof.
+ */
 async function commandSchema(ctx: RunContext, secrets: Secrets): Promise<Map<string, SchemaInput[]>> {
   const dash = await startDashboard(ctx, secrets);
   try {
-    const { page, api } = await openPage(ctx);
-    await openDashboard(page, dash);
-    const end = Date.now() + 20_000;
-    while (!api.has('/api/commands') && Date.now() < end) await sleep(300);
-    const json = api.get('/api/commands');
-    if (json === undefined) fail('R9.13', 'the page to read /api/commands', 'no such response');
-    return commandInputs(json);
+    const host = `127.0.0.1:${dash.port}`;
+    const send = (method: string, path: string, headers: Record<string, string>) =>
+      call(dash.port, method, path, { Host: host, ...headers }).catch((error: unknown) =>
+        fail('R9.13 (R5.23)', `${method} ${path} to answer`, `the request failed: ${(error as Error).message}`),
+      );
+    const exchange = await send('POST', '/api/session', { 'X-Nibfin-Proof': dash.proof });
+    const session = exchange.status >= 200 && exchange.status < 300 ? sessionFrom(exchange) : undefined;
+    if (!session) fail('R9.13 (R9.26)', 'a session from the proof exchange', `HTTP ${exchange.status}${exchange.status >= 200 && exchange.status < 300 ? ' with no session field or header' : ''}`);
+    secrets.add(session);
+    return commandSchemaFrom(await send('GET', '/api/commands', { 'X-Nibfin-Session': session }));
   } finally {
     await dash.stop();
   }

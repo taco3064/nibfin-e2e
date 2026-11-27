@@ -1,14 +1,15 @@
 // Server, browser and page support for the Dashboard and site scenarios.
 // Elements are found by accessible role, name and visible text only (Proposal R8.14).
 import { mkdirSync } from 'node:fs';
+import { request } from 'node:http';
 import { connect, createServer } from 'node:net';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
-import type { BrowserContext, Locator, Page, Response } from 'playwright-core';
+import type { BrowserContext, Locator, Page } from 'playwright-core';
 import type { Running } from '../../src/host/exec.ts';
 import type { Outcome, RunContext, RuleId, Scenario } from '../../src/types.ts';
 import { fieldsFromAriaSnapshot, parseJobStarts, parseSessionUrl, redact } from './checks.ts';
-import type { ContainerStart, FormField, SessionUrl } from './checks.ts';
+import type { ContainerStart, FormField, Reply, SessionUrl } from './checks.ts';
 import { sleep } from './github.ts';
 
 // ---- Scenario wrapper ---------------------------------------------------------
@@ -74,6 +75,20 @@ export function portClosed(port: number): Promise<boolean> {
   });
 }
 
+/** One HTTP request to the Dashboard on 127.0.0.1 with exactly the given headers. */
+export function call(port: number, method: string, path: string, headers: Record<string, string>): Promise<Reply> {
+  return new Promise((resolve, reject) => {
+    const req = request({ host: '127.0.0.1', port, method, path, headers, timeout: 15_000 }, (res) => {
+      let body = '';
+      res.setEncoding('utf8').on('data', (d: string) => (body += d));
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, body, headers: res.headers }));
+    });
+    req.on('timeout', () => req.destroy(new Error('timed out')));
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 const SESSION = /http:\/\/127\.0\.0\.1:\d+\/\S*#\S*proof=\S+/;
 
 /** Starts `gh nibfin dashboard --no-browser` and reads its session URL. The proof stays in memory. */
@@ -107,8 +122,6 @@ export async function startDashboard(ctx: RunContext, secrets: Secrets, opts: { 
 export interface OpenedPage {
   page: Page;
   context: BrowserContext;
-  /** JSON bodies of the page's own `/api/` responses, by path. */
-  api: Map<string, unknown>;
   close(): Promise<void>;
 }
 
@@ -156,16 +169,7 @@ export async function openPage(ctx: RunContext, opts: { width?: number; height?:
   ctx.defer(close);
   const page = context.pages()[0] ?? (await context.newPage());
   page.setDefaultTimeout(15_000);
-  const api = new Map<string, unknown>();
-  page.on('response', (res: Response) => {
-    const url = new URL(res.url());
-    if (!url.pathname.startsWith('/api/') || !(res.headers()['content-type'] ?? '').includes('json')) return;
-    res
-      .json()
-      .then((j) => api.set(url.pathname, j))
-      .catch(() => {});
-  });
-  return { page, context, api, close };
+  return { page, context, close };
 }
 
 /** Marks the current document so a later reload can be detected (Proposal R9.23, R9.24 "without a reload"). */

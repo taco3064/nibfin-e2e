@@ -196,6 +196,44 @@ export function commandInputs(json: unknown): Map<string, SchemaInput[]> {
   return out;
 }
 
+/** One HTTP response from the Dashboard API. */
+export interface Reply {
+  status: number;
+  body: string;
+  headers: Record<string, string | string[] | undefined>;
+}
+
+/** The session value from the proof exchange's response: a JSON field or a header. */
+export function sessionFrom(reply: Reply): string | undefined {
+  const header = reply.headers['x-nibfin-session'];
+  if (typeof header === 'string' && header) return header;
+  try {
+    const j = JSON.parse(reply.body) as Record<string, unknown>;
+    for (const [k, v] of Object.entries(j)) if (/session|token/i.test(k) && typeof v === 'string' && v) return v;
+  } catch {
+    // not JSON
+  }
+  return undefined;
+}
+
+/**
+ * The command inputs from a `GET /api/commands` reply (Proposal R9.13, R5.23). Fails on a
+ * status that is not 2xx, a body that is not JSON, or a response with no commands.
+ */
+export function commandSchemaFrom(reply: { status: number; body: string }): Map<string, SchemaInput[]> {
+  const expected = 'GET /api/commands to return the command schema';
+  if (reply.status < 200 || reply.status >= 300) fail('R9.13 (R5.23)', expected, `HTTP ${reply.status}: ${reply.body.slice(0, 200)}`);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(reply.body);
+  } catch (error) {
+    fail('R9.13 (R5.23)', expected, `a body that is not JSON (${(error as Error).message})`);
+  }
+  const schema = commandInputs(parsed);
+  if (!schema.size) fail('R9.13 (R5.23)', expected, 'no commands in the response');
+  return schema;
+}
+
 export const normalizeName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 
 export interface FormField {

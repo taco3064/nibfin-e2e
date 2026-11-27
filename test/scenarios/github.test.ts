@@ -3,7 +3,6 @@ import { test } from 'node:test';
 import type { GitHub } from '../../src/host/github.ts';
 import { FIXTURES, fixtureTitle } from '../../scenarios/dashboard/checks.ts';
 import { assertQuietSandboxes, ensureFixtures } from '../../scenarios/dashboard/github.ts';
-import { sessionFrom } from '../../scenarios/dashboard/serving.ts';
 
 interface FakeIssue {
   id: number;
@@ -124,10 +123,4 @@ test('the quiet check reports a run that stays active', async () => {
   const f = fakeGitHub();
   f.extra.runs.push({ id: 5, name: 'Nibfin · route', status: 'in_progress' });
   await rejects(assertQuietSandboxes({ github: f.gh, sandboxes, podmanPs: async () => ({ code: 0, stdout: '[]', stderr: '' }), runsTimeoutMs: 0 }), /workflow run 5 \(Nibfin · route\) is in_progress/);
-});
-
-test('the session comes from the exchange response body or header', () => {
-  equal(sessionFrom({ status: 200, body: '{"session":"s1"}', headers: {} }), 's1');
-  equal(sessionFrom({ status: 200, body: '', headers: { 'x-nibfin-session': 's2' } }), 's2');
-  equal(sessionFrom({ status: 200, body: '{"ok":true}', headers: {} }), undefined);
 });

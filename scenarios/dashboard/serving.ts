@@ -1,33 +1,12 @@
 // Proposal R9.26 (127.0.0.1 only, one-time proof in the fragment, Origin/Host checks)
 // and R9.28 (the build is embedded in the binary; no Node at run time).
 import { existsSync, mkdirSync, readdirSync, renameSync, statSync, symlinkSync } from 'node:fs';
-import { request } from 'node:http';
 import { connect } from 'node:net';
 import { networkInterfaces } from 'node:os';
 import { delimiter, join } from 'node:path';
 import type { RunContext } from '../../src/types.ts';
-import { check } from './checks.ts';
-import { defineScenario, openDashboard, openPage, startDashboard } from './support.ts';
-
-interface Reply {
-  status: number;
-  body: string;
-  headers: Record<string, string | string[] | undefined>;
-}
-
-/** One HTTP request to the Dashboard with exactly the given headers. */
-function call(port: number, method: string, path: string, headers: Record<string, string>): Promise<Reply> {
-  return new Promise((resolve, reject) => {
-    const req = request({ host: '127.0.0.1', port, method, path, headers, timeout: 15_000 }, (res) => {
-      let body = '';
-      res.setEncoding('utf8').on('data', (d: string) => (body += d));
-      res.on('end', () => resolve({ status: res.statusCode ?? 0, body, headers: res.headers }));
-    });
-    req.on('timeout', () => req.destroy(new Error('timed out')));
-    req.on('error', reject);
-    req.end();
-  });
-}
+import { check, sessionFrom } from './checks.ts';
+import { call, defineScenario, openDashboard, openPage, startDashboard } from './support.ts';
 
 /**
  * `accepted` when a TCP connection to the address is accepted within 3 s; `refused` when it
@@ -42,19 +21,6 @@ function connectTo(address: string, port: number): Promise<string> {
     s.once('timeout', () => (s.destroy(), resolve('refused')));
     s.once('error', (e: NodeJS.ErrnoException) => resolve(UNREACHABLE.includes(e.code ?? '') ? 'refused' : (e.code ?? 'error')));
   });
-}
-
-/** The session value from the proof exchange's response: a JSON field or a header. */
-export function sessionFrom(reply: Reply): string | undefined {
-  const header = reply.headers['x-nibfin-session'];
-  if (typeof header === 'string' && header) return header;
-  try {
-    const j = JSON.parse(reply.body) as Record<string, unknown>;
-    for (const [k, v] of Object.entries(j)) if (/session|token/i.test(k) && typeof v === 'string' && v) return v;
-  } catch {
-    // not JSON
-  }
-  return undefined;
 }
 
 const ok = (s: number) => s >= 200 && s < 300;
