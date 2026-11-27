@@ -1,4 +1,5 @@
 // Phase 2 scenarios with their own fixtures: routing, the peer, protected paths and fix loops.
+import { planHasNoRulesets } from '../../src/host/sandbox.ts';
 import type { Scenario } from '../../src/types.ts';
 import { AGENT_STAGES, Checks, fixPushProblems, isIssueBranch, markerOf, reasonOf, time } from './analysis.ts';
 import type { Issue, Job, Pull, Run, Stage } from './analysis.ts';
@@ -90,7 +91,7 @@ export async function writeConflict(k: Kit, repo: string, branch: string, observ
 export const peerDispatch: Scenario = lifecycle({
   id: 'peer-dispatch',
   concurrent: true,
-  rules: ['R3.18', 'R3.23', 'R3.33', 'R4.31', 'R4.32', 'R4.33', 'R4.34'],
+  rules: ['R3.18', 'R3.23', 'R3.33', 'R3.55', 'R4.31', 'R4.32', 'R4.33', 'R4.34'],
   async run(k) {
     const c = new Checks();
     const { exec, peer } = k;
@@ -142,9 +143,23 @@ export const peerDispatch: Scenario = lifecycle({
       c.check('R4.31', jobs.length > 0 && jobs.every((j) => j.labels.includes(label)), `Q's agent jobs ran with ${[...new Set(jobs.map((j) => j.labels.join('+')))].join(', ')}`);
 
       // R3.23, R3.33: the peer has no ruleset, so no required checks: review runs without CI.
-      const rules = await k.gh.rest<unknown[]>('GET', `/repos/${peer}/rulesets`, undefined, [403]);
-      c.check('R3.33', rules.status === 403 || rules.data.length === 0, `${peer} has rulesets`);
+      const rules = await k.gh.rest<unknown[] | { message?: string }>('GET', `/repos/${peer}/rulesets`, undefined, [403]);
+      c.check('R3.33', rules.status === 403 || (Array.isArray(rules.data) && rules.data.length === 0), `${peer} has rulesets`);
       c.check('R3.23', k.stages(s, peer, n, ['review']).length > 0 && !!merged, 'Q was not reviewed and merged without CI');
+
+      // R3.55: the private peer's plan has no rulesets (403 "Upgrade to GitHub Pro"); Q is still delivered and never labeled pending.
+      if (rules.status === 403) {
+        const message = (Array.isArray(rules.data) ? undefined : rules.data?.message) ?? '';
+        if (planHasNoRulesets(message)) {
+          c.check('R3.55', !!k.delivered(s, peer, n), `${peer}#${n} did not close with delivered`);
+          const pending = (await k.obs.timeline(peer, n)).filter((e) => e.event === 'labeled' && e.label?.name === 'pending');
+          c.check('R3.55', pending.length === 0, `${peer}#${n} was labeled pending at ${pending.map((e) => e.created_at).join(', ')}`);
+        } else {
+          c.fail('R3.55', `${peer} rules API returned 403: ${message}`);
+        }
+      } else {
+        c.notExercised('R3.55', `GET /repos/${peer}/rulesets returned ${rules.status}; the peer's plan supports rulesets`);
+      }
 
       // R4.33, R4.34: init set the secret in both repositories; Nibfin writes as that login.
       for (const repo of [exec, peer]) {
