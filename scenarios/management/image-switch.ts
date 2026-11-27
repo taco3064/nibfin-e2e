@@ -84,9 +84,11 @@ async function findOld(ctx: RunContext, kit: Kit, dNew: string): Promise<Found |
 /** The first new open PR (not in `before`, not the fixture's own branch), polled every 10 s. */
 async function upgradePr(kit: Kit, repo: string, before: number[], branch: string, up: () => string | undefined): Promise<number[]> {
   return remoteWait(kit, 'gh nibfin upgrade --yes to open a PR', 10 * MIN, 10 * SECOND, async () => {
-    const opened = (await openPulls(kit.github, repo)).filter((p) => !before.includes(p.number) && p.head.ref !== branch).map((p) => p.number);
-    if (opened.length) return opened;
+    const list = async () => (await openPulls(kit.github, repo)).filter((p) => !before.includes(p.number) && p.head.ref !== branch).map((p) => p.number);
+    // Read whether the command ended before listing, so a PR it opened just before ending is seen.
     const ended = up();
+    const opened = await list();
+    if (opened.length) return opened;
     if (ended) throw new Error(`gh nibfin upgrade --yes ${ended} without opening a PR on ${repo}`);
     return undefined;
   });
@@ -213,6 +215,8 @@ export function imageSwitch(kitFor: KitFor): Scenario {
             }
             await kit.sleep(30 * SECOND);
           }
+          // Not one read after the merge saw the container: it was not observed across the merge.
+          if (reads === 0 && !c.problems.length) return precondition(`${RULE}: the D_old Job (container ${oldId}, run ${oldRunId}) ended before it was read after upgrade PR #${pr} merged`);
           const oldLog = await jobLog(kit, runRepo, oldRunId, `image-switch-${issue}-old`);
           const oldLine = imageLine(oldLog.text);
           c.that(oldLine?.includes(old) === true, RULE, `the Job log of run ${oldRunId} (Job ${oldLog.job.id}) says "Nibfin image: ${oldLine ?? 'none'}", expected ${ref(old)}`);
