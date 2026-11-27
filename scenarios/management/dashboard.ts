@@ -1,5 +1,6 @@
 import type { Running } from '../../src/host/exec.ts';
 import type { Scenario } from '../../src/types.ts';
+import { redact } from '../dashboard/checks.ts';
 import { Check, message, tail } from '../lib/check.ts';
 import { allHelp, leafCommands, parseHelp } from '../lib/gh.ts';
 import { json } from '../lib/github.ts';
@@ -34,6 +35,36 @@ export function flagDiff(helpText: string, api: ApiCommand): string[] {
   return out;
 }
 
+/**
+ * The Dashboard session URL with a proof in its fragment (Proposal R9.26), whatever text precedes it
+ * on the same line or an earlier one. The host is captured as printed, so a wrong address fails R5.53 by name.
+ */
+export const SESSION_URL = /http:\/\/(\[[^\]\s]+\]|[^/:\s]+):(\d+)\/\S*#\S*proof=\S+/;
+
+export interface SessionAddress {
+  host: string;
+  port: number;
+  /** `http://<host>:<port>`, without path or fragment, safe for messages. */
+  origin: string;
+  proof: string;
+}
+
+/** Reads the first session URL in `text`; undefined when there is none or its fragment has no proof. */
+export function sessionAddress(text: string): SessionAddress | undefined {
+  const m = SESSION_URL.exec(text);
+  if (!m) return undefined;
+  let proof: string | null;
+  try {
+    proof = new URLSearchParams(new URL(m[0]).hash.slice(1)).get('proof');
+  } catch {
+    return undefined;
+  }
+  if (!proof) return undefined;
+  const host = m[1] as string;
+  const port = Number(m[2]);
+  return { host, port, origin: `http://${host}:${port}`, proof };
+}
+
 export const dashboard: Scenario = {
   id: 'dashboard',
   rules: ['R5.20', 'R5.23', 'R5.53'],
@@ -48,16 +79,21 @@ export const dashboard: Scenario = {
     const statusKeys = Object.keys(json<Record<string, unknown>>(status.stdout, 'status --json')).sort();
 
     let server: Running | undefined;
+    let proof: string | undefined;
     try {
       // The run also registers the child's stop(), so it ends even when this scenario is cut short.
       server = ctx.startGhNibfin(['dashboard', '--no-browser']);
-      const m = await server.waitFor(/Dashboard: http:\/\/([^/:\s]+):(\d+)\//, 60_000);
-      if (!c.that(m[1] === '127.0.0.1', 'R5.53', `the Dashboard address is ${m[0].replace(/^Dashboard: /, '').slice(0, 80)}, expected http://127.0.0.1:<port>/`)) {
+      const m = await server.waitFor(SESSION_URL, 90_000);
+      const address = sessionAddress(m[0]);
+      if (!address) {
+        c.fail('R5.53', 'the Dashboard printed a session URL without a readable proof in its fragment');
         return c.outcome('');
       }
-      const base = `http://127.0.0.1:${m[2]}`;
-      const line = await server.waitFor(new RegExp(`http://127\\.0\\.0\\.1:${m[2]}/#proof=(\\S+)`), 30_000);
-      const proof = line[1] as string;
+      proof = address.proof;
+      if (!c.that(address.host === '127.0.0.1', 'R5.53', `the Dashboard address is ${address.origin}/, expected http://127.0.0.1:<port>/`)) {
+        return c.outcome('');
+      }
+      const base = address.origin;
 
       const call = async (method: string, path: string, headers: Record<string, string>, body?: unknown) => {
         const res = await fetch(base + path, {
@@ -86,7 +122,8 @@ export const dashboard: Scenario = {
       const keys = Object.keys((planned.result ?? {}) as object).sort();
       c.that(keys.join(',') === statusKeys.join(','), 'R5.20', `the Dashboard status result has keys [${keys.join(', ')}], status --json [${statusKeys.join(', ')}]`);
     } catch (error) {
-      c.fail('R5.20', `${message(error)}${server ? ` (server output: ${tail({ stdout: server.output(), stderr: '' }, 300)})` : ''}`);
+      const detail = `${message(error)}${server ? ` (server output: ${tail({ stdout: server.output(), stderr: '' }, 300)})` : ''}`;
+      c.fail('R5.20', redact(detail, proof ? [proof] : []));
     } finally {
       await server?.stop();
     }
