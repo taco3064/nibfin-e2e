@@ -96,3 +96,62 @@ test('execution exits 1 when a teardown fails, even if every scenario passed', a
   deepEqual(r.json.scenarios.map((s: { status: string }) => s.status), ['passed']);
   deepEqual(r.json.teardown, [{ id: 'host', status: 'failed', reason: 'Issues left' }]);
 });
+
+async function planCli(argv: string[], plan: unknown, runner?: string) {
+  let stdout = '';
+  let stderr = '';
+  const code = await main(argv, {
+    loadMap: () => ({ entries: map, errors: [] }),
+    scenarios,
+    steps: [],
+    host: fakeHostContext,
+    nodePlatform: 'linux',
+    stdout: (t) => (stdout += t),
+    stderr: (t) => (stderr += t),
+    runner,
+    readFile: (path) => {
+      if (path !== 'plan.json') throw new Error('ENOENT');
+      return typeof plan === 'string' ? plan : JSON.stringify(plan);
+    },
+  });
+  return { code, json: JSON.parse(stdout), stderr };
+}
+
+test('--plan runs the plan selection, reports waiting-only scenarios and records the runner', async () => {
+  const r = await planCli(['--plan', 'plan.json', ...commit], { selection: { all: false, rules: ['R3.1', 'R3.2'] }, waiting: [] }, 'host-1');
+  equal(r.code, 0);
+  deepEqual(r.json.meta.selection, { all: false, rules: ['R3.1', 'R3.2'], sections: [] });
+  equal(r.json.meta.runner, 'host-1');
+  deepEqual(r.json.scenarios.map((s: { id: string; status: string }) => [s.id, s.status]), [['a', 'passed']]);
+
+  const w = await planCli(['--plan', 'plan.json', ...commit], { selection: { all: true }, waiting: [{ id: 'R3.1', issues: ['u1'] }, { id: 'R3.2', issues: ['u2'] }] });
+  equal(w.code, 1);
+  deepEqual(w.json.scenarios.map((s: { id: string; status: string }) => [s.id, s.status]), [['a', 'waiting']]);
+  match(w.json.scenarios[0].reason, /rule R3\.1 is waiting on u1; rule R3\.2 is waiting on u2/);
+  equal(w.json.gate.passed, false);
+  equal(w.json.meta.runner, null);
+});
+
+test('an empty --plan selection runs nothing and exits 0', async () => {
+  const r = await planCli(['--plan', 'plan.json', ...commit], { selection: { all: false, rules: [] }, waiting: [] });
+  equal(r.code, 0);
+  deepEqual(r.json.scenarios, []);
+  deepEqual(r.json.provisioning, []);
+});
+
+test('--plan is exclusive with other selections and is validated', async () => {
+  const cases: [string[], unknown, RegExp][] = [
+    [['--plan', 'plan.json', '--all', ...commit], {}, /either --plan or/],
+    [['--plan', 'plan.json', '--rule', 'R3.1', ...commit], {}, /either --plan or/],
+    [['--plan', 'missing.json', ...commit], {}, /cannot read/],
+    [['--plan', 'plan.json', ...commit], 'not json', /cannot read/],
+    [['--plan', 'plan.json', ...commit], { selection: { all: false }, waiting: [] }, /selection must be/],
+    [['--plan', 'plan.json', ...commit], { selection: { all: true } }, /waiting must be/],
+    [['--plan', 'plan.json', ...commit], { selection: { all: false, rules: ['R9.9'] }, waiting: [] }, /not in the coverage map/],
+  ];
+  for (const [argv, plan, expected] of cases) {
+    const r = await planCli(argv, plan);
+    equal(r.code, 2, JSON.stringify(plan));
+    match(r.json.error.messages.join('\n'), expected);
+  }
+});

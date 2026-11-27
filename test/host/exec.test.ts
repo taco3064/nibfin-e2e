@@ -2,8 +2,8 @@ import { deepEqual, equal, rejects } from 'node:assert/strict';
 import { test } from 'node:test';
 import { childEnv, createExec, mustRun, resolveArgv } from '../../src/host/exec.ts';
 
-test('children get no E2E_* variable and no inherited GH_TOKEN; GH_TOKEN only when given', () => {
-  const env = { PATH: '/bin', E2E_SANDBOX_TOKEN: 's', e2e_claude_token: 'c', GH_TOKEN: 'old' };
+test('children get no E2E_* variable, no NIBFIN_GITHUB_TOKEN and no inherited GH_TOKEN; GH_TOKEN only when given', () => {
+  const env = { PATH: '/bin', E2E_SANDBOX_TOKEN: 's', e2e_claude_token: 'c', GH_TOKEN: 'old', NIBFIN_GITHUB_TOKEN: 'owner', nibfin_github_token: 'o2' };
   deepEqual(childEnv(env), { PATH: '/bin' });
   deepEqual(childEnv(env, 's'), { PATH: '/bin', GH_TOKEN: 's' });
 });

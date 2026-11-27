@@ -1,7 +1,9 @@
+import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { computeCoverage, crossCheck, loadMap, validateRegistry } from './coverage.ts';
 import { host, provisioning, scenarios } from './registry.ts';
 import { detectPlatform, run } from './run.ts';
+import type { WaitingRule } from './run.ts';
 import { select } from './select.ts';
 import type { Selection } from './select.ts';
 import type { HostContext, MapEntry, ProvisioningStep, Scenario } from './types.ts';
@@ -15,12 +17,17 @@ export interface CliDeps {
   stdout(text: string): void;
   stderr(text: string): void;
   now?: () => Date;
+  /** `RUNNER_NAME`, recorded as `meta.runner`. */
+  runner?: string | null;
+  /** Reads the `--plan` file. */
+  readFile?: (path: string) => string;
 }
 
 const COMMIT = /^[0-9a-f]{40}$/;
 
 export const USAGE = `usage: npm run e2e -- <selection> [--list | --uncovered | --gh-nibfin-commit <sha>]
-  selection: --all, or one or more of --rule R<section>.<n> and --section <n> (repeatable, union)
+  selection: --all, or one or more of --rule R<section>.<n> and --section <n> (repeatable, union),
+             or --plan <path> (the gate's plan: its selection and waiting rules)
   --list, --uncovered   report without running anything (default selection: --all)`;
 
 /** Runs the CLI and returns the exit code: 0 ok, 1 a scenario, a teardown or the gate failed, 2 usage or validation error. */
@@ -46,6 +53,7 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
         list: { type: 'boolean' },
         uncovered: { type: 'boolean' },
         'gh-nibfin-commit': { type: 'string' },
+        plan: { type: 'string' },
       },
     }));
   } catch (error) {
@@ -57,13 +65,15 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
   const hasSelection = rules.length + sections.length > 0;
   const report = values.list || values.uncovered;
   const usage: string[] = [];
+  const planPath = values.plan;
   if (values.all && hasSelection) usage.push('use either --all or --rule/--section, not both');
+  if (planPath !== undefined && (values.all || hasSelection)) usage.push('use either --plan or --all/--rule/--section, not both');
   if (values.list && values.uncovered) usage.push('use either --list or --uncovered, not both');
   const commit = values['gh-nibfin-commit'];
   if (report) {
     if (commit !== undefined) usage.push('--gh-nibfin-commit is only for execution');
   } else {
-    if (!values.all && !hasSelection) usage.push('execution needs --all or a --rule/--section selection');
+    if (!values.all && !hasSelection && planPath === undefined) usage.push('execution needs --all or a --rule/--section selection');
     if (commit === undefined || !COMMIT.test(commit)) usage.push('--gh-nibfin-commit must be a full 40-hex commit sha');
   }
   const platform = detectPlatform(deps.nodePlatform);
@@ -75,7 +85,13 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
   if (!invalid.length) invalid.push(...crossCheck(map.entries, deps.scenarios));
   if (invalid.length) return fail('validation', invalid);
 
-  const selection: Selection = hasSelection ? { all: false, rules, sections } : { all: true };
+  let selection: Selection = hasSelection ? { all: false, rules, sections } : { all: true };
+  let waiting: WaitingRule[] = [];
+  if (planPath !== undefined) {
+    const plan = readPlan(planPath, deps.readFile ?? ((path) => readFileSync(path, 'utf8')));
+    if ('error' in plan) return fail('usage', [plan.error]);
+    ({ selection, waiting } = plan);
+  }
   const { selected, errors } = select(map.entries, deps.scenarios, selection);
   if (errors.length) return fail('usage', errors);
   const selectedRules = selected.entries.filter((e) => !('notE2e' in e)).map((e) => e.id);
@@ -103,10 +119,37 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
     host: deps.host,
     log: (m) => deps.stderr(m + '\n'),
     now: deps.now,
+    waiting,
+    runner: deps.runner ?? null,
   });
   print(result);
   const anyFailed = [...result.scenarios, ...result.teardown].some((s) => s.status === 'failed');
   return anyFailed || result.gate?.passed === false ? 1 : 0;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((v) => typeof v === 'string');
+}
+
+/** Reads the selection and the waiting rules from the gate's plan; the selection is still validated by `select()`. */
+export function readPlan(path: string, readFile: (path: string) => string): { selection: Selection; waiting: WaitingRule[] } | { error: string } {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFile(path));
+  } catch (error) {
+    return { error: `--plan ${path}: cannot read: ${(error as Error).message}` };
+  }
+  const plan = raw as { selection?: { all?: unknown; rules?: unknown }; waiting?: unknown } | null;
+  const sel = plan?.selection;
+  let selection: Selection;
+  if (sel?.all === true) selection = { all: true };
+  else if (sel?.all === false && isStringArray(sel.rules)) selection = { all: false, rules: sel.rules, sections: [] };
+  else return { error: `--plan ${path}: selection must be {"all":true} or {"all":false,"rules":[…]}` };
+  const w = plan?.waiting;
+  if (!Array.isArray(w) || !w.every((x) => typeof x?.id === 'string' && isStringArray(x?.issues))) {
+    return { error: `--plan ${path}: waiting must be a list of {"id","issues":[…]}` };
+  }
+  return { selection, waiting: w.map((x: WaitingRule) => ({ id: x.id, issues: x.issues })) };
 }
 
 if (import.meta.main) {
@@ -118,5 +161,6 @@ if (import.meta.main) {
     nodePlatform: process.platform,
     stdout: (t) => process.stdout.write(t),
     stderr: (t) => process.stderr.write(t),
+    runner: process.env.RUNNER_NAME || null,
   });
 }

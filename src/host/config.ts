@@ -28,8 +28,29 @@ export const HELPER_IMAGE = 'docker.io/library/busybox:1.37.0@sha256:a7dbc319b14
 export const CLAUDE_VOLUME = 'nibfin-home-claude';
 
 /** Reads a required variable; the error names the variable, never a value. */
-export function requireEnv(env: Env, name: 'E2E_SANDBOX_TOKEN' | 'E2E_CLAUDE_TOKEN'): string {
+export function requireEnv(env: Env, name: 'E2E_SANDBOX_TOKEN' | 'E2E_CLAUDE_TOKEN' | 'NIBFIN_GITHUB_TOKEN'): string {
   const value = env[name];
   if (value === undefined || value.trim() === '') throw new Error(`missing environment variable ${name}`);
   return value.trim();
 }
+
+/** The gate's own repository, where `request` Issues are filed (Proposal R8.20). */
+export const E2E_REPO = 'taco3064/nibfin-e2e';
+
+/** Repositories whose delivered Issues select a rerun and whose open `scope` Issues mark rules waiting. */
+export const WATCHED_REPOS: readonly string[] = ['taco3064/nibfin-core', 'taco3064/gh-nibfin'];
+
+/** The first line of an approved Shape comment. */
+export const SHAPE_MARKER = '<!-- nibfin:shape -->';
+
+/** The label of the Issues the gate files (Proposal R3.2, R8.20). */
+export const REQUEST_LABEL = 'request';
+
+/** Hidden marker in every body and comment the gate writes, so a redo of the same run recognizes its own write. */
+export function runMarker(runId: string): string {
+  return `<!-- nibfin-e2e:run ${runId} -->`;
+}
+
+/** Hidden markers around the gate-managed times of a "Proposal updated" request. */
+export const PROPOSAL_STATE_MARKER = '<!-- nibfin-e2e:proposal-updated ';
+export const PROPOSAL_STATE_END = '<!-- nibfin-e2e:proposal-updated-end -->';
