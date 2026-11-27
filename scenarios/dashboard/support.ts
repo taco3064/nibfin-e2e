@@ -8,7 +8,7 @@ import { chromium } from 'playwright-core';
 import type { BrowserContext, Locator, Page } from 'playwright-core';
 import type { Running } from '../../src/host/exec.ts';
 import type { Outcome, RunContext, RuleId, Scenario } from '../../src/types.ts';
-import { classifyUpdateMarker, fieldsFromAriaSnapshot, parseJobStarts, parseSessionUrl, redact } from './checks.ts';
+import { fieldsFromAriaSnapshot, parseJobStarts, parseSessionUrl, redact, updateMarkerState } from './checks.ts';
 import type { ContainerStart, FormField, Reply, SessionUrl } from './checks.ts';
 import { sleep, until } from './github.ts';
 
@@ -275,18 +275,31 @@ async function headerTexts(page: Page): Promise<{ texts: string[]; text: string 
   });
 }
 
+/** Longest wait for a view's first read to finish; the harness's bound for the Dashboard to start. */
+const FIRST_READ_WAIT_MS = 90_000;
+
 /**
- * The current view header's update marker (Proposal R9.8), waiting up to 20 s for it to
- * appear: `live` for an exact `Live`; `manual` for `Updates on Refresh`, `Live updates off`
- * or other manual wording. Throws, quoting the header text, when neither or both are shown.
+ * The current view header's update marker (Proposal R9.8): `live` for an exact `Live`;
+ * `manual` for `Updates on Refresh`, `Live updates off` or other manual wording.
+ * First waits up to 90 s while the view visibly has not finished its first read ("No data
+ * yet", or a header showing only "Refreshing…"); R9.8 sets no time limit, so that wait
+ * failing throws a first-read error quoting the page text, not an R9.8 failure. Once loaded,
+ * waits up to 20 s for the marker and throws `R9.8: …`, quoting the header text, when
+ * neither or both are shown.
  */
 export async function readUpdateMarker(page: Page): Promise<'live' | 'manual'> {
   const read = async () => {
     const r = await headerTexts(page).catch(() => ({ texts: [] as string[], text: '' }));
-    return { ...r, kind: classifyUpdateMarker(r.texts) };
+    const body = await bodyText(page);
+    return { ...r, body, kind: updateMarkerState(r.texts, body) };
   };
+  const firstRead = (body: string) =>
+    new Error(`the Dashboard view's first read did not finish within ${FIRST_READ_WAIT_MS / 1000} s; the view still shows no loaded data: "${body.slice(0, 300)}"`);
+  const loaded = await until(read, (x) => x.kind !== 'loading', FIRST_READ_WAIT_MS, MARKER_POLL_MS);
+  if (loaded.kind === 'loading') throw firstRead(loaded.body);
   const r = await until(read, (x) => x.kind === 'live' || x.kind === 'manual', MARKER_WAIT_MS, MARKER_POLL_MS);
   if (r.kind === 'live' || r.kind === 'manual') return r.kind;
+  if (r.kind === 'loading') throw firstRead(r.body);
   throw new Error(`R9.8: expected the view header to show exactly one of Live or manual refresh within ${MARKER_WAIT_MS / 1000} s; observed ${r.kind}: "${r.text.slice(0, 300)}"`);
 }
 
