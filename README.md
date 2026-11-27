@@ -276,11 +276,15 @@ diff is read later from the page's version history using the event times.
 Its unit tests run with `npm run verify`. Deploying is manual (Owner only):
 
 1. `npx wrangler@4.168.0 deploy --config relay/wrangler.jsonc`
-2. In Notion, create a webhook subscription to the `workers.dev` URL, selecting
-   the page content and page property update events.
-3. Run `npx wrangler@4.168.0 tail --config relay/wrangler.jsonc`. While
-   `NOTION_VERIFICATION_TOKEN` is unset, the Worker logs the token Notion sends
-   there once, as `verification_token: …`.
+2. Start `npx wrangler@4.168.0 tail --config relay/wrangler.jsonc` and keep it
+   running. The tail only streams live and keeps nothing, so it must already be
+   running when Notion sends the token.
+3. In Notion, create a webhook subscription to the `workers.dev` URL, selecting
+   the page content and page property update events. Notion sends the
+   verification token once, at creation. While `NOTION_VERIFICATION_TOKEN` is
+   unset, the Worker logs it in the running tail once, as
+   `verification_token: …`. If the tail was not running, click "Resend token"
+   in Notion while it runs and the secret is still unset.
 4. `npx wrangler@4.168.0 secret put NOTION_VERIFICATION_TOKEN --config relay/wrangler.jsonc`
    with that token, then paste it into Notion's verification form.
 5. `npx wrangler@4.168.0 secret put GITHUB_TOKEN --config relay/wrangler.jsonc`
