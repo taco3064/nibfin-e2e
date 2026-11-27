@@ -155,3 +155,46 @@ test('--plan is exclusive with other selections and is validated', async () => {
     match(r.json.error.messages.join('\n'), expected);
   }
 });
+
+async function budgetCli(argv: string[], startedAt: number) {
+  let stdout = '';
+  const exits: number[] = [];
+  const code = await main(argv, {
+    loadMap: () => ({ entries: map, errors: [] }),
+    scenarios,
+    steps: [],
+    host: fakeHostContext,
+    nodePlatform: 'linux',
+    stdout: (t) => (stdout += t),
+    stderr: () => {},
+    startedAt,
+    exit: (c) => exits.push(c),
+  });
+  return { code, exits, json: JSON.parse(stdout) };
+}
+
+test('--budget-minutes must be an integer above the teardown reserve and is only for execution', async () => {
+  for (const [argv, expected] of [
+    [['--all', ...commit, '--budget-minutes', '30'], /--budget-minutes must be an integer above the teardown reserve of 30/],
+    [['--all', ...commit, '--budget-minutes', '90.5'], /--budget-minutes must be an integer/],
+    [['--all', ...commit, '--budget-minutes', 'soon'], /--budget-minutes must be an integer/],
+    [['--list', '--budget-minutes', '100'], /--budget-minutes is only for execution/],
+  ] as [string[], RegExp][]) {
+    const r = await cli(argv);
+    equal(r.code, 2, argv.join(' '));
+    match(r.json.error.messages.join('\n'), expected);
+  }
+});
+
+test('the budget counts from the harness start: 220 min by default, or --budget-minutes', async () => {
+  const min = 60_000;
+  // 189 min after the start the default work limit (190 min) has not passed.
+  const early = await budgetCli(['--rule', 'R3.1', ...commit], Date.now() - 189 * min);
+  deepEqual([early.code, early.exits, early.json.scenarios[0].status], [0, [], 'passed']);
+  // 191 min after the start it has: the scenario is not run.
+  const late = await budgetCli(['--rule', 'R3.1', ...commit], Date.now() - 191 * min);
+  deepEqual([late.code, late.json.scenarios[0].status, late.json.scenarios[0].reason], [1, 'failed', 'not run: harness budget of 190 min ran out']);
+  // With 40 min, the work limit is 10 min after the start.
+  const given = await budgetCli(['--rule', 'R3.1', ...commit, '--budget-minutes', '40'], Date.now() - 11 * min);
+  equal(given.json.scenarios[0].reason, 'not run: harness budget of 10 min ran out');
+});

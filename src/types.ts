@@ -38,6 +38,11 @@ export interface ChildOptions {
 export interface HostContext extends HostOperations {
   /** The two fixed sandboxes (Proposal R8.19). */
   sandbox: { execution: string; peer: string };
+  /**
+   * Aborted once when the harness budget's work limit passes; waits reject with its
+   * reason so the stuck work unwinds. Teardown gets a signal that never aborts.
+   */
+  signal: AbortSignal;
   /** The clone of the execution sandbox where `runner add` ran. */
   executionDir: string;
   /** Runs `gh nibfin …` in the execution clone, logged in with the sandbox token. */

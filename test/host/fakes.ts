@@ -296,6 +296,7 @@ export function fakeStart(respond: (argv: string[], options: StartOptions) => st
 
 export const fakeHostContext: HostContext = {
   sandbox: { execution: 'o/exec', peer: 'o/peer' },
+  signal: new AbortController().signal,
   executionDir: '/tmp/none',
   ghNibfin: async () => ({ code: 0, stdout: '', stderr: '' }),
   gh: async () => ({ code: 0, stdout: '', stderr: '' }),
