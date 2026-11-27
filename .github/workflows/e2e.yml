@@ -1,0 +1,156 @@
+name: e2e
+
+on:
+  workflow_dispatch:
+    inputs:
+      rules:
+        description: Proposal rule ids, separated by spaces or commas (for example "R5.13 R5.14")
+        required: false
+        default: ''
+      sections:
+        description: Proposal section numbers, separated by spaces or commas (for example "3 5"); rules and sections combine as a union, both empty runs --all
+        required: false
+        default: ''
+      gh_nibfin_ref:
+        description: gh-nibfin branch, tag or commit to build
+        required: false
+        default: main
+
+# Only one run at a time may use the sandboxes (Proposal R8.19); later runs wait in line.
+concurrency:
+  group: e2e-sandboxes
+  cancel-in-progress: false
+  queue: max
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      commit: ${{ steps.target.outputs.commit }}
+      args: ${{ steps.target.outputs.args }}
+    steps:
+      - id: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ inputs.gh_nibfin_ref }}
+          RULES: ${{ inputs.rules }}
+          SECTIONS: ${{ inputs.sections }}
+        run: |
+          set -euo pipefail
+          ref="${REF:-main}"
+          if [[ ! "$ref" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+            echo "::error::gh_nibfin_ref has unsupported characters"; exit 2
+          fi
+          commit=$(gh api "repos/taco3064/gh-nibfin/commits/$ref" --jq .sha)
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::could not resolve $ref"; exit 2; }
+          args=()
+          for r in ${RULES//,/ }; do
+            [[ "$r" =~ ^R[0-9]+\.[0-9]+$ ]] || { echo "::error::invalid rule id: $r"; exit 2; }
+            args+=(--rule "$r")
+          done
+          for s in ${SECTIONS//,/ }; do
+            [[ "$s" =~ ^[0-9]+$ ]] || { echo "::error::invalid section: $s"; exit 2; }
+            args+=(--section "$s")
+          done
+          [[ ${#args[@]} -gt 0 ]] || args=(--all)
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "args=${args[*]}" >> "$GITHUB_OUTPUT"
+          echo "gh-nibfin $ref -> $commit; selection: ${args[*]}" >> "$GITHUB_STEP_SUMMARY"
+
+  run:
+    needs: resolve
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: [windows-2025, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 240
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: stable
+          cache: false
+      - run: npm ci --ignore-scripts
+      - name: Run the harness
+        env:
+          E2E_SANDBOX_TOKEN: ${{ secrets.E2E_SANDBOX_TOKEN }}
+          E2E_CLAUDE_TOKEN: ${{ secrets.E2E_CLAUDE_TOKEN }}
+          ARGS: ${{ needs.resolve.outputs.args }}
+          COMMIT: ${{ needs.resolve.outputs.commit }}
+        run: |
+          set -uo pipefail
+          # ARGS was validated by the resolve job: only --all, --rule R<n>.<n> and --section <n>.
+          read -ra args <<< "$ARGS"
+          npm run --silent e2e -- "${args[@]}" --gh-nibfin-commit "$COMMIT" > result.json
+          code=$?
+          echo "harness exit code: $code"
+          exit $code
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: result-${{ matrix.os }}
+          path: result.json
+          if-no-files-found: ignore
+
+  report:
+    needs: [resolve, run]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: result-*
+          path: results
+      - name: Summarize
+        env:
+          RUN_RESULT: ${{ needs.run.result }}
+        run: |
+          set -uo pipefail
+          {
+            echo "## e2e result"
+            echo
+            echo "Matrix conclusion: \`$RUN_RESULT\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          shopt -s nullglob
+          found=0
+          for f in results/*/result.json; do
+            leg=$(basename "$(dirname "$f")")
+            found=1
+            {
+              echo
+              echo "### ${leg#result-}"
+              if ! jq -e . "$f" > /dev/null 2>&1; then
+                echo "No readable result (the harness stopped before printing it)."
+                continue
+              fi
+              jq -r '"gh-nibfin `\(.meta.ghNibfinCommit)`, image `\(.meta.imageDigest // "none")`, mode `\(.meta.mode)`"' "$f"
+              echo
+              echo "| Kind | Id | Status | Reason |"
+              echo "|---|---|---|---|"
+              jq -r '
+                [(.provisioning[] | {k: "provisioning"} + .),
+                 (.scenarios[] | {k: "scenario"} + .),
+                 (.teardown[] | {k: "teardown"} + .)][]
+                | "| \(.k) | \(.id) | \(.status) | \(.reason | gsub("[|\n]"; " ")) |"' "$f"
+              jq -r 'if .gate then "\nGate: \(if .gate.passed then "passed" else "failed: " + (.gate.reasons | join("; ")) end)" else empty end' "$f"
+            } >> "$GITHUB_STEP_SUMMARY"
+          done
+          if [[ $found -eq 0 ]]; then
+            echo "No result files; see the job conclusions above." >> "$GITHUB_STEP_SUMMARY"
+          fi
