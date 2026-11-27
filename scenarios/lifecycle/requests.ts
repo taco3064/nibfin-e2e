@@ -2,7 +2,7 @@
 // Core delivers the stage (Proposal R8.20).
 import type { GitHub } from '../../src/host/github.ts';
 import type { Outcome, Scenario } from '../../src/types.ts';
-import { Checks, markerOf, time } from './analysis.ts';
+import { Checks, findListing, markerOf, refersToIssue, time } from './analysis.ts';
 import type { Issue } from './analysis.ts';
 import { DEADLINE, lifecycle } from './kit.ts';
 import { PENDING_MARKER } from './marks.ts';
@@ -93,7 +93,7 @@ export const requestFeasible = requestScenario('request-feasible', ['R3.2', 'R3.
   });
   filed.push(r.number);
   const n = r.number;
-  const origin = (i: Issue) => i.number !== n && !!i.body && /Origin:/.test(i.body) && (i.body.includes(r.html_url) || i.body.includes(`#${n}`));
+  const origin = (i: Issue) => i.number !== n && !!i.body && i.body.split('\n').some((l) => l.includes('Origin:') && refersToIssue(l, exec, n));
   const closed = await k.obs.until('the request to close', async (s) => {
     for (const i of (s.issues.get(exec) ?? []).filter(origin)) {
       if (!filed.includes(i.number)) {
@@ -115,7 +115,7 @@ export const requestFeasible = requestScenario('request-feasible', ['R3.2', 'R3.
     c.check('R3.5', !!scoped && time(scoped.created_at) >= lastCreated, `#${i.number} got scope before every published Issue existed`);
     await k.obs.blockedBy(exec, i.number);
   }
-  const listing = (await k.obs.comments(exec, n)).find((x) => markerOf(x.body) && published.every((i) => x.body?.includes(`#${i.number}`)));
+  const listing = findListing(await k.obs.comments(exec, n), exec, published.map((i) => i.number));
   c.check('R3.6', !!listing, 'no comment on the request lists every published Issue');
   c.check('R3.6', k.issue(closed, exec, n)?.state_reason === 'completed', `the request closed as ${String(k.issue(closed, exec, n)?.state_reason)}, expected completed`);
   return c.outcome(`request #${n} published ${published.map((i) => `#${i.number}`).join(', ')} and closed as completed`);

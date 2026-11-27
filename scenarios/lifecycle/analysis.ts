@@ -326,6 +326,26 @@ const MARKER = /<!--\s*nibfin:([\w.:-]+)/;
 /** The hidden marker key of a Nibfin comment (`<!-- nibfin:pending -->` gives `pending`). */
 export const markerOf = (body: string | undefined) => (body ? MARKER.exec(body)?.[1] : undefined);
 
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Whether `text` references Issue `n` of `repo` (`owner/name`) by its full URL,
+ * `owner/name#n` or a bare `#n`. Matching is exact: the number is never followed by
+ * another digit (`#12` does not count for `#123`), a reference is not glued to a
+ * preceding word, `.`, `-` or `/`, and another repository's Issue never counts.
+ */
+export function refersToIssue(text: string | null | undefined, repo: string, n: number): boolean {
+  if (!text) return false;
+  const r = escapeRegExp(repo);
+  const free = '(?<![\\w./-])';
+  return new RegExp(`https://github\\.com/${r}/issues/${n}(?!\\d)|${free}${r}#${n}(?!\\d)|${free}#${n}(?!\\d)`, 'i').test(text);
+}
+
+/** The first marked comment that references every Issue in `numbers` of `repo` (R3.6's listing). */
+export function findListing(comments: Comment[], repo: string, numbers: number[]): Comment | undefined {
+  return comments.find((c) => !!markerOf(c.body) && numbers.every((n) => refersToIssue(c.body, repo, n)));
+}
+
 /** Marker keys that appear on more than one comment (R3.42: a redo updates its comment). */
 export function duplicateMarkers(comments: Comment[]): string[] {
   const count = new Map<string, number>();
