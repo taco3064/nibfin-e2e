@@ -162,15 +162,15 @@ export function stageOf(labels: string[]): 'Shape' | 'Deliver' | 'Done' | undefi
 }
 
 /** One repository's open Issues from GitHub and the open numbers its Live snapshot holds. */
-export interface TrackRepo {
+export interface TrackRepo<T extends IssueState = IssueState> {
   repo: string;
-  issues: IssueState[];
+  issues: T[];
   live: number[];
 }
 
-export interface TrackPick {
+export interface TrackPick<T extends IssueState = IssueState> {
   repo: string;
-  issue: IssueState;
+  issue: T;
   stage: ReturnType<typeof stageOf>;
 }
 
@@ -179,7 +179,7 @@ export interface TrackPick {
  * and in the snapshot; a label-given stage first, then `request`, then any other. Ties
  * go to the shown repository, then the given repository order, then the lowest number.
  */
-export function pickTrackIssue(repos: TrackRepo[], shown?: string): TrackPick | undefined {
+export function pickTrackIssue<T extends IssueState>(repos: TrackRepo<T>[], shown?: string): TrackPick<T> | undefined {
   const rank = (labels: string[]) => (stageOf(labels) ? 0 : labels.includes('request') ? 1 : 2);
   const candidates = repos.flatMap((r, order) =>
     r.issues.filter((i) => r.live.includes(i.number)).map((issue) => ({ repo: r.repo, issue, key: [rank(issue.labels), r.repo === shown ? 0 : 1, order, issue.number] })),
