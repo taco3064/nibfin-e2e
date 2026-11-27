@@ -114,6 +114,16 @@ test('unpinned images: a bare name passes only next to the digest and when podma
   const folded = (arg: string) => job('x').replace('      - run: |\n          x\n', `      - run: >\n          podman run\n          ${arg}\n      - run: echo "$IMAGE"\n`);
   deepEqual(unpinnedImages(folded('"$IMAGE"'), D1), bare);
   deepEqual(unpinnedImages(folded('"$IMAGE_REF"'), D1), []);
+  // A copy of the bare name with a tag or another digest appended still holds it.
+  deepEqual(unpinnedImages(job('IMG="$IMAGE:latest"\n          podman run "$IMG"'), D1), bare);
+  deepEqual(unpinnedImages(job(`IMG="\${IMAGE}@${D2}"\n          podman run "$IMG"`), D1), bare);
+  // The bare name as an input default, or passed in by a caller, and run through the input.
+  const input = job('podman run "${{ inputs.image }}"').replace('  workflow_call:\n', '  workflow_call:\n    inputs:\n      image:\n        type: string\n        default: ghcr.io/taco3064/nibfin\n');
+  deepEqual(unpinnedImages(input, D1), bare);
+  const called = 'on:\n  workflow_call:\n    inputs:\n      img:\n        type: string\njobs:\n  s:\n    steps:\n      - run: podman run "${{ inputs.img }}"\n';
+  const caller = `env:\n  D: ${D1}\njobs:\n  j:\n    uses: ./.github/workflows/nibfin-job.yml\n    with:\n      img: ghcr.io/taco3064/nibfin\n`;
+  deepEqual(unpinnedImages(called, D1, [caller]), bare);
+  deepEqual(unpinnedImages(called.replace('inputs.img', 'inputs.other'), D1, [caller]), []);
 });
 
 const HELP = `Add Runners

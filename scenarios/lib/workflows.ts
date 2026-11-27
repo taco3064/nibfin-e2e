@@ -246,17 +246,37 @@ function commandLines(text: string): string[] {
   return out;
 }
 
-/** The names of the variables holding the bare image name, directly or through another such variable. */
-function bareVariables(text: string): string[] {
-  const vars = new Set([...text.matchAll(/([A-Za-z_]\w*)\s*[:=]\s*["']?ghcr\.io\/taco3064\/nibfin(?![\w@:/.-])/g)].map((m) => m[1] as string));
-  for (let size = -1; size !== vars.size; ) {
-    size = vars.size;
-    for (const v of [...vars]) {
-      const ref = `(?:\\$${v}(?!\\w)|\\$\\{${v}\\}|\\$\\{\\{\\s*env\\.${v}\\s*\\}\\})`;
-      for (const m of text.matchAll(new RegExp(`([A-Za-z_]\\w*)\\s*[:=]\\s*["']?${ref}["']?(?![\\w@:/.$-])`, 'g'))) vars.add(m[1] as string);
-    }
+/** The ways a workflow refers to a variable or input `name`: `$name`, `${name}`, `env.name` or `inputs.name`. */
+const refersTo = (name: string) => new RegExp(`\\$${name}(?![\\w-])|\\$\\{${name}\\}|\\b(?:env|inputs)\\.${name}(?![\\w-])`);
+
+/**
+ * The names that may hold the bare image name, read across a workflow and the files that
+ * call it: every key or variable assigned a value that holds the bare name or refers to
+ * another such name, whatever follows it (so `$IMAGE:tag` or `$IMAGE@…` holds it too), and
+ * the input an assigned `default:` belongs to.
+ */
+function bareVariables(texts: string[]): string[] {
+  const lines = texts.flatMap((t) => t.split(/\r?\n/));
+  const names = new Set<string>();
+  const holds = (value: string) => BARE_RE.test(value) || [...names].some((n) => refersTo(n).test(value));
+  for (let size = -1; size !== names.size; ) {
+    size = names.size;
+    lines.forEach((l, i) => {
+      for (const m of l.matchAll(/([A-Za-z_][\w-]*)\s*[:=]/g)) {
+        if (!holds(l.slice((m.index ?? 0) + m[0].length))) continue;
+        names.add(m[1] as string);
+        if (m[1] !== 'default') continue;
+        for (let j = i - 1; j >= 0; j--) {
+          const parent = /^\s*([A-Za-z_][\w-]*):\s*$/.exec(lines[j] as string);
+          if (parent && indent(lines[j] as string) < indent(l)) {
+            names.add(parent[1] as string);
+            break;
+          }
+        }
+      }
+    });
   }
-  return [...vars];
+  return [...names];
 }
 
 /**
@@ -264,14 +284,17 @@ function bareVariables(text: string): string[] {
  * A reference with a digest must be `ghcr.io/taco3064/nibfin@<digest>`; any other
  * reference fails except the bare `ghcr.io/taco3064/nibfin`, which passes only when the
  * expected digest appears in this file or in a file that calls it (`callerTexts`), and
- * the bare name (literally or through a variable holding it) is never pulled, run or
+ * the bare name (literally or through a variable or input holding it) is never pulled, run or
  * created by podman or another container tool, nor used as an `image:`, `container:` or
  * `docker://` image.
  */
 export function unpinnedImages(text: string, digest: string, callerTexts: string[] = []): { ref: string; why?: string }[] {
   const pinned = `${BARE}@${digest}`;
   const out: { ref: string; why?: string }[] = [];
-  for (const ref of new Set(readWorkflow(text).images)) {
+  const refs = new Set(readWorkflow(text).images);
+  // A caller may pass the bare name in as an input, so this file must not run it either.
+  if (callerTexts.some((t) => BARE_RE.test(t))) refs.add(BARE);
+  for (const ref of refs) {
     if (ref === pinned) continue;
     if (ref !== BARE) {
       out.push({ ref });
@@ -281,8 +304,8 @@ export function unpinnedImages(text: string, digest: string, callerTexts: string
       out.push({ ref, why: 'with no expected digest in the file or its caller' });
       continue;
     }
-    const vars = bareVariables(text);
-    const viaVar = (s: string) => vars.some((v) => new RegExp(`\\$${v}\\b|\\$\\{${v}\\}|env\\.${v}\\b`).test(s));
+    const vars = bareVariables([text, ...callerTexts]);
+    const viaVar = (s: string) => vars.some((v) => refersTo(v).test(s));
     const podman = commandLines(text).some((l) => {
       // Any container tool, with any options before its run, pull or create.
       const m = /\b(?:podman|docker|nerdctl)\b.*?\b(?:run|pull|create)\b/.exec(l);
@@ -292,7 +315,7 @@ export function unpinnedImages(text: string, digest: string, callerTexts: string
     });
     const declared = text.split(/\r?\n/).some((l) => {
       const m = /^\s*(?:-\s+)?(?:image|container|uses):\s*["']?(?:docker:\/\/)?(.*?)["']?\s*$/.exec(l);
-      return !!m && (BARE_RE.test(m[1] as string) || viaVar(m[1] as string)) && !/@/.test(m[1] as string);
+      return !!m && (BARE_RE.test(m[1] as string) || viaVar(m[1] as string));
     });
     if (podman || declared) out.push({ ref, why: 'run without a digest' });
   }
