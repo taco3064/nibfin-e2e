@@ -15,6 +15,10 @@ export interface LinuxHostState {
   linger: string;
   /** Every file under /etc/systemd/system, relative to it. */
   systemFiles: string[];
+  /** Host epoch ms when the state was read; an entry whose ctime is later changed after it (Proposal R5.9). */
+  readAt: number;
+  /** The deduplicated directories of the `PATH` the read was given (Proposal R5.9). */
+  pathDirs: string[];
 }
 
 export interface WindowsHostState {
@@ -102,6 +106,13 @@ export interface LinuxReadOptions {
   systemFiles?: () => string[];
   /** The units the user's own config enables (see {@link userEnabledUnits}); injectable for tests. */
   userEnabled?: () => string[];
+  /** The host clock in epoch ms; injectable for tests. */
+  now?: () => number;
+}
+
+/** The deduplicated, non-empty directories of a `PATH` value, in order. */
+export function pathDirectories(path: string | undefined): string[] {
+  return [...new Set((path ?? '').split(':').filter((d) => d !== ''))];
 }
 
 /**
@@ -143,6 +154,7 @@ async function offlineUserUnits(run: HostRun, userEnabled: string[]): Promise<{ 
  * /var/lib/systemd/linger has no file for the user. Any other failure still throws.
  */
 export async function readLinuxHostState(run: HostRun, options: LinuxReadOptions = {}): Promise<LinuxHostState> {
+  const readAt = (options.now ?? Date.now)();
   const exists = options.exists ?? existsSync;
   const runtime = userRuntimeDir(options.env ?? process.env, options.uid);
   const env = runtime === undefined ? undefined : { XDG_RUNTIME_DIR: runtime };
@@ -162,7 +174,8 @@ export async function readLinuxHostState(run: HostRun, options: LinuxReadOptions
   else if (!exists(join('/var/lib/systemd/linger', user))) linger = 'no';
   else throw fail(lingerArgv, shown);
 
-  return { platform: 'linux', units, linger, systemFiles: (options.systemFiles ?? (() => listFiles('/etc/systemd/system')))() };
+  const systemFiles = (options.systemFiles ?? (() => listFiles('/etc/systemd/system')))();
+  return { platform: 'linux', units, linger, systemFiles, readAt, pathDirs: pathDirectories((options.env ?? process.env).PATH) };
 }
 
 /** The host state the always-on setup changes (Proposal R5.13, R5.15, R5.16, R5.28), read without any product name. */

@@ -279,6 +279,8 @@ test('nibfin: the host state before runner add is a fact', async () => {
   initPr(h.repo(EXEC), 5, { 'nibfin-issue.yml': image(DIGEST) });
   initPr(h.repo(PEER), 3, { 'nibfin-issue.yml': 'on: issues\n' });
   const out = await h.runStep('nibfin');
-  const before = out.facts?.hostBefore as { platform: string; units: unknown; linger: string };
+  const before = out.facts?.hostBefore as { platform: string; units: unknown; linger: string; readAt: unknown; pathDirs: unknown };
   deepEqual([before.platform, before.units, before.linger], ['linux', [{ name: 'a.service', state: 'enabled' }, { name: 'b.timer', state: 'static' }], 'no']);
+  equal(typeof before.readAt, 'number');
+  equal(Array.isArray(before.pathDirs), true);
 });

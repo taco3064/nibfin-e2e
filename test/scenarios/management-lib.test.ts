@@ -174,7 +174,7 @@ test('host state before runner add: without a user manager the units come from t
     if (argv[0] === 'systemctl') return { code: 1, stdout: '', stderr: 'Failed to connect to bus: No medium found' };
     return { code: 1, stdout: '', stderr: 'Failed to get user: User runner is not logged in or lingering.' };
   };
-  const state = await readLinuxHostState(run, { env: {}, uid: 1001, user: 'runner', exists: () => false, systemFiles: () => ['a.service'], userEnabled: () => ['mine.service', 'own.timer'] });
+  const state = await readLinuxHostState(run, { env: { PATH: '/usr/bin:/bin::/usr/bin' }, uid: 1001, user: 'runner', exists: () => false, systemFiles: () => ['a.service'], userEnabled: () => ['mine.service', 'own.timer'], now: () => 1234 });
   deepEqual(state, {
     platform: 'linux',
     units: [
@@ -185,6 +185,8 @@ test('host state before runner add: without a user manager the units come from t
     ],
     linger: 'no',
     systemFiles: ['a.service'],
+    readAt: 1234,
+    pathDirs: ['/usr/bin', '/bin'],
   });
   deepEqual(
     seen.map((s) => [s.argv.slice(0, 3).join(' '), s.env]),
@@ -221,8 +223,8 @@ test('host state: the user\'s own enabled units are the entries of its .wants an
 test('host state: a running user manager and a lingering user are read, and their failures still throw', async () => {
   const ok: HostRun = async (argv) =>
     argv[0] === 'systemctl' ? { code: 0, stdout: 'a.service enabled enabled\n', stderr: '' } : { code: 0, stdout: 'yes\n', stderr: '' };
-  const opts = { env: { XDG_RUNTIME_DIR: '/r' }, uid: 1001, user: 'runner', systemFiles: () => [] };
-  deepEqual(await readLinuxHostState(ok, { ...opts, exists: () => true }), { platform: 'linux', units: [{ name: 'a.service', state: 'enabled' }], linger: 'yes', systemFiles: [] });
+  const opts = { env: { XDG_RUNTIME_DIR: '/r' }, uid: 1001, user: 'runner', systemFiles: () => [], now: () => 5 };
+  deepEqual(await readLinuxHostState(ok, { ...opts, exists: () => true }), { platform: 'linux', units: [{ name: 'a.service', state: 'enabled' }], linger: 'yes', systemFiles: [], readAt: 5, pathDirs: [] });
 
   const unitsFail: HostRun = async (argv) => (argv[0] === 'systemctl' ? { code: 1, stdout: '', stderr: 'boom' } : { code: 0, stdout: 'no\n', stderr: '' });
   await rejects(readLinuxHostState(unitsFail, { ...opts, exists: (p) => p === '/r/bus' }), /systemctl --user list-unit-files exited 1: boom/);

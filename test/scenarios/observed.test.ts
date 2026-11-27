@@ -109,6 +109,7 @@ test('observed-job runs one fixture through Shape, Deliver and Review and record
   const f = out.facts as unknown as ObservedFacts;
   equal(f.issue, issue.number);
   equal(f.projection?.imageName, IMAGE);
+  deepEqual(f.jobImages, [IMAGE, IMAGE, IMAGE]);
   equal(f.rootless, true);
   deepEqual(f.probe?.node, ['v22.15.0']);
   deepEqual(f.shapeLog?.slot, 'claude-1');

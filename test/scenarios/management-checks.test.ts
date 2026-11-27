@@ -66,7 +66,7 @@ test('release publishing in CI is found; release downloads are not', () => {
 });
 
 test('host diffs: new enabled units and changed .wslconfig keys', () => {
-  const before = { platform: 'linux' as const, units: [{ name: 'a.service', state: 'enabled' }], linger: 'no', systemFiles: [] };
+  const before = { platform: 'linux' as const, units: [{ name: 'a.service', state: 'enabled' }], linger: 'no', systemFiles: [], readAt: 0, pathDirs: [] };
   const now = { ...before, units: [...before.units, { name: 'n-1.service', state: 'enabled' }, { name: 'x.service', state: 'disabled' }] };
   deepEqual(newEnabledUnits(before, now), ['n-1.service']);
   // An image that already enables a global user unit before runner add (read without a manager): it is not new.

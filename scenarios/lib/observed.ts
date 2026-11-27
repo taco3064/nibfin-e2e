@@ -20,6 +20,8 @@ export interface ObservedFacts {
   issue?: number;
   /** The Shape container's inspect projection. */
   projection?: Projection;
+  /** The image of every fixture Job container the watch inspected, in start order (Proposal R5.9). */
+  jobImages?: string[];
   rootless?: boolean;
   /** Local images named ghcr.io/taco3064/nibfin, with their repo digests. */
   localImages?: { names: string[]; repoDigests: string[] }[];
@@ -83,14 +85,22 @@ export function missingApprovalLine(list: Comment[], owner: string, secrets: str
   return line === undefined ? undefined : excerpt(line.trim(), 300, secrets);
 }
 
+/** The image of each started Job container, in start order; one gone before inspection shows as `(not inspected)`. */
+export function jobImagesOf(watch: Pick<Watch, 'events' | 'projections'>): string[] {
+  return watch.events.filter((e) => e.kind === 'start').map((e) => watch.projections.get(e.id)?.imageName ?? '(not inspected)');
+}
+
 /** Runs one fixture through Shape → Deliver → Review and records what its Jobs ran with (Issue #299). */
 export async function runObservedJob(kit: Kit): Promise<StepOutcome> {
   const repo = kit.sandbox.execution;
   const facts: ObservedFacts = { repo };
   // Facts hold agent-written text (the probe block, branch paths, log lines), which GitHub
   // does not mask; every string is redacted before it leaves the step (Proposal R3.49).
-  const out = () => redactDeep(facts, kit.secrets()) as unknown as Record<string, unknown>;
   let watch: Watch | undefined;
+  const out = () => {
+    if (watch) facts.jobImages = jobImagesOf(watch);
+    return redactDeep(facts, kit.secrets()) as unknown as Record<string, unknown>;
+  };
   try {
     await prepareFixture(kit, repo, {
       files: [
