@@ -59,6 +59,8 @@ export class Observer {
   private lastPrint?: string;
   /** When the latest snapshot that showed activity was taken: a change from the one before, or a run in progress. */
   private lastActivityAt?: number;
+  /** When a refresh last failed: a failed read shows nothing, so the stall check counts calm only from after it. */
+  private lastFailedAt?: number;
   readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly interval: number;
@@ -87,6 +89,9 @@ export class Observer {
         const s = await this.read();
         this.snap = s;
         return s;
+      } catch (error) {
+        this.lastFailedAt = this.now();
+        throw error;
       } finally {
         this.lastAt = this.now();
         this.pending = undefined;
@@ -213,7 +218,7 @@ export class Observer {
       }
       const stall = this.opts.stallMs;
       if (stall !== undefined && !opts.quiet) {
-        const calmSince = Math.max(this.lastActivityAt ?? start, start);
+        const calmSince = Math.max(this.lastActivityAt ?? start, start, this.lastFailedAt ?? start);
         const now = this.now();
         if (now - calmSince >= stall) await fail(`no sandbox activity for ${Math.round((now - calmSince) / 60_000)} min while waiting for ${desc}`);
       }
