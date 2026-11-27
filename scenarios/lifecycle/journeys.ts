@@ -311,8 +311,14 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
       : undefined;
   };
 
-  const outcome = (s: Snapshot) => {
-    if (!hasLabel(k, s, n, 'shaped')) return 'sent back' as const;
+  // Held case: the first wait after the edit can start on a snapshot read before the
+  // redone Shape was published, which lacks `shaped` without any send-back. So a missing
+  // `shaped` counts as sent back only when P's timeline, read now, shows `shaped` removed
+  // after the edit. A timeline cached before the edit can only delay this to a later snapshot.
+  const removedAfterEdit = async () =>
+    (await k.obs.timeline(exec, n)).some((e) => e.event === 'unlabeled' && e.label?.name === 'shaped' && time(e.created_at) >= Math.floor(editedAt / 1000) * 1000);
+  const outcome = async (s: Snapshot) => {
+    if (!hasLabel(k, s, n, 'shaped') && (unpausedAt === undefined || (await removedAfterEdit()))) return 'sent back' as const;
     if (s.pulls.get(exec)?.some((pr) => pr.head.ref === `nibfin/issue-${n}`)) return 'pr' as const;
     return undefined;
   };
@@ -322,7 +328,7 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
   const first = await k.obs.until(
     'P\'s first Deliver after the edit',
     // A Deliver that started before the edit is left to `gonePast`, which names it.
-    async (s) => ((await deliverBeforeEdit(s)) ? undefined : (outcome(s) ?? ((await running('deliver', editedAt)(s)) ? ('running' as const) : undefined))),
+    async (s) => ((await deliverBeforeEdit(s)) ? undefined : ((await outcome(s)) ?? ((await running('deliver', editedAt)(s)) ? ('running' as const) : undefined))),
     DEADLINE.stage,
     show,
     { gonePast: firstOf(deliverBeforeEdit, k.stageGone(exec, n, 'deliver', { since: editedAt - 60_000, allowPending: true })) },
