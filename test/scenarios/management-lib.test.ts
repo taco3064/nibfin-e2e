@@ -10,6 +10,9 @@ import { mainDigest, requireCurrentImage } from '../../scenarios/lib/image.ts';
 import { schemaValidator } from '../../scenarios/lib/schema.ts';
 import { waitFor } from '../../scenarios/lib/wait.ts';
 import { guideTail, GUIDE_LINE, loginGuide, loginRefusal, PASTE_PROMPT, statusRunners, SUCCESS_LINE, volumeContainers, volumeExists, waitForOutput } from '../../scenarios/management/login-guide.ts';
+import { describeLogin, isCliLogin, parseIds, pickLogin, projectLogin } from '../../scenarios/management/login-container.ts';
+import type { LoginContainer } from '../../scenarios/management/login-container.ts';
+import { LABEL_REPO } from '../../scenarios/lib/containers.ts';
 import { claudeLoggedIn, providerLogin } from '../../scenarios/dashboard/support.ts';
 import { readWorkflow } from '../../scenarios/lib/workflows.ts';
 
@@ -417,4 +420,102 @@ test('volumeExists and volumeContainers read podman through exec', async () => {
   deepEqual(await volumeContainers(ctx(0, 'aaa\n bbb \n\n'), 'v2'), ['aaa', 'bbb']);
   deepEqual(calls.at(-1), ['podman', 'ps', '-a', '--filter', 'volume=v2', '--format', '{{.ID}}']);
   await rejects(volumeContainers(ctx(125), 'v2'), /podman ps -a --filter volume=v2 exited 125/);
+});
+
+// ---- runner-add-login: the login container (Proposal R6.11) -------------------------
+
+const JOB_IMAGE = 'a'.repeat(64);
+const OTHER_IMAGE = 'b'.repeat(64);
+
+/** A `podman container inspect` document shaped like gh-nibfin's Codex login container. */
+function inspectDoc(over: { id?: string; image?: string; entrypoint?: unknown; cmd?: unknown; tty?: boolean; stdin?: boolean; running?: boolean; labels?: Record<string, string> } = {}) {
+  return [
+    {
+      Id: over.id ?? '1234567890ab' + 'c'.repeat(52),
+      Image: over.image ?? JOB_IMAGE,
+      ImageName: 'ghcr.io/taco3064/nibfin:main',
+      ImageDigest: D1,
+      Config: {
+        Entrypoint: 'entrypoint' in over ? over.entrypoint : ['/usr/bin/tini', '--'],
+        Cmd: 'cmd' in over ? over.cmd : ['codex', 'login', '--device-auth'],
+        Tty: over.tty ?? false,
+        OpenStdin: over.stdin ?? true,
+        Env: ['PATH=/usr/bin', 'OPENAI_API_KEY=sk-secret-value', 'NIBFIN_GITHUB_TOKEN=ghp_secretsecretsecretsecret'],
+        Labels: over.labels ?? { 'org.opencontainers.image.source': 'x' },
+      },
+      State: { Running: over.running ?? true },
+      HostConfig: { Memory: 0 },
+    },
+  ];
+}
+
+const login = (over: Parameters<typeof inspectDoc>[0] = {}): LoginContainer => projectLogin(inspectDoc(over)) as LoginContainer;
+
+test('projectLogin keeps only the allowlisted fields; Entrypoint as an array or a string; Env never appears', () => {
+  const c = login();
+  deepEqual(c, {
+    id: '1234567890ab' + 'c'.repeat(52),
+    imageName: 'ghcr.io/taco3064/nibfin:main',
+    imageId: JOB_IMAGE,
+    imageDigest: D1,
+    argv: ['/usr/bin/tini', '--', 'codex', 'login', '--device-auth'],
+    tty: false,
+    openStdin: true,
+    running: true,
+    job: false,
+  });
+  equal(JSON.stringify(c).includes('secret'), false);
+  deepEqual(login({ entrypoint: '/entry.sh', cmd: ['codex', 'login'] }).argv, ['/entry.sh', 'codex', 'login']);
+  deepEqual(login({ entrypoint: null, cmd: null }).argv, []);
+  equal(login({ labels: { [LABEL_REPO]: 'o/r' } }).job, true);
+  deepEqual(projectLogin({ Config: null }), { id: '', imageName: '', imageId: '', imageDigest: '', argv: [], tty: false, openStdin: false, running: false, job: false });
+  equal(projectLogin([]), undefined);
+  equal(projectLogin(null), undefined);
+});
+
+test('isCliLogin: codex login and codex login --device-auth only', () => {
+  equal(isCliLogin(['codex', 'login']), true);
+  equal(isCliLogin(['codex', 'login', '--device-auth']), true);
+  equal(isCliLogin(['/usr/bin/tini', '--', 'codex', 'login', '--device-auth']), true);
+  equal(isCliLogin(['/usr/local/bin/codex', 'login']), true);
+  equal(isCliLogin(['codex', 'login', 'status']), false);
+  equal(isCliLogin(['codex', 'login', '--with-api-key']), false);
+  equal(isCliLogin(['codex', 'login', '--device-auth', 'extra']), false);
+  equal(isCliLogin(['codex', 'exec', 'login']), false);
+  equal(isCliLogin(['claude', 'auth', 'login']), false);
+  equal(isCliLogin(['nibfin-login', 'codex']), false);
+  equal(isCliLogin(['mycodex', 'login']), false);
+  equal(isCliLogin([]), false);
+});
+
+test('pickLogin matches only a non-Job, running, interactive codex login from the Jobs image id', () => {
+  const ok = login({ id: 'f'.repeat(64) });
+  deepEqual(pickLogin([ok], JOB_IMAGE), { match: ok, problems: [] });
+  equal(pickLogin([login({ tty: true, stdin: false })], `sha256:${JOB_IMAGE}`).match?.tty, true);
+  deepEqual(pickLogin([], JOB_IMAGE), { problems: [] });
+
+  const other = login({ id: '1'.repeat(64), image: OTHER_IMAGE });
+  const flat = login({ id: '2'.repeat(64), stdin: false, tty: false, cmd: ['codex', 'login'] });
+  const status = login({ id: '3'.repeat(64), stdin: false, cmd: ['codex', 'login', 'status'] });
+  const job = login({ id: '4'.repeat(64), labels: { [LABEL_REPO]: 'o/r' } });
+  const stopped = login({ id: '5'.repeat(64), running: false });
+  const r = pickLogin([other, flat, status, job, stopped], JOB_IMAGE);
+  equal(r.match, undefined);
+  equal(r.problems.length, 5);
+  match(r.problems[0] ?? '', /^container 111111111111 image ghcr\.io\/taco3064\/nibfin:main \(sha256:1+, id bbbbbbbbbbbb\) command "\/usr\/bin\/tini -- codex login --device-auth" Tty=false OpenStdin=true: image id differs from the Jobs' image id aaaaaaaaaaaa$/);
+  match(r.problems[1] ?? '', /^container 222222222222 .* command "\/usr\/bin\/tini -- codex login" Tty=false OpenStdin=false: not interactive$/);
+  match(r.problems[2] ?? '', /^container 333333333333 .*"\/usr\/bin\/tini -- codex login status" Tty=false OpenStdin=false: not interactive, not the CLI's own login/);
+  match(r.problems[3] ?? '', /^container 444444444444 .*: carries the Job label io\.github\.taco3064\.nibfin\.repo$/);
+  match(r.problems[4] ?? '', /: not running$/);
+  // A later match still wins; earlier misses stay as evidence.
+  const later = pickLogin([status, ok], JOB_IMAGE);
+  equal(later.match, ok);
+  equal(later.problems.length, 1);
+  match(describeLogin(projectLogin({}) as LoginContainer), /^container \(none\) image \(none\) \(no digest, id \(none\)\) command "" Tty=false OpenStdin=false$/);
+});
+
+test('parseIds reads podman ps --no-trunc --format {{.ID}} output', () => {
+  deepEqual(parseIds(`${'a'.repeat(64)}\n\n  ${'b'.repeat(64)}  \n`), ['a'.repeat(64), 'b'.repeat(64)]);
+  deepEqual(parseIds(''), []);
+  deepEqual(parseIds('\n'), []);
 });
