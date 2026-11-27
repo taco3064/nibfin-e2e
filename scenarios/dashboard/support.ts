@@ -119,11 +119,23 @@ export async function openPage(ctx: RunContext, opts: { width?: number; height?:
   const work = ctx.workDir();
   const dir = join(work, 'browser', String(++profiles));
   const tmp = join(work, 'browser', 'tmp');
+  // Chrome and fontconfig write under HOME and the XDG directories (for example ~/.pki/nssdb).
+  const home = join(work, 'browser', 'home');
   mkdirSync(dir, { recursive: true });
   mkdirSync(tmp, { recursive: true });
+  mkdirSync(home, { recursive: true });
   const options = {
     headless: true,
-    env: { ...ctx.browserEnv(), TMPDIR: tmp, TMP: tmp, TEMP: tmp },
+    env: {
+      ...ctx.browserEnv(),
+      TMPDIR: tmp,
+      TMP: tmp,
+      TEMP: tmp,
+      HOME: home,
+      XDG_CONFIG_HOME: join(home, '.config'),
+      XDG_CACHE_HOME: join(home, '.cache'),
+      XDG_DATA_HOME: join(home, '.local', 'share'),
+    },
     viewport: { width: opts.width ?? 1280, height: opts.height ?? 900 },
     locale: opts.locale ?? 'en-US',
     timezoneId: opts.timezoneId ?? 'UTC',
