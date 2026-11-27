@@ -18,6 +18,7 @@ import { extensionReleases, imageDigest } from '../scenarios/management/image-re
 import { initFiles } from '../scenarios/management/init-files.ts';
 import { initSettings } from '../scenarios/management/init-settings.ts';
 import { confirmPreview, pauseResume } from '../scenarios/management/labels.ts';
+import { loginCommand } from '../scenarios/management/login-command.ts';
 import { runnerAddSetup } from '../scenarios/management/runner-add-setup.ts';
 import { runnerAddLogin } from '../scenarios/management/runner-add-login.ts';
 import { runnerRemove } from '../scenarios/management/runner-remove.ts';
@@ -67,6 +68,8 @@ export const scenarios: Scenario[] = [
   dashboardUpdates,
   dashboardLoginRelay,
   runnerAddLogin,
+  // Alone, with no Job on the Claude login volume: starts a Claude re-login, abandons it at the guide.
+  loginCommand,
   runnerRemove,
 ];
 

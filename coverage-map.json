@@ -158,7 +158,7 @@
   {"id": "R5.31", "platforms": ["linux"], "scenarios": ["runner-remove"]},
   {"id": "R5.32", "platforms": ["linux"], "scenarios": ["runner-remove"]},
   {"id": "R5.33", "notE2e": "e2e 閘門沒有 Codex 登入，Codex 已於第五階段真機驗證"},
-  {"id": "R5.34", "platforms": ["linux"], "scenarios": []},
+  {"id": "R5.34", "platforms": ["linux"], "scenarios": ["runner-add-login", "login-command"]},
   {"id": "R5.35", "platforms": ["linux"], "scenarios": ["init-settings"]},
   {"id": "R5.36", "platforms": ["linux"], "scenarios": ["init-settings", "runner-remove"]},
   {"id": "R5.37", "platforms": ["linux"], "scenarios": ["init-settings", "init-files"]},
