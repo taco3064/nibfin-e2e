@@ -58,6 +58,8 @@ export interface PrivateResult {
   remove: ExecResult;
   afterRemove: { runners: Registration[]; keys: DeployKey[] };
   local: LocalState;
+  /** Problems deleting the collaborator's stale registrations as the Owner would (setup only). */
+  cleanup: string[];
 }
 
 export interface KeyOnHost {
@@ -199,6 +201,19 @@ export async function register(ctx: RunContext, clock: Clock = realClock): Promi
 /** The public registration, once per run. */
 export const publicRegistration = (ctx: RunContext) => (memo(ctx).registration ??= register(ctx));
 
+/**
+ * Setup only: deletes the collaborator's registrations as the Owner would in Settings (out
+ * of scope), so a later `runner add` meets no registration of the same name and the later
+ * Dashboard scenarios (Issue #298) count only the Owner's Runners. Returns what is left.
+ */
+async function deleteStale(ctx: RunContext, runners: Registration[]): Promise<string[]> {
+  const gh = ctx.github;
+  const repo = ctx.sandbox.execution;
+  const label = `nibfin-${ctx.peer().id}`;
+  for (const x of runners.filter((y) => hasLabel(y, label))) await gh.rest('DELETE', `/repos/${repo}/actions/runners/${x.id}`, undefined, [404]);
+  return (await registrations(gh, repo)).filter((y) => hasLabel(y, label)).map((x) => `registration ${x.name} is still on GitHub after deleting it`);
+}
+
 /** The collaborator's `runner remove` after the public registration, once per run. */
 export function publicRemoval(ctx: RunContext): Promise<Removed> {
   const m = memo(ctx);
@@ -214,10 +229,7 @@ export function publicRemoval(ctx: RunContext): Promise<Removed> {
     const local = await localState(ctx);
     // Setup only: the Owner deletes the stale registrations in Settings (out of scope),
     // so a later `runner add` does not meet a registration of the same name.
-    const cleanup: string[] = [];
-    const label = `nibfin-${peer.id}`;
-    for (const x of after.runners.filter((y) => hasLabel(y, label))) await gh.rest('DELETE', `/repos/${repo}/actions/runners/${x.id}`, undefined, [404]);
-    for (const x of (await registrations(gh, repo)).filter((y) => hasLabel(y, label))) cleanup.push(`registration ${x.name} is still on GitHub after deleting it`);
+    const cleanup = await deleteStale(ctx, after.runners);
     return { reg, command, before, after, local, cleanup };
   })());
 }
@@ -246,7 +258,9 @@ export function privatePhase(ctx: RunContext): Promise<PrivateResult> {
         const probe = await prober.probe('main');
         const remove = await peer.ghNibfin(['runner', 'remove', 'claude', '--yes']);
         const afterRemove = { runners: await registrations(gh, repo), keys: await deployKeys(gh, repo) };
-        return { reg, visibility: String(data.visibility), mainSha, keyOnHost: key, probe, remove, afterRemove, local: await localState(ctx) };
+        const local = await localState(ctx);
+        const cleanup = await deleteStale(ctx, afterRemove.runners);
+        return { reg, visibility: String(data.visibility), mainSha, keyOnHost: key, probe, remove, afterRemove, local, cleanup };
       } finally {
         await prober.cancelActive();
       }

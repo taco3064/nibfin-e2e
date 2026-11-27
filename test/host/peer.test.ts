@@ -6,7 +6,7 @@ import type { GitHub } from '../../src/host/github.ts';
 import { deletePeerKeys, freeRange, peerArgv, preparePeer, teardownPeer } from '../../src/host/peer.ts';
 import type { PeerFacts } from '../../src/host/peer.ts';
 import type { HostServices } from '../../src/host/services.ts';
-import { fakeExec } from './fakes.ts';
+import { fakeExec, fakeRunning } from './fakes.ts';
 
 type Handler = (method: string, path: string, body: unknown) => { status: number; data?: unknown } | undefined;
 
@@ -28,6 +28,9 @@ export function stubGitHub(handler: Handler) {
     async list<T>(path: string, key?: string) {
       const r = answer('GET', path);
       return (key ? (r.data as Record<string, T[]>)[key] : r.data) as T[];
+    },
+    async listByLink<T>(path: string) {
+      return answer('GET', path).data as T[];
     },
     graphql: async () => {
       throw new Error('stub: no GraphQL');
@@ -156,6 +159,7 @@ function services(world: World, env: Record<string, string> = { E2E_SANDBOX_TOKE
     sandboxToken: () => 's',
     peerGithub: peer.gh,
     peerToken: () => 'peer-secret',
+    start: () => fakeRunning(),
   };
   return { host, calls, peer, sandbox };
 }

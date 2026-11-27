@@ -29,7 +29,8 @@ export function createScenarios(host: HostServices): Scenario[] {
     hostMemoryCheck(kitFor),
     imageProvenance(kitFor),
     codexJobs,
-    // Issue #300: collaborator Runners. Last, since they register the peer's Runners and change the execution sandbox's visibility.
+    // Issue #300: collaborator Runners, after the others here since they register the peer's Runners and change the
+    // execution sandbox's visibility; they delete the peer's registrations before the Dashboard scenarios run.
     ...collaboratorScenarios,
   ];
 }

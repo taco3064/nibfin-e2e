@@ -244,6 +244,7 @@ export const collaboratorPrivate: Scenario = {
     if (!p.afterRemove.keys.some((x) => x.title === title)) problems.push(`R5.63: deploy key ${title} is gone from GitHub after runner remove`);
     for (const a of reg.added) if (!p.afterRemove.runners.some((x) => x.id === a.id)) problems.push(`R5.63: registration ${a.name} is gone from GitHub after runner remove`);
 
+    if (p.cleanup.length) ctx.log(`setup cleanup: ${p.cleanup.join('; ')}`);
     return outcome(problems, `private: deploy key ${title} (read-only) from ${keyFile}; hook accepted ${ctx.sandbox.execution}@${p.mainSha}; remove left the key and ${names(reg.added)} on GitHub`);
   },
 };

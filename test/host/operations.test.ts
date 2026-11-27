@@ -16,6 +16,8 @@ function services(exec: Exec, env: Record<string, string | undefined> = { E2E_SA
     workDir: () => '/tmp/none',
     sandboxToken: () => 'sbx-token',
     start: () => fakeRunning(),
+    peerGithub: createGitHub(() => 'peer-token', fetchFn),
+    peerToken: () => 'peer-token',
   };
 }
 
