@@ -48,6 +48,9 @@ export async function decisionFixture(k: Kit, scenario: string): Promise<Fixture
  * shows it (its body is the baseline for "unchanged", R4.45). It ends early when Shape
  * published instead, the Issue closed, or a shape job completed and another stage followed.
  */
+/** Why the waits for a product-decision stop and its record do not end on `pending`: it is how Shape stops for the decision (Proposal R4.45). */
+const DECISION_PENDING = 'Shape stops with pending for the product decision';
+
 export async function awaitDecisionStop(k: Kit, n: number, show: (s: Snapshot) => Promise<string>): Promise<Issue> {
   const gone = k.stageGone(k.exec, n, 'shape', { allowPending: true });
   return k.obs.until(
@@ -59,6 +62,8 @@ export async function awaitDecisionStop(k: Kit, n: number, show: (s: Snapshot) =
     DEADLINE.stage,
     show,
     {
+      ...k.about(k.exec, n),
+      expects: { pending: DECISION_PENDING },
       gonePast: async (s) =>
         k.labels(s, k.exec, n).includes('shaped')
           ? `#${n}: Shape was published without stopping: the agent chose the rounding itself`
@@ -309,6 +314,8 @@ export async function awaitResolutionRecord(
       DEADLINE.stage,
       (s) => `#${n} labels: ${k.labels(s, exec, n).join(', ') || 'none'}`,
       {
+        ...k.about(exec, n),
+        expects: { pending: DECISION_PENDING },
         quiet: true,
         gonePast: async (s) =>
           k.issue(s, exec, n) && !k.labels(s, exec, n).includes('pending')
@@ -343,14 +350,14 @@ export async function awaitShapeAfterDecision(
     (s) => k.stages(s, exec, n, ['shape']).find((x) => time(x.created_at) >= removedAt),
     DEADLINE.stage,
     show,
-    { gonePast },
+    { ...k.about(exec, n), gonePast },
   );
   await k.obs.until(
     `#${n} to get shaped after the decision`,
     (s) => (k.labels(s, exec, n).includes('shaped') ? true : undefined),
     DEADLINE.stage,
     show,
-    { gonePast },
+    { ...k.about(exec, n), gonePast },
   );
 }
 

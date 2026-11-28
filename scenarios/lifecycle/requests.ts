@@ -57,6 +57,9 @@ function requestScenario(id: string, rules: string[], body: (k: Kit, filed: numb
  * comment, read directly from GitHub on each try and `quiet`, as after `pending` the
  * request waits for a person by design. Step B's failure names the comments it read.
  */
+/** Why the waits for an infeasible request's stop do not end on `pending`: it is how the request stops (Proposal R3.9). */
+const INFEASIBLE_PENDING = 'an infeasible request stops with pending';
+
 export async function awaitInfeasibleStop(
   k: Kit,
   repo: string,
@@ -69,6 +72,8 @@ export async function awaitInfeasibleStop(
     DEADLINE.stage,
     show,
     {
+      ...k.about(repo, n),
+      expects: { pending: INFEASIBLE_PENDING },
       gonePast: (s) => {
         const i = k.issue(s, repo, n);
         return i?.state === 'closed' ? `#${n} was closed (${String(i.state_reason)}) before it got pending` : undefined;
@@ -84,7 +89,7 @@ export async function awaitInfeasibleStop(
     },
     DEADLINE.event,
     async (s) => `${await show(s).catch(() => '')}; ${describeComments(read)}`,
-    { quiet: true },
+    { ...k.about(repo, n), expects: { pending: INFEASIBLE_PENDING }, quiet: true },
   );
 }
 
@@ -126,6 +131,7 @@ export const requestInfeasible = requestScenario(
       (s2) => k.stages(s2, exec, n, ['scope']).find((x) => time(x.created_at) >= removed),
       DEADLINE.stage,
       show,
+      k.about(exec, n),
     );
     return c.outcome(
       `request #${n} needing Secrets stopped with pending, stayed open, and reran Scope once pending was removed`,
@@ -165,6 +171,7 @@ export const requestFeasible = requestScenario(
       },
       DEADLINE.delivery,
       k.show(exec, n),
+      k.about(exec, n),
     );
     const published = (closed.issues.get(exec) ?? []).filter(origin);
     c.check('R3.2', k.stages(closed, exec, n, ['scope']).length > 0, 'the request never reached the Scope stage');
@@ -230,6 +237,7 @@ export const requestAlreadyDone = requestScenario('request-already-done', ['R3.8
     (s) => (k.issue(s, exec, r.number)?.state === 'closed' ? s : undefined),
     DEADLINE.stage,
     k.show(exec, r.number),
+    k.about(exec, r.number),
   );
   c.check(
     'R3.8',

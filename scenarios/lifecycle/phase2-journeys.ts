@@ -32,7 +32,7 @@ import {
 } from './analysis.ts';
 import type { Activity, Job, ReadWindow, Run, Window } from './analysis.ts';
 import { holdJourney, journey } from './journeys.ts';
-import { DEADLINE, finishAt, hostedRunProblems, message, stageSeen, lifecycle } from './kit.ts';
+import { AFTER_DELIVERED, DEADLINE, finishAt, hostedRunProblems, message, stageSeen, lifecycle } from './kit.ts';
 import type { Kit } from './kit.ts';
 import {
   ACCEPT_END,
@@ -279,6 +279,8 @@ export const deliveryLifecycle: Scenario = lifecycle({
         return d.length ? d : undefined;
       },
       DEADLINE.event,
+      undefined,
+      { ...k.about(exec, n), expects: { closed: AFTER_DELIVERED } },
     );
     for (const d of deletions)
       c.check(

@@ -92,7 +92,7 @@ test('a pause another actor added ends the `shaped` wait at once, naming the lab
       (s) => (k.labels(s, 'o/exec', 6).includes('shaped') ? true : undefined),
       DEADLINE.event,
       k.show('o/exec', 6),
-      { gonePast: exit },
+      { noIssue: 'the test judges foreignLabelGone alone', gonePast: exit },
     ),
     /^Error: gave up waiting for `shaped`: #6 gained pause at 2026-11-26T10:00:20\.000Z by someone-else, which the scenario did not add; observed: o\/exec#6 open \[scope, pause\] .*last Nibfin comment: https:\/\/github\.com\/o\/exec\/issues\/6#issuecomment-1$/,
   );
@@ -108,6 +108,7 @@ test('a pause not yet on the timeline ends the wait one snapshot later, by an ac
   const started = c.now();
   await rejects(
     k.obs.until('the redone shape run to complete', () => undefined, DEADLINE.stage, k.show('o/exec', 6), {
+      noIssue: 'the test judges foreignLabelGone alone',
       gonePast: exit,
     }),
     /^Error: gave up waiting for the redone shape run to complete: #6 gained pause, first seen at \S+, by an actor not yet on the timeline, which the scenario did not add; observed:/,
@@ -179,7 +180,7 @@ test('a redone run with a successful agent job, then shaped without pause, passe
     },
     DEADLINE.event,
     k.show('o/exec', 6),
-    { gonePast: exit },
+    { noIssue: 'the test judges foreignLabelGone alone', gonePast: exit },
   );
   equal(ok, true);
 });

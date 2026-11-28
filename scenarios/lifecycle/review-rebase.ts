@@ -236,6 +236,8 @@ async function advanceMain(
       return t?.status === 'completed' ? t : undefined;
     },
     DEADLINE.event,
+    undefined,
+    { noIssue: "it waits on the test check of the harness's own PR, which no hold of an Issue stops" },
   );
   if (test.conclusion !== 'success')
     throw new Error(`test on the harness PR #${pr.number} (${head}) concluded ${String(test.conclusion)}`);
@@ -346,6 +348,7 @@ async function heldHalf(k: Kit, c: Checks, spec: HalfSpec, n: number, harness: s
     },
     DEADLINE.delivery,
     show,
+    k.about(exec, n),
   );
   if (opened === 'merged') {
     c.notExercised(RULE, `${label}: #${n}'s PR merged before main advanced`);
@@ -382,7 +385,13 @@ async function heldHalf(k: Kit, c: Checks, spec: HalfSpec, n: number, harness: s
   );
   await release(k, spec.slug);
 
-  await k.obs.until(`${label}: #${n} to close with delivered`, (s) => k.delivered(s, exec, n), DEADLINE.delivery, show);
+  await k.obs.until(
+    `${label}: #${n} to close with delivered`,
+    (s) => k.delivered(s, exec, n),
+    DEADLINE.delivery,
+    show,
+    k.about(exec, n),
+  );
   const s = await k.obs.fresh();
   const merged = (await k.obs.pullsByHead(exec, branch)).find((p) => p.merged_at);
   const delivers: DeliverJob[] = [];

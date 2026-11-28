@@ -147,6 +147,8 @@ export function codeChangesIn(i: CodeChangeInput): string[] {
   return out;
 }
 
+/** Why the waits for the stop and its resolution do not end on `pending`: the wrong path stops Shape with it until the repair stage corrects the Issue (Proposal R4.44). */
+const SPEC_FIX_PENDING = 'Shape stops with pending until the repair stage corrects the Issue and removes it';
 const FIXTURE = '_This Issue is an automated nibfin-e2e fixture._';
 const BEHAVIOUR = '`Hello, ${name}!`';
 const CHANGE_WORD = /改|修正|更正|chang|correct|replac|edit|fix/i;
@@ -229,6 +231,8 @@ export const resolutionSpecFix = lifecycle({
           DEADLINE.stage,
           show,
           {
+            ...k.about(exec, num),
+            expects: { pending: SPEC_FIX_PENDING },
             gonePast: async (s) =>
               k.labels(s, exec, num).includes('shaped')
                 ? `#${num} has shaped: Shape published without stopping, so the fixture did not need a correction`
@@ -253,6 +257,8 @@ export const resolutionSpecFix = lifecycle({
           DEADLINE.stage,
           show,
           {
+            ...k.about(exec, num),
+            expects: { pending: SPEC_FIX_PENDING },
             gonePast: async (s) => {
               const i = k.issue(s, exec, num);
               if (i?.state === 'closed') return `#${num} is closed (${String(i.state_reason)})`;
@@ -380,7 +386,7 @@ export const resolutionSpecFix = lifecycle({
             },
             DEADLINE.stage,
             show,
-            { gonePast: k.stageGone(exec, num, 'shape', { publishes: 'shaped', since }) },
+            { ...k.about(exec, num), gonePast: k.stageGone(exec, num, 'shape', { publishes: 'shaped', since }) },
           );
         } catch (error) {
           c.fail('R4.44', `the Issue did not continue on its own: ${message(error)}`);

@@ -118,7 +118,7 @@ async function decideInWords(k: Kit, filed: (n: number) => void): Promise<Outcom
       async (s) => (judge(k.labels(s, exec, n), await k.obs.comments(exec, n)).ok ? true : undefined),
       DEADLINE.quiet,
       show,
-      { quiet: true },
+      { ...k.about(exec, n), quiet: true },
     );
   } catch (error) {
     c.fail(

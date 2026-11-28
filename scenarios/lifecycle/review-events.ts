@@ -186,6 +186,7 @@ export const reviewEvents: Scenario = lifecycle({
 
       // 1–2: the PR waits for an approving review (R3.26), without pending and unmerged.
       const pr0 = await k.obs.until(`#${num}'s PR`, (s) => prOf(s), DEADLINE.stage, show, {
+        ...k.about(exec, num),
         gonePast: k.closeGone(exec, num),
       });
       const prn = pr0.number;
@@ -200,7 +201,7 @@ export const reviewEvents: Scenario = lifecycle({
         },
         DEADLINE.stage,
         show,
-        { gonePast: k.closeGone(exec, num) },
+        { ...k.about(exec, num), gonePast: k.closeGone(exec, num) },
       );
       const calm = await k.settle(`the review-awaited comment on PR #${prn}`, waits.at, k.runsOf(exec, num));
       const pr = prOf(calm) ?? pr0;
@@ -247,7 +248,7 @@ export const reviewEvents: Scenario = lifecycle({
         },
         DEADLINE.stage,
         show,
-        { gonePast: k.stageGone(exec, num, 'deliver', { since: time(askedAt), jobs: false }) },
+        { ...k.about(exec, num), gonePast: k.stageGone(exec, num, 'deliver', { since: time(askedAt), jobs: false }) },
       );
       const jobs: FixJob[] = [];
       for (const j of await k.agentJobs(fix.s, exec, num, ['deliver'])) {
@@ -298,7 +299,7 @@ export const reviewEvents: Scenario = lifecycle({
         },
         DEADLINE.stage,
         show,
-        { gonePast: k.closeGone(exec, num) },
+        { ...k.about(exec, num), gonePast: k.closeGone(exec, num) },
       );
       const calm2 = await k.settle(
         `the review-awaited comment on PR #${prn} after the fix`,
@@ -335,7 +336,7 @@ export const reviewEvents: Scenario = lifecycle({
         (s) => k.delivered(s, exec, num),
         DEADLINE.delivery,
         show,
-        { gonePast: k.closeGone(exec, num) },
+        { ...k.about(exec, num), gonePast: k.closeGone(exec, num) },
       );
       const s = await k.obs.fresh();
       const merged = (await k.obs.pullsByHead(exec, branch)).find((p) => p.merged_at);
