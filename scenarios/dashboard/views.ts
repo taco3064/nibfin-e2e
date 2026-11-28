@@ -226,7 +226,23 @@ const visibleHrefs = async (page: Page) =>
       .evaluateAll((els) => els.map((e) => e.getAttribute('href') ?? '')),
   );
 
-/** Conclusions of the runs an Issue's run strip lists, read from each run row's text or label. */
+/**
+ * The conclusion one run row shows, read from the row's text parts (each text node, the link's
+ * label and href). The parts are joined with spaces, so a conclusion badge directly followed by
+ * the start time or repository (`success` then `28 Nov 2026`) still matches as a whole word.
+ * A row with no conclusion word is `unknown:` with the end of its text, so the R9.1 failure
+ * names what the row showed.
+ */
+export function runConclusion(parts: string[]): string {
+  const text = parts.join(' ').replace(/\s+/g, ' ').trim();
+  return CONCLUSIONS.find(([, re]) => re.test(text))?.[0] ?? `unknown:${text.slice(-80)}`;
+}
+
+/**
+ * Conclusions of the runs an Issue's run strip lists, read from each run row's text or label.
+ * Each text node of the row is its own part, so the text of adjacent elements (a conclusion
+ * badge and the start time after it) never merges into one word.
+ */
 async function stripConclusions(page: Page, el: Locator): Promise<string[] | undefined> {
   const { strip } = await runStrip(el);
   if (!strip) return undefined;
@@ -235,15 +251,33 @@ async function stripConclusions(page: Page, el: Locator): Promise<string[] | und
   const rows = await page
     .locator('a[href*="/actions/runs/"]')
     .filter({ visible: true })
-    .evaluateAll((els) =>
-      els.map(
-        (e) =>
-          `${e.closest('li, tr, [role="row"], [role="listitem"]')?.textContent ?? e.textContent ?? ''} ${e.getAttribute('aria-label') ?? ''} ${e.getAttribute('href') ?? ''}`,
-      ),
-    );
+    .evaluateAll((els) => {
+      interface DomNode {
+        nodeType: number;
+        textContent: string | null;
+        childNodes: ArrayLike<DomNode>;
+      }
+      interface El extends DomNode {
+        closest(s: string): El | null;
+        getAttribute(name: string): string | null;
+      }
+      const texts = (n: DomNode, out: string[]): string[] => {
+        if (n.nodeType === 3) {
+          if ((n.textContent ?? '').trim()) out.push(n.textContent ?? '');
+        } else if (n.nodeType === 1) {
+          for (const c of Array.from(n.childNodes)) texts(c, out);
+        }
+        return out;
+      };
+      return (els as unknown as El[]).map((e) => [
+        ...texts(e.closest('li, tr, [role="row"], [role="listitem"]') ?? e, []),
+        e.getAttribute('aria-label') ?? '',
+        e.getAttribute('href') ?? '',
+      ]);
+    });
   await closeDialog(page);
   await page.keyboard.press('Escape');
-  return rows.map((r) => CONCLUSIONS.find(([, re]) => re.test(r))?.[0] ?? `unknown:${r.slice(-80)}`);
+  return rows.map(runConclusion);
 }
 
 /**
