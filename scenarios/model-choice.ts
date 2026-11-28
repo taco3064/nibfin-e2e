@@ -1,7 +1,7 @@
 import type { KitFor } from './lib/kit.ts';
 import type { Outcome, Scenario } from '../src/types.ts';
-import { markerOf } from './lifecycle/analysis.ts';
-import { SHAPE_MARKER } from './lifecycle/marks.ts';
+import { markerOf } from './lib/analysis.ts';
+import { SHAPE_MARKER } from './lib/marks.ts';
 import { Checks, excerpt } from './lib/checks.ts';
 import { OVERRIDE_MARKER, OVERRIDE_TEXT, PROBE_FILE, json } from './lib/files.ts';
 import { close, comments, labels, prepareFixture } from './lib/fixture.ts';

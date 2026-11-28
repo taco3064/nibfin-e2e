@@ -1,7 +1,7 @@
 // Pure checks the Dashboard and site scenarios use. No network, no browser.
-import type { Comment } from '../lifecycle/analysis.ts';
-import { markerOf, time } from '../lifecycle/analysis.ts';
-import { PENDING_MARKER } from '../lifecycle/marks.ts';
+import type { Comment } from '../lib/analysis.ts';
+import { markerOf, time } from '../lib/analysis.ts';
+import { PENDING_MARKER } from '../lib/marks.ts';
 import { causeCodes } from '../lib/joblog.ts';
 import { briefRecord, labelAddedAt, RESOLUTION_CLASSES, resolutionRecord } from '../lib/resolution.ts';
 import type { ResolutionRecord } from '../lib/resolution.ts';

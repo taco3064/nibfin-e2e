@@ -1,7 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { createScenarios } from '../scenarios/index.ts';
 import { createKit } from '../scenarios/lib/kit.ts';
-import { lifecycleScenarios } from '../scenarios/lifecycle/index.ts';
 import { createHostContext } from './host/context.ts';
 import { createServices } from './host/services.ts';
 import { createProvisioning } from './provisioning.ts';
@@ -13,7 +12,6 @@ import { dashboardServing } from '../scenarios/dashboard/serving.ts';
 import { dashboardUpdates } from '../scenarios/dashboard/updates.ts';
 import { dashboardViews } from '../scenarios/dashboard/views.ts';
 import { dashboard } from '../scenarios/management/dashboard.ts';
-import { failurePending } from '../scenarios/management/failure-pending.ts';
 import { hostRequirements } from '../scenarios/management/host-requirements.ts';
 import { runnerLocation } from '../scenarios/management/runner-location.ts';
 import { extensionReleases, imageDigest } from '../scenarios/management/image-release.ts';
@@ -40,20 +38,19 @@ const services = createServices(fileURLToPath(new URL('..', import.meta.url)), (
 
 // Explicit lists, in run order (consecutive `concurrent` scenarios start together, see
 // `Scenario.concurrent`). Scenario modules live under `scenarios/`; `scenarios/index.ts`
-// imports and lists the Job, Agent setup, model, `.nibfin.json`, log, image and collaborator
+// imports and lists the login volume, model, `.nibfin.json`, host memory, image and collaborator
 // ones (Issues #299 and #300), and the others are listed here. The installation and
 // management scenarios run first: they read the fresh host and the init PRs, and upgrade, which
-// changes main's workflow, runs before the long lifecycle scenarios so GHCR's main image has
-// little time to move after init. image-switch, which pins an earlier image on main and checks that a running
-// Job keeps it while the next Job runs the upgraded one, runs alone right after upgrade for the same reason and
-// restores main's pin before the lifecycle scenarios. They leave their fixture Issues paused or without `scope`, and the
-// delivery-lifecycle scenarios judge only their own tagged fixtures and runs created since they
-// started. Then the scenarios of scenarios/index.ts, the site and the Dashboard scenarios, which need
-// earlier work in the sandboxes to have settled. Two short groups there are concurrent: the
-// scenarios that read only the observed-job facts, and the two site scenarios, which only read
-// gh-nibfin and the public Live page. The scenarios on either side of them are not concurrent. runner-add-login (alone, with no fixture waiting for a Runner)
-// starts a Codex login and abandons it at the guide. runner-remove, which removes every local Runner and the login
-// volume, runs last.
+// changes main's workflow, runs early so GHCR's main image has little time to move after init.
+// image-switch, which pins an earlier image on main and checks that a running Job keeps it while
+// the next Job runs the upgraded one, runs alone right after upgrade for the same reason and
+// restores main's pin before the scenarios after it. They leave their fixture Issues paused or
+// without `scope`. Then the scenarios of scenarios/index.ts, the site and the Dashboard scenarios,
+// which need earlier work in the sandboxes to have settled. The two site scenarios, which only
+// read gh-nibfin and the public Live page, are one concurrent group; the scenarios on either side
+// of them are not concurrent. runner-add-login (alone, with no fixture waiting for a Runner)
+// starts a Codex login and abandons it at the guide. runner-remove, which removes every local
+// Runner and the login volume, runs last.
 export const scenarios: Scenario[] = [
   runnerAddSetup,
   // Right after runner-add-setup: only this host's Runners are registered and nothing has changed them yet.
@@ -67,7 +64,7 @@ export const scenarios: Scenario[] = [
   // after host-requirements, runner-location and runner-no-periodic, which need nothing changed since runner-add-setup, before
   // podman-machine-detached stops and restarts the machine, and long before runner-remove.
   runnerAlwaysOn,
-  // Alone, before the delivery scenarios and with no fixture Job running: stops and restarts the Windows podman machine.
+  // Alone, before the scenarios that file fixture Issues and with no fixture Job running: stops and restarts the Windows podman machine.
   podmanMachineDetached,
   initSettings,
   initFiles,
@@ -78,10 +75,8 @@ export const scenarios: Scenario[] = [
   statusViews,
   pauseResume,
   confirmPreview,
-  failurePending,
   upgrade,
   imageSwitch((ctx) => createKit(services, ctx)),
-  ...lifecycleScenarios,
   ...createScenarios(services),
   livePage,
   siteDeployOnPush,

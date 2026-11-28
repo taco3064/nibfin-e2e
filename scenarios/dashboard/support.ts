@@ -9,7 +9,7 @@ import type { BrowserContext, Locator, Page } from 'playwright-core';
 import type { Env, Running } from '../../src/host/exec.ts';
 import type { GitHub } from '../../src/host/github.ts';
 import type { Outcome, RunContext, RuleId, Scenario } from '../../src/types.ts';
-import type { Comment } from '../lifecycle/analysis.ts';
+import type { Comment } from '../lib/analysis.ts';
 import {
   autoProblem,
   buttonNamesFromAriaSnapshot,

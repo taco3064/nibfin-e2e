@@ -4,9 +4,9 @@
 // missing part fails its rule.
 import type { GitHub } from '../../src/host/github.ts';
 import type { Outcome } from '../../src/types.ts';
-import { markerOf, time } from '../lifecycle/analysis.ts';
-import type { Comment, Issue } from '../lifecycle/analysis.ts';
-import { PENDING_MARKER } from '../lifecycle/marks.ts';
+import { markerOf, time } from './analysis.ts';
+import type { Comment, Issue } from './analysis.ts';
+import { PENDING_MARKER } from './marks.ts';
 import { redact } from './check.ts';
 
 /** The rule groups a resolution scenario can gate on. */
