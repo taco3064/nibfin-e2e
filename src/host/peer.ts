@@ -9,12 +9,21 @@ import type { Platform } from '../types.ts';
 
 /**
  * Runs as the peer user's login environment: \`$1\` is the working directory, then the
- * command. The user manager's runtime directory and bus make \`systemctl --user\` and
- * rootless Podman work through sudo. It also sets the XDG config, data, cache and state
- * folders from the peer's \`$HOME\` and unsets \`GH_CONFIG_DIR\`, so gh and Podman never read
- * another user's folders, whatever sudo or PAM passed in. Nothing in it is built from data.
+ * command. It first sets \`HOME\` from the passwd entry of the user the session runs as,
+ * not from what sudo or PAM passed in; when that home cannot be read or is empty, it exits
+ * 125 and the command does not run. The default working directory and the XDG config,
+ * data, cache and state folders derive from that home, and \`GH_CONFIG_DIR\` is unset, so gh
+ * and Podman never read another user's folders. The user manager's runtime directory and
+ * bus make \`systemctl --user\` and rootless Podman work through sudo. Nothing in it is
+ * built from data.
  */
 const PRELUDE = [
+  'user=$(id -un) || exit 125',
+  'entry=$(getent passwd "$user") || { echo "cannot read the passwd entry of $user" >&2; exit 125; }',
+  'home=${entry#*:*:*:*:*:}',
+  'home=${home%%:*}',
+  '[ -n "$home" ] || { echo "the passwd entry of $user has no home" >&2; exit 125; }',
+  'export HOME="$home"',
   'cd -- "${1:-$HOME}" || exit 125',
   'shift',
   'uid=$(id -u)',
@@ -35,10 +44,11 @@ export interface PeerExecOptions {
 }
 
 /**
- * The argv and stdin for one command as the peer user. It does not rely on sudo's
- * \`env_reset\` alone: the prelude also resets the XDG folders and \`GH_CONFIG_DIR\`, so the
- * runner user's folders never reach the peer session even when sudo or PAM pass them. The
- * harness-side child also gets only \`childEnv\`.
+ * The argv and stdin for one command as the peer user. It does not trust sudo's \`-H\` or
+ * \`env_reset\` for \`HOME\`: the prelude takes \`HOME\` from the peer's passwd entry, derives
+ * the XDG folders from it and unsets \`GH_CONFIG_DIR\`, so the runner user's folders never
+ * reach the peer session even when sudo or PAM pass them. The harness-side child also gets
+ * only \`childEnv\`.
  */
 export function peerArgv(argv: string[], options: PeerExecOptions = {}): { argv: string[]; input: string } {
   const script = options.token === undefined ? WITHOUT_TOKEN : WITH_TOKEN;
@@ -98,9 +108,26 @@ export interface PeerHandle {
 
 const tail = (r: ExecResult) => (r.stderr.trim() || r.stdout.trim()).slice(-2000);
 
+/**
+ * The HOME and config folder a peer session gets, read without a token through the same
+ * prelude, as context for a failed peer command. A failed read is described, not thrown,
+ * so the original failure stays the error.
+ */
+async function peerSession(exec: Exec): Promise<string> {
+  const r = await peerExec(exec, ['printenv', 'HOME', 'XDG_CONFIG_HOME']);
+  const [home, config] = r.stdout.split('\n');
+  if (r.code !== 0 || !home || !config)
+    return `the peer session HOME could not be read: printenv exited ${r.code}: ${tail(r)}`;
+  return `peer session HOME=${home}, XDG_CONFIG_HOME=${config}`;
+}
+
+/** Runs a command as the peer user; a failure keeps its cause and adds the session's HOME. */
 async function peerMust(exec: Exec, argv: string[], options?: PeerExecOptions): Promise<ExecResult> {
   const r = await peerExec(exec, argv, options);
-  if (r.code !== 0) throw new Error(`as ${PEER_USER}: ${argv.slice(0, 3).join(' ')} exited ${r.code}: ${tail(r)}`);
+  if (r.code !== 0) {
+    const context = await peerSession(exec);
+    throw new Error(`as ${PEER_USER}: ${argv.slice(0, 3).join(' ')} exited ${r.code}: ${tail(r)}; ${context}`);
+  }
   return r;
 }
 

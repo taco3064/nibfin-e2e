@@ -1,8 +1,10 @@
 import { deepEqual, equal, match, rejects } from 'node:assert/strict';
+import { userInfo } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { requireEnv } from '../../src/host/config.ts';
 import { createExec } from '../../src/host/exec.ts';
+import type { ExecResult } from '../../src/host/exec.ts';
 import type { GitHub } from '../../src/host/github.ts';
 import { deletePeerKeys, freeRange, peerArgv, preparePeer, teardownPeer } from '../../src/host/peer.ts';
 import type { PeerFacts } from '../../src/host/peer.ts';
@@ -77,11 +79,13 @@ test('the peer prelude exports GH_TOKEN from stdin, keeps the rest of stdin, and
 });
 
 test('the peer prelude points the XDG folders at the peer home and unsets GH_CONFIG_DIR, whatever reached it', async () => {
-  const home = '/tmp/nibfin-peer-home';
+  // HOME comes from the passwd entry of the user the session runs as, not from the
+  // runner-like HOME passed in.
+  const home = userInfo().homedir;
   const exec = createExec(
     {
       ...process.env,
-      HOME: home,
+      HOME: '/tmp/nibfin-runner-home',
       E2E_PEER_GITHUB_TOKEN: 'peer-secret',
       XDG_CONFIG_HOME: '/home/runner/.config',
       XDG_DATA_HOME: '/home/runner/.local/share',
@@ -108,6 +112,17 @@ test('the peer prelude points the XDG folders at the peer home and unsets GH_CON
     equal(out.cwd, '/tmp');
     deepEqual(out.e2e, []);
     match(out.rt, /^\/run\/user\/\d+$/);
+    // Without a cwd the session starts in the passwd home, with the same folders.
+    const q = peerArgv([process.execPath, '-e', script], { token, input: 'more input' });
+    const atHome = JSON.parse((await exec(q.argv.slice(5), { input: q.input })).stdout);
+    equal(atHome.cwd, home);
+    equal(atHome.home, home);
+    equal(atHome.config, join(home, '.config'));
+    equal(atHome.data, join(home, '.local', 'share'));
+    equal(atHome.cache, join(home, '.cache'));
+    equal(atHome.state, join(home, '.local', 'state'));
+    equal(atHome.ghConfig, undefined);
+    equal(atHome.gh, token);
   }
 });
 
@@ -157,12 +172,16 @@ function services(
     E2E_CLAUDE_TOKEN: 'claude-secret',
     E2E_PEER_GITHUB_TOKEN: 'peer-secret',
   },
+  /** Answers a peer command first; undefined falls through to the default answers. */
+  peerAnswer: (cmd: string[]) => Partial<ExecResult> | undefined = () => undefined,
 ) {
   let userExists = false;
   let written = false;
   const { exec, calls } = fakeExec((argv: string[]) => {
     const cmd = inner(argv);
     if (cmd) {
+      const answer = peerAnswer(cmd);
+      if (answer) return answer;
       if (cmd[0] === 'cat' && cmd[2]?.endsWith('.pub')) return { stdout: 'ssh-ed25519 AAAAPUB nibfin-e2e-peer\n' };
       if (cmd[0] === 'podman' && cmd.includes('-i')) {
         written = true;
@@ -295,6 +314,31 @@ test('preparePeer: user, ids, user manager, gh-nibfin, clone, login volume and a
   equal(s.host.peer?.keyId, 77);
   equal(s.host.peer?.dir, '/home/e2epeer/sandbox');
   await rejects(s.host.peer?.readPublic('/home/e2epeer/.ssh/id_ed25519') as Promise<string>, /only public key files/);
+});
+
+test('preparePeer: a failed peer command names the user, the session HOME and config folder, and keeps its cause', async () => {
+  for (const session of ['ok', 'unreadable'] as const) {
+    const s = services({ permission: 'write', keys: [] }, undefined, (argv) => {
+      const cmd = argv.join(' ');
+      if (cmd === 'gh extension install .') return { code: 1, stderr: 'failed to load config: permission denied' };
+      if (cmd === 'printenv HOME XDG_CONFIG_HOME')
+        return session === 'ok'
+          ? { stdout: '/home/e2epeer\n/home/e2epeer/.config\n' }
+          : { code: 125, stderr: 'cannot read the passwd entry of e2epeer' };
+      return undefined;
+    });
+    let reason = '';
+    await rejects(preparePeer(s.host, 'linux', {}), (e: Error) => {
+      reason = e.message;
+      return true;
+    });
+    match(reason, /^as e2epeer: gh extension install exited 1: failed to load config: permission denied; /);
+    if (session === 'ok') match(reason, /peer session HOME=\/home\/e2epeer, XDG_CONFIG_HOME=\/home\/e2epeer\/\.config$/);
+    else match(reason, /HOME could not be read: printenv exited 125: cannot read the passwd entry of e2epeer$/);
+    equal(reason.includes('peer-secret'), false);
+    const read = s.calls.find((c) => inner(c.argv)?.[0] === 'printenv');
+    equal(read?.options.input, '', 'the session read carries no token');
+  }
 });
 
 test('preparePeer: admin, read and no permission fail before any host change; other platforms are refused', async () => {
