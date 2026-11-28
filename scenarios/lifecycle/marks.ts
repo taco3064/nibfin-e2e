@@ -24,8 +24,19 @@ export const ACCEPT_END = /\baccept(or|ance)?\b.*\b(pass\w*|approv\w*|verdict|do
 export const BLOCKER_REPORT = /\b(blocked\s*by|blocker|blocking|dependenc(y|ies))\b/i;
 export const NO_ASSIGNEE_REPORT = /\b(no|without|missing)\s+assignees?\b|\bassignees?\b.*\b(none|missing|empty)\b/i;
 
-/** The single Shape comment (marker `<!-- nibfin:shape… -->`). */
+/**
+ * The Shape comment's marker key, loosely (marker `<!-- nibfin:shape… -->`). The word
+ * boundary also matches keys that begin with `shape-` or `shape:`, such as Core's
+ * `shape-wrong` report; a check that must tell the Shape comment itself apart from
+ * those uses `isShapeKey`.
+ */
 export const SHAPE_MARKER = /^shape\b/;
+
+/** The exact marker key of the single Shape comment (`<!-- nibfin:shape -->`), Core's `shapeCommentKey`. */
+export const SHAPE_KEY = 'shape';
+
+/** Whether a marker key is exactly the Shape comment's key; `shape-wrong`, `shape:x` or `shapes` are not. */
+export const isShapeKey = (key: string | undefined): boolean => key === SHAPE_KEY;
 
 /** The re-login command a failed-login comment names (Proposal R6.13). */
 export const RELOGIN = /gh nibfin login/;

@@ -483,10 +483,12 @@ export const markerOf = (body: string | undefined) => (body ? MARKER.exec(body)?
 /**
  * What a wait read from an Issue's comments, for a failure message (Proposal R1.14):
  * the count, then per comment its marker key (or `no marker`) and the start of its text
- * without hidden `<!-- … -->` markers, cut to about 80 characters. Secrets are not
- * handled here; scenario reasons are redacted by `lifecycle()`.
+ * without hidden `<!-- … -->` markers, cut to about 80 characters. With `stamps`, each
+ * comment also names its created and updated times and its URL, so two comments with
+ * the same key can be told apart. Secrets are not handled here; scenario reasons are
+ * redacted by `lifecycle()`.
  */
-export function describeComments(comments: Comment[]): string {
+export function describeComments(comments: Comment[], options: { stamps?: boolean } = {}): string {
   const head = `read ${comments.length} comment${comments.length === 1 ? '' : 's'}`;
   if (!comments.length) return head;
   const each = comments.map((c, i) => {
@@ -496,7 +498,8 @@ export function describeComments(comments: Comment[]): string {
       .trim();
     const start = text.length > 80 ? `${text.slice(0, 80).trimEnd()}…` : text;
     const marker = markerOf(c.body);
-    return `#${i + 1} ${marker ? `marker ${marker}` : 'no marker'} "${start}"`;
+    const stamps = options.stamps ? ` (created ${c.created_at}, updated ${c.updated_at}, ${c.html_url})` : '';
+    return `#${i + 1} ${marker ? `marker ${marker}` : 'no marker'}${stamps} "${start}"`;
   });
   return `${head}: ${each.join('; ')}`;
 }
