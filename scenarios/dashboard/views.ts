@@ -71,7 +71,8 @@ const RUNS_LOADING = [/\b(?:reading|loading|fetching)\b[^\n]{0,20}\bruns?\b/i, /
 /**
  * Waits a bounded time until the element offers a run control or no longer shows its runs
  * loading (an `aria-busy` marker or loading text about runs), so a strip still loading is
- * not mistaken for a missing one.
+ * not mistaken for a missing one. The controls are counted again after the loading reads,
+ * so a strip that swaps between loading and its controls within one read is never `none`.
  */
 export async function runStrip(el: Locator, wait: RunStripWait = RUN_STRIP_WAIT): Promise<RunStrip> {
   const buttons = el.getByRole('button', { name: RUN_CONTROL });
@@ -84,6 +85,10 @@ export async function runStrip(el: Locator, wait: RunStripWait = RUN_STRIP_WAIT)
       const busy =
         (await el.locator('[aria-busy="true"]').count()) > 0 || (await el.getAttribute('aria-busy')) === 'true';
       const text = await el.innerText();
+      // Count again: the strip may have swapped from loading to its controls during the
+      // loading reads, which would otherwise read as finished with no control.
+      const again = await controls.count();
+      if (again > 0) return { controls: again, loading: false };
       return { controls: 0, loading: busy || RUNS_LOADING.some((re) => re.test(text)) };
     },
     (v) => v.controls > 0 || !v.loading,

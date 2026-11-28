@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
-import type { BrowserContext, Page } from 'playwright-core';
+import type { BrowserContext, Locator, Page } from 'playwright-core';
 import { browserLaunchOptions, issueElement, registerIssueEngine } from '../../scenarios/dashboard/support.ts';
 import { issueFeatures, runStrip, runsMissing } from '../../scenarios/dashboard/views.ts';
 import type { Issue } from '../../scenarios/dashboard/github.ts';
@@ -141,4 +141,28 @@ test('a run link alone offers the runs but is not the clickable strip', async (t
   equal(s.state, 'shown');
   equal(s.strip, undefined);
   equal((await issueFeatures(el, issueA, s)).runs, true);
+});
+
+test('a strip that swaps from loading to its controls between the reads of one poll is judged shown', async () => {
+  // A fake element whose content swaps right after the first control count, which a real
+  // browser cannot time between two Playwright calls.
+  let swapped = false;
+  const controls = {
+    or: () => controls,
+    first: () => controls,
+    count: async () => {
+      if (swapped) return 1;
+      swapped = true;
+      return 0;
+    },
+  };
+  const fake = {
+    getByRole: () => controls,
+    locator: () => ({ count: async () => (swapped ? 0 : 1) }),
+    getAttribute: async () => null,
+    innerText: async () => (swapped ? 'Latest run: success' : 'Reading runs…'),
+  } as unknown as Locator;
+  const s = await runStrip(fake, WAIT);
+  equal(s.state, 'shown');
+  ok(s.waitedMs < WAIT.timeoutMs, `waited ${s.waitedMs} ms`);
 });
