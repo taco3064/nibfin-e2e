@@ -39,12 +39,10 @@ let skipped = '';
 /** Launches Chrome the way `openPage` does: the Chrome channel, then `which google-chrome`. */
 async function launch(): Promise<BrowserContext> {
   await registerIssueEngine();
-  // Its own profile, so it can run beside the other browser tests.
-  const { profileDir, options } = browserLaunchOptions(
-    join(ROOT, '.e2e-work', 'test-browser-run-strip'),
-    childEnv(process.env),
-    {},
-  );
+  // Its own profile, so it can run beside the other browser tests. The name stays short:
+  // Chrome puts its singleton socket under `<base>/tmp`, and a Unix socket path longer than
+  // 107 bytes (as in a CI checkout under /home/runner/work/...) makes Chrome abort at launch.
+  const { profileDir, options } = browserLaunchOptions(join(ROOT, '.e2e-work', 'tb-strip'), childEnv(process.env), {});
   try {
     return await chromium.launchPersistentContext(profileDir, { ...options, channel: 'chrome' });
   } catch (error) {
