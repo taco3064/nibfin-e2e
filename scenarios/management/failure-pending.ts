@@ -14,9 +14,17 @@ import {
 import { untilAborted } from '../../src/abort.ts';
 import type { Comment } from '../lifecycle/analysis.ts';
 import { markerOf, time } from '../lifecycle/analysis.ts';
-import { briefRecord, pendingAddedAt, resolutionGate, resolutionRecord, resolutionRecords } from '../lib/resolution.ts';
+import {
+  briefRecord,
+  isFinishedRecord,
+  pendingAddedAt,
+  resolutionGate,
+  resolutionRecord,
+  resolutionRecords,
+} from '../lib/resolution.ts';
 import type { ResolutionRecord } from '../lib/resolution.ts';
 import { sleep, waitFor } from '../lib/wait.ts';
+import type { WaitOptions } from '../lib/wait.ts';
 
 const comments = (gh: GitHub, repo: string, n: number) => gh.list<Comment>(`/repos/${repo}/issues/${n}/comments`);
 
@@ -28,6 +36,33 @@ const lastWrite = (cs: Comment[]) =>
 const RESOLUTION_RULES = ['R4.40', 'R4.41', 'R4.46', 'R4.49', 'R4.52'];
 
 const POLL_MS = 20_000;
+
+/**
+ * Polls `read` until its latest resolution record is finished, that is, names one of the six
+ * classes of Proposal R4.41. The repair stage first writes an unfinished record (shown as
+ * 自動排除中, R9.52) and then updates that comment in place (R3.42), so an unfinished record
+ * is waited past rather than judged. Returns `{ seen }` with the finished read, or, once the
+ * deadline passes, `{ last }` with the latest successful read (undefined when none succeeded).
+ * An abort through `options.signal` still rejects with the abort reason.
+ */
+export async function awaitFinishedRecord<S extends { record?: ResolutionRecord }>(
+  read: () => Promise<S>,
+  options: WaitOptions,
+): Promise<{ seen: S } | { last: S | undefined }> {
+  let last: S | undefined;
+  try {
+    const seen = await waitFor(
+      async () => (last = await read()),
+      (s) => s.record !== undefined && isFinishedRecord(s.record),
+      options,
+    );
+    return { seen };
+  } catch {
+    // waitFor throws only on its deadline or an abort; its message quotes raw comment text, so it is not reported.
+    options.signal?.throwIfAborted();
+    return { last };
+  }
+}
 
 export const failurePending: Scenario = {
   id: 'failure-pending',
@@ -125,28 +160,32 @@ export const failurePending: Scenario = {
         return { labels, comments: cs, record: resolutionRecord(cs, pendingAt) };
       };
       let keys: string[] = [];
-      let seen: Awaited<ReturnType<typeof read>>;
-      try {
-        seen = await waitFor(
-          async () => {
-            const s = await read();
-            keys = s.comments
-              .filter((x) => Math.max(time(x.created_at), time(x.updated_at)) >= pendingAt)
-              .flatMap((x) => markerOf(x.body) ?? []);
-            return s;
-          },
-          (s) => s.record !== undefined,
-          { what: `a resolution record on #${n}`, deadlineMs: 15 * 60_000, signal: ctx.signal, intervalMs: POLL_MS },
-        );
-      } catch {
-        // waitFor throws only on its deadline or an abort; its message quotes raw comment text, so it is not reported.
-        ctx.signal.throwIfAborted();
+      const waited = await awaitFinishedRecord(
+        async () => {
+          const s = await read();
+          keys = s.comments
+            .filter((x) => Math.max(time(x.created_at), time(x.updated_at)) >= pendingAt)
+            .flatMap((x) => markerOf(x.body) ?? []);
+          return s;
+        },
+        {
+          what: `a resolution record on #${n} that names its class`,
+          deadlineMs: 15 * 60_000,
+          signal: ctx.signal,
+          intervalMs: POLL_MS,
+        },
+      );
+      if (!('seen' in waited)) {
+        const unfinished = waited.last?.record;
         c.fail(
           'R4.40',
-          `no resolution record on #${n} within 15 min after pending was added at ${since}; marker keys seen after it: ${keys.join(', ') || 'none'}`,
+          unfinished
+            ? `the resolution record ${unfinished.url} on #${n} never named one of the six R4.41 classes within 15 min after pending was added at ${since}${unfinished.classLabel ? ` (it says "${briefRecord(unfinished.classLabel, 80)}")` : ''}: ${briefRecord(unfinished.body)}`
+            : `no resolution record on #${n} within 15 min after pending was added at ${since}; marker keys seen after it: ${keys.join(', ') || 'none'}`,
         );
         return undefined;
       }
+      const seen = waited.seen;
       const r = seen.record as ResolutionRecord;
       const brief = briefRecord(r.body);
       const count = resolutionRecords(seen.comments, pendingAt).length;
