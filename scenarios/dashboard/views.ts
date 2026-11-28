@@ -1,7 +1,8 @@
 // Proposal R9.14–R9.17, R9.19, R9.1–R9.5, R9.7, R9.8: the three views and what each shows.
 import type { Locator, Page } from 'playwright-core';
-import type { RunContext } from '../../src/types.ts';
-import { check, countNear, dateTexts, fail, hasCount, lightProblem, localeProblems, shiftedBy, stageOf, stateOf, statusValue } from './checks.ts';
+import type { Outcome, RunContext } from '../../src/types.ts';
+import { resolutionGate } from '../lib/resolution.ts';
+import { check, countNear, needsExpected, dateTexts, fail, hasCount, lightProblem, localeProblems, shiftedBy, stageOf, stateOf, statusValue } from './checks.ts';
 import { blockedBy, ensureFixtures, me, openIssues, readIssue, sleep, until } from './github.ts';
 import type { Fixtures, Issue } from './github.ts';
 import {
@@ -17,13 +18,14 @@ import {
   mustButton,
   openDashboard,
   openPage,
+  readAutoShown,
   readUpdateMarker,
   repoOptions,
   selectRepo,
   startDashboard,
   statusJson,
 } from './support.ts';
-import type { Dashboard, Secrets, View } from './support.ts';
+import type { AutoShown, Dashboard, Secrets, View } from './support.ts';
 import { READ_ONLY_REPO } from './operations.ts';
 
 const num = (i: Issue) => `#${i.number}`;
@@ -157,7 +159,20 @@ async function renderedIssues(page: Page, ctx: RunContext): Promise<Issue[]> {
   return out;
 }
 
-async function personView(page: Page, ctx: RunContext, f: Fixtures, notes: string[]) {
+/**
+ * R9.1 with R9.52: the expected needs-intervention Issues leave out those the page shows as
+ * 自動排除中 that may show it (a Nibfin `pending` with no record older than the Dashboard's lag).
+ */
+async function expectedNeeds(page: Page, ctx: RunContext, held: Issue[]): Promise<{ expected: Issue[]; auto: AutoShown<Issue>[] }> {
+  const auto = await readAutoShown(page, ctx.github, held.filter((i) => i.labels.includes('pending')));
+  return { expected: needsExpected(held, auto.filter((a) => !a.problem).map((a) => a.issue)), auto };
+}
+
+const describeAuto = (auto: AutoShown<Issue>[]) =>
+  auto.length ? auto.map((a) => `${a.issue.repo}${num(a.issue)} ${a.problem ? `not eligible: ${a.problem}` : 'eligible'}`).join('; ') : 'none';
+
+/** `gate` is the resolution Dashboard's delivery gate: while it is set, R9.1 is checked as before R9.52. */
+async function personView(page: Page, ctx: RunContext, f: Fixtures, notes: string[], gate: Outcome | undefined) {
   await gotoView(page, 'person');
   for (const k of ['A', 'B', 'D', 'F', 'P'] as const) await issueElement(page, f[k].title).waitFor({ state: 'visible', timeout: 90_000 }).catch(() => {});
   // R9.14: grouped by repository; Proposal set included, N (no scope) and C (closed) absent.
@@ -178,15 +193,34 @@ async function personView(page: Page, ctx: RunContext, f: Fixtures, notes: strin
   }
   const held = listed.filter((i) => i.labels.includes('pause') || i.labels.includes('pending'));
   const needsTile = await tileRegion(page, 'Needs you', /^needs you\b/i);
-  const needsText = await tileText(needsTile);
-  const needsN = countNear(needsText, /pending or paused/);
-  check(needsN === held.length, 'R9.1', `the needs-intervention count ${held.length}`, () => `${needsN} (tile: ${quote(needsText)})`);
+  let needsText = await tileText(needsTile);
+  let needsN = countNear(needsText, /pending or paused/);
+  let mustIn = held;
+  let autoHeld: Issue[] = [];
+  if (gate) {
+    check(needsN === held.length, 'R9.1', `the needs-intervention count ${held.length}`, () => `${needsN} (tile: ${quote(needsText)})`);
+  } else {
+    // R9.52: 自動排除中 is not counted. The states and the tile are re-read together for up to 60 s (R9.24).
+    const end = Date.now() + 60_000;
+    let read = await expectedNeeds(page, ctx, held);
+    while (needsN !== read.expected.length && Date.now() < end) {
+      await sleep(5000);
+      read = await expectedNeeds(page, ctx, held);
+      needsText = await tileText(needsTile);
+      needsN = countNear(needsText, /pending or paused/);
+    }
+    const { expected, auto } = read;
+    check(needsN === expected.length, 'R9.1, R9.52', `the needs-intervention count ${expected.length} (${held.length} with pause or pending, less those shown as 自動排除中 and eligible)`, () => `${needsN} (tile: ${quote(needsText)}); shown as 自動排除中: ${describeAuto(auto)}`);
+    mustIn = expected;
+    autoHeld = held.filter((i) => !expected.includes(i));
+  }
   const toggle = needsTile.getByRole('button', { name: /show(?:ing)? only these/i }).first();
   check(await toggle.count(), 'R9.1', "the Needs you tile's filter toggle", () => `none (tile: ${quote(needsText)})`);
   const others = listed.filter((x) => !held.includes(x));
   await toggle.click();
-  const filtered = await until(() => visibleHrefs(page), (h) => held.every((i) => h.has(i.html_url)) && !others.some((i) => h.has(i.html_url)), 10_000, 500);
-  for (const i of held) check(filtered.has(i.html_url), 'R9.1', `${i.repo}${num(i)} in the needs-intervention filter`, 'missing');
+  // Issues shown as 自動排除中 (autoHeld) get no assertion either way: no rule says whether the filter shows them.
+  const filtered = await until(() => visibleHrefs(page), (h) => mustIn.every((i) => h.has(i.html_url)) && !others.some((i) => h.has(i.html_url)), 10_000, 500);
+  for (const i of mustIn) check(filtered.has(i.html_url), 'R9.1', `${i.repo}${num(i)} in the needs-intervention filter`, 'missing');
   for (const i of others) check(!filtered.has(i.html_url), 'R9.1', `${i.repo}${num(i)} (no pause or pending) filtered out`, 'still listed');
   await toggle.click();
   const restored = await until(() => visibleHrefs(page), (h) => listed.every((i) => h.has(i.html_url)), 10_000, 500);
@@ -209,7 +243,7 @@ async function personView(page: Page, ctx: RunContext, f: Fixtures, notes: strin
   const runnersTile = await summaryTile(page, 'Runners', /^runners?\b/i);
   check(countNear(runnersTile, /online/) !== undefined && countNear(runnersTile, /busy/) !== undefined, 'R9.1', 'local Runner online and busy counts', () => `tile: ${quote(runnersTile)}`);
   check(/\d+(?:\.\d+)?\s*(?:[KMG]i?B|%)/i.test(runnersTile), 'R9.1', 'the podman machine memory use', () => `tile: ${quote(runnersTile)}`);
-  notes.push(`person view: ${listed.length} open, ${held.length} need intervention, tiles agree`);
+  notes.push(`person view: ${listed.length} open, ${mustIn.length} need intervention${autoHeld.length ? ` (${autoHeld.length} more shown as 自動排除中)` : ''}, tiles agree`);
 
   // R9.2, R9.19 on the fixtures.
   const features: Record<string, boolean> = {};
@@ -422,6 +456,8 @@ export const dashboardViews = defineScenario({
   requires: ['nibfin'],
   async run(ctx, secrets) {
     const notes: string[] = [];
+    // Until the resolution Dashboard is delivered, R9.1 counts every Issue with pause or pending (R8.20).
+    const gate = await resolutionGate(ctx.github, 'dashboard');
     const f = await ensureFixtures(ctx.github, ctx.sandbox);
     for (const [k, b] of [['B', f.A], ['F', f.A]] as const) {
       const have = await blockedBy(ctx.github, f[k]);
@@ -435,7 +471,7 @@ export const dashboardViews = defineScenario({
       const { page } = await openPage(ctx);
       await openDashboard(page, dash);
       const markers: Record<string, string> = {};
-      const personFeatures = await personView(page, ctx, f, notes);
+      const personFeatures = await personView(page, ctx, f, notes, gate);
       markers.person = await readUpdateMarker(page);
       await repoView(page, ctx, f, notes);
       markers.repo = await readUpdateMarker(page);
