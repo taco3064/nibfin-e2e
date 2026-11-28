@@ -2,7 +2,8 @@
 import type { Comment } from '../lifecycle/analysis.ts';
 import { markerOf, time } from '../lifecycle/analysis.ts';
 import { PENDING_MARKER } from '../lifecycle/marks.ts';
-import { briefRecord, labelAddedAt, resolutionRecord } from '../lib/resolution.ts';
+import { causeCodes } from '../lib/joblog.ts';
+import { briefRecord, labelAddedAt, RESOLUTION_CLASSES, resolutionRecord } from '../lib/resolution.ts';
 import type { ResolutionRecord } from '../lib/resolution.ts';
 
 /** The Nibfin image Job containers run (Proposal R5.7); only image and event data are used, never product label keys. */
@@ -1314,4 +1315,41 @@ export function ownWordsComment(body: string, reply: string): boolean {
     .replace(/\r\n/g, '\n')
     .trim();
   return text === reply.replace(/\r\n/g, '\n').trim();
+}
+
+/**
+ * The latest `pending` comment by last write and the upper-snake cause codes it holds, such as
+ * `STAGE_HOST_MEMORY_LOW` (Proposal R4.3, R1.14); undefined when there is no `pending` comment.
+ */
+export function pendingCause(comments: Comment[]): { url: string; codes: string[] } | undefined {
+  const latest = comments
+    .filter((c) => PENDING_MARKER.test(markerOf(c.body) ?? ''))
+    .sort((a, b) => lastWrite(a) - lastWrite(b) || a.id - b.id)
+    .at(-1);
+  return latest && { url: latest.html_url, codes: causeCodes(latest.body ?? '') };
+}
+
+/**
+ * Why R9.54 was not exercised on a product-decision fixture whose finished record has no
+ * options: the fixture stopped for some other cause, named from its latest `pending` comment
+ * together with the record's class and URL (R1.14).
+ */
+export function decisionStopNotExercised(
+  f: { name: string; n: number },
+  r: ResolutionRecord,
+  comments: Comment[],
+): string {
+  const p = pendingCause(comments);
+  const cause = !p
+    ? 'no pending comment'
+    : p.codes.length
+      ? `pending cause ${briefRecord(p.codes.join(', '), 120)} (${p.url})`
+      : `no cause code in its latest pending comment (${p.url})`;
+  const cls = RESOLUTION_CLASSES.find((x) => x.id === r.class)?.name ?? 'no class';
+  return `the ${f.name} fixture #${f.n} stopped with ${cause}, and its finished record ${r.url} is classed ${cls} with no options${r.nextSteps ? ' (it gives next steps)' : ''}, so the 等你選擇 dialog was not run`;
+}
+
+/** A fixture's Issue element was not found in the view `where` describes (its update marker and refreshes). */
+export function elementMissing(f: { name: string; n: number; title: string }, where: string): string {
+  return `the ${f.name} fixture #${f.n}'s element "${briefRecord(f.title, 120)}" was not found in the ${where}`;
 }
