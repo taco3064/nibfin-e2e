@@ -4,7 +4,15 @@ import { Kit, hostedRunProblems, lifecycle, redact, stageSeen } from '../../scen
 import { Observer } from '../../scenarios/lifecycle/observe.ts';
 import { closingProblems } from '../../scenarios/lifecycle/phase1.ts';
 import { isProtected, peerIssueBody, writeConflict } from '../../scenarios/lifecycle/phase2-fixtures.ts';
-import { credentialOutcome, leaks, scan } from '../../scenarios/lifecycle/phase3.ts';
+import {
+  LOG_READ_BOUND_MS,
+  LOG_READ_INTERVAL_MS,
+  credentialOutcome,
+  describeReadError,
+  leaks,
+  scan,
+} from '../../scenarios/lifecycle/phase3.ts';
+import { GitHubError, GitHubNoResponse } from '../../src/host/github.ts';
 import { SCOPE_ISSUES, scopeGate } from '../../scenarios/lifecycle/requests.ts';
 import { clock, context, routes } from './fake.ts';
 import type { Handler } from './fake.ts';
@@ -253,12 +261,18 @@ const ran = {
   status: 'completed',
   conclusion: 'success',
   started_at: '2026-11-26T10:00:00Z',
+  completed_at: '2026-11-26T10:05:00Z',
   runner_name: 'r1',
   labels: [],
 };
 
 /** A Kit whose exec sandbox has one Nibfin run with the given jobs and job log routes. */
-async function scanKit(jobs: object[], logs: Record<string, Handler | object>, logText = 'clean line') {
+async function scanKit(
+  jobs: object[],
+  logs: Record<string, Handler | object>,
+  logText = 'clean line',
+  signal?: AbortSignal,
+) {
   const f = routes({
     ...empty,
     'GET /repos/o/exec/issues/comments': [],
@@ -275,9 +289,11 @@ async function scanKit(jobs: object[], logs: Record<string, Handler | object>, l
   });
   const fetchFn = f.fetchFn;
   const withLogs: typeof fetch = async (input, init) =>
-    String(input).startsWith('https://logs.example/')
-      ? new Response(`2026-11-26T10:00:00Z ${logText}\n`)
-      : fetchFn(input, init);
+    String(input).startsWith('https://logs.example/missing/')
+      ? new Response('Not Found', { status: 404 })
+      : String(input).startsWith('https://logs.example/')
+        ? new Response(`2026-11-26T10:00:00Z ${logText}\n`)
+        : fetchFn(input, init);
   const { createGitHub } = await import('../../src/host/github.ts');
   const c = clock();
   return {
@@ -285,7 +301,7 @@ async function scanKit(jobs: object[], logs: Record<string, Handler | object>, l
     k: new Kit(
       context(
         createGitHub(() => 'tok', withLogs),
-        { secretValues: () => ['s3cret-value'] },
+        { secretValues: () => ['s3cret-value'], ...(signal ? { signal } : {}) },
       ),
       { now: c.now, sleep: c.sleep },
     ),
@@ -314,19 +330,92 @@ test('the secret scan does not read the log of a job no runner took', async () =
   deepEqual([logReads(f.calls, 11), logReads(f.calls, 12)], [0, 0]);
 });
 
-test('an unreadable log of a job that ran is read twice and reported as unchecked, not as credentials found', async () => {
+test('a log that stays unreadable through the redirect is read again until the bound and names its completion, reads and status', async () => {
   const { f, k } = await scanKit([{ id: 9, ...ran }], {
-    'GET /repos/o/exec/actions/jobs/9/logs': { status: 404, data: { message: 'Not Found' } },
+    'GET /repos/o/exec/actions/jobs/9/logs': { status: 302, headers: { location: 'https://logs.example/missing/9' } },
   });
   const result = await scan(k);
-  equal(logReads(f.calls, 9), 2);
+  const reads = logReads(f.calls, 9);
+  equal(reads > 2, true);
+  equal(reads <= Math.ceil(LOG_READ_BOUND_MS / LOG_READ_INTERVAL_MS) + 1, true);
   deepEqual(result.found, []);
   equal(result.unreadable.length, 1);
-  match(result.unreadable[0] ?? '', /^o\/exec job 9 \(Nibfin · o\/exec#1 · shape\): .*actions\/jobs\/9\/logs.*404/);
+  const entry = result.unreadable[0] ?? '';
+  match(entry, /^o\/exec job 9 \(Nibfin · o\/exec#1 · shape\): .*actions\/jobs\/9\/logs returned 404: the redirected download failed; /);
+  match(entry, /; completed_at 2026-11-26T10:05:00Z; /);
+  match(
+    entry,
+    new RegExp(`; read ${reads} times from 2026-11-26T10:00:00\\.000Z to 2026-11-26T10:02:00\\.000Z over about 120 s; `),
+  );
+  match(entry, /; last status 404 from the redirected download; next: /);
+  equal(entry.includes('logs.example'), false);
   const out = credentialOutcome(result);
   equal(out.status, 'failed');
   match(out.reason, /^R3\.49: .*could not be checked.*o\/exec job 9/);
   equal(out.reason.includes('credentials found'), false);
+  equal(out.reason.includes('logs.example'), false);
+});
+
+test('a log the API host does not serve names the API host as the origin of its last status', async () => {
+  const { k } = await scanKit([{ id: 9, ...ran }], {
+    'GET /repos/o/exec/actions/jobs/9/logs': { status: 404, data: { message: 'Not Found' } },
+  });
+  const [entry = ''] = (await scan(k)).unreadable;
+  match(entry, /actions\/jobs\/9\/logs returned 404: .*Not Found/);
+  match(entry, /; last status 404 from the API host; /);
+});
+
+test('a log that fails several times and reads within the bound is scanned', async () => {
+  let reads = 0;
+  const { f, k } = await scanKit(
+    [{ id: 9, ...ran }],
+    {
+      'GET /repos/o/exec/actions/jobs/9/logs': () =>
+        ++reads <= 3
+          ? { status: 302, headers: { location: 'https://logs.example/missing/9' } }
+          : { status: 302, headers: { location: 'https://logs.example/9' } },
+    },
+    'leaked s3cret-value',
+  );
+  deepEqual(await scan(k), { found: ['o/exec job 9 log (Nibfin · o/exec#1 · shape): a secret value'], unreadable: [] });
+  equal(logReads(f.calls, 9), 4);
+});
+
+test('the status of a failed log read names its origin from the fixed text of GitHub.download', () => {
+  equal(
+    describeReadError(new GitHubError('GET', '/x/logs', 404, 'the redirected download failed')),
+    'last status 404 from the redirected download',
+  );
+  equal(describeReadError(new GitHubError('GET', '/x/logs', 410, 'Gone')), 'last status 410 from the API host');
+  equal(
+    describeReadError(
+      new GitHubNoResponse('GitHub GET /x/logs: the redirected download got no response: ECONNRESET', { cause: null }),
+    ),
+    'no response from the redirected download',
+  );
+  equal(
+    describeReadError(new GitHubNoResponse('GitHub GET /x/logs got no response: ECONNRESET', { cause: null })),
+    'no response from the API host',
+  );
+  equal(describeReadError(new Error('boom')), 'no HTTP status');
+});
+
+test('an aborted run ends the wait for an unreadable log with the abort reason', async () => {
+  const ac = new AbortController();
+  let reads = 0;
+  const { k } = await scanKit(
+    [{ id: 9, ...ran }],
+    {
+      'GET /repos/o/exec/actions/jobs/9/logs': () => {
+        if (++reads === 2) ac.abort(new Error('harness budget spent'));
+        return { status: 404, data: { message: 'Not Found' } };
+      },
+    },
+    'clean line',
+    ac.signal,
+  );
+  await rejects(scan(k), /harness budget spent/);
+  equal(reads, 2);
 });
 
 test('a log that fails once and reads on the second try is scanned', async () => {

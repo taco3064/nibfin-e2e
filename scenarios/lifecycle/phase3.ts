@@ -1,7 +1,10 @@
 // Phase 3: the credential scan, after everything else has written what it writes.
+import { throwIfAborted, untilAborted } from '../../src/abort.ts';
+import { GitHubError, GitHubNoResponse } from '../../src/host/github.ts';
 import type { Outcome, Scenario } from '../../src/types.ts';
+import { sleep } from '../lib/wait.ts';
 import { ranOnRunner } from './analysis.ts';
-import type { LogLine } from './analysis.ts';
+import type { Job, LogLine } from './analysis.ts';
 import { journey } from './journeys.ts';
 import { lifecycle, message } from './kit.ts';
 import type { Kit } from './kit.ts';
@@ -24,27 +27,76 @@ export interface ScanResult {
   unreadable: string[];
 }
 
+/** How long a job's log that cannot be read yet is read again before it counts as unreadable. */
+export const LOG_READ_BOUND_MS = 120_000;
+/** The pause between two reads of a job's log that could not be read. */
+export const LOG_READ_INTERVAL_MS = 15_000;
+
+/** A job's log that stayed unreadable: the last read's error, how many reads ran and when. */
+interface UnreadLog {
+  error: unknown;
+  reads: number;
+  firstAt: number;
+  lastAt: number;
+}
+
 /**
- * Reads a job's log, reading it once more right away when the first read fails (the
- * Observer does not keep a failed read, so the second is a new download). Gives the
- * error of the second read when both fail.
+ * Reads a job's log. GitHub may not serve the log of a job that has just completed, so a
+ * failed read is repeated, pausing `LOG_READ_INTERVAL_MS` between reads, until
+ * `LOG_READ_BOUND_MS` after the first read. The Observer does not keep a failed read, so
+ * each read is a new download. When every read fails it gives the last read's error with
+ * the read count and the start times of the first and last read. An aborted run ends the
+ * wait with the abort reason instead of waiting out the bound.
  */
-async function readLog(k: Kit, repo: string, jobId: number): Promise<{ lines: LogLine[] } | { error: unknown }> {
-  try {
-    return { lines: await k.obs.log(repo, jobId) };
-  } catch {
+async function readLog(k: Kit, repo: string, job: Job): Promise<{ lines: LogLine[] } | UnreadLog> {
+  const firstAt = k.now();
+  for (let reads = 1; ; reads++) {
+    const lastAt = k.now();
     try {
-      return { lines: await k.obs.log(repo, jobId) };
-    } catch (e) {
-      return { error: e };
+      return { lines: await k.obs.log(repo, job.id) };
+    } catch (error) {
+      throwIfAborted(k.ctx.signal);
+      const left = LOG_READ_BOUND_MS - (k.now() - firstAt);
+      if (left <= 0) return { error, reads, firstAt, lastAt };
+      await untilAborted((k.sleep ?? sleep)(Math.min(LOG_READ_INTERVAL_MS, left)), k.ctx.signal);
     }
   }
 }
 
 /**
+ * The last status of a failed log read and where it came from: the API host's response
+ * or the redirected download step. `GitHub.download` names the redirected step in fixed
+ * message text and never puts the signed URL there, so that text is matched here.
+ */
+export function describeReadError(e: unknown): string {
+  if (e instanceof GitHubError) {
+    const from = e.message.endsWith('the redirected download failed') ? 'the redirected download' : 'the API host';
+    return `last status ${e.status} from ${from}`;
+  }
+  if (e instanceof GitHubNoResponse) {
+    const redirected = e.message.includes('the redirected download got no response');
+    return `no response from ${redirected ? 'the redirected download' : 'the API host'}`;
+  }
+  return 'no HTTP status';
+}
+
+/** An unreadable log's detail: the original error, the job's completion, the reads, the last status and the next step. */
+function unreadDetail(job: Job, log: UnreadLog): string {
+  const iso = (t: number) => new Date(t).toISOString();
+  const seconds = Math.round((log.lastAt - log.firstAt) / 1000);
+  return (
+    `${message(log.error)}; completed_at ${job.completed_at ?? 'unknown'}; ` +
+    `read ${log.reads} times from ${iso(log.firstAt)} to ${iso(log.lastAt)} over about ${seconds} s; ` +
+    `${describeReadError(log.error)}; next: check whether GitHub stores this job's log at all ` +
+    `(GET the job's logs endpoint), since the check stays failed until it can be read`
+  );
+}
+
+/**
  * Scans every text a run leaves on GitHub. Leaks are reported by location only. A job no
- * runner took has no log and is skipped; the log of a job that ran but stayed unreadable
- * is listed apart from the leaks, with its error.
+ * runner took has no log and is skipped. The log of a job that ran is read again for a
+ * bounded time while it cannot be read; one that stays unreadable is listed apart from
+ * the leaks, with its error, the job's completion time, the reads and the last status.
  */
 export async function scan(k: Kit): Promise<ScanResult> {
   const secrets = k.ctx.secretValues();
@@ -70,9 +122,9 @@ export async function scan(k: Kit): Promise<ScanResult> {
     for (const run of s.runs.filter((x) => x.repo === repo && x.display_title.startsWith('Nibfin ·'))) {
       for (const job of await k.obs.jobs(repo, run.id)) {
         if (job.status !== 'completed' || !ranOnRunner(job)) continue;
-        const log = await readLog(k, repo, job.id);
+        const log = await readLog(k, repo, job);
         if ('error' in log) {
-          unreadable.push(`${repo} job ${job.id} (${run.display_title}): ${message(log.error)}`);
+          unreadable.push(`${repo} job ${job.id} (${run.display_title}): ${unreadDetail(job, log)}`);
           continue;
         }
         found.push(
