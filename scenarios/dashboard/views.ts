@@ -44,16 +44,74 @@ import { READ_ONLY_REPO } from './operations.ts';
 const num = (i: Issue) => `#${i.number}`;
 const hasNumber = (text: string, i: Issue) => new RegExp(`#${i.number}\\b`).test(text);
 
-/** Features every Issue element must offer (Proposal R9.19); compared across views. */
-export async function issueFeatures(el: Locator, issue: Issue): Promise<Record<string, boolean>> {
+/** How long an Issue element's run strip may take to load, and how often it is read. */
+export interface RunStripWait {
+  timeoutMs: number;
+  everyMs: number;
+}
+
+export const RUN_STRIP_WAIT: RunStripWait = { timeoutMs: 30_000, everyMs: 1_000 };
+
+/**
+ * An Issue element's run strip after the wait: `shown` when a run control is offered,
+ * `loading` when the element still showed its runs loading as the wait ended, `none` when
+ * it finished loading without a run control. `strip` is the first run button (the strip).
+ */
+export interface RunStrip {
+  state: 'shown' | 'loading' | 'none';
+  waitedMs: number;
+  strip?: Locator;
+}
+
+// A control named after runs, unless its name itself says the runs are still loading.
+const RUN_CONTROL = /^(?!.*\b(?:reading|loading|fetching)\b.*\bruns?\b).*run/is;
+// Loading text tied to the word "run", so unrelated loading text does not hold the wait.
+const RUNS_LOADING = [/\b(?:reading|loading|fetching)\b[^\n]{0,20}\bruns?\b/i, /\bruns?\b[^\n]{0,20}\bloading\b/i];
+
+/**
+ * Waits a bounded time until the element offers a run control or no longer shows its runs
+ * loading (an `aria-busy` marker or loading text about runs), so a strip still loading is
+ * not mistaken for a missing one.
+ */
+export async function runStrip(el: Locator, wait: RunStripWait = RUN_STRIP_WAIT): Promise<RunStrip> {
+  const buttons = el.getByRole('button', { name: RUN_CONTROL });
+  const controls = buttons.or(el.getByRole('link', { name: RUN_CONTROL }));
+  const start = Date.now();
+  const last = await until(
+    async () => {
+      const count = await controls.count();
+      if (count > 0) return { controls: count, loading: false };
+      const busy =
+        (await el.locator('[aria-busy="true"]').count()) > 0 || (await el.getAttribute('aria-busy')) === 'true';
+      const text = await el.innerText();
+      return { controls: 0, loading: busy || RUNS_LOADING.some((re) => re.test(text)) };
+    },
+    (v) => v.controls > 0 || !v.loading,
+    wait.timeoutMs,
+    wait.everyMs,
+  );
+  const waitedMs = Date.now() - start;
+  if (last.controls > 0)
+    return { state: 'shown', waitedMs, strip: (await buttons.count()) ? buttons.first() : undefined };
+  return { state: last.loading ? 'loading' : 'none', waitedMs };
+}
+
+/** Why an element offers no runs, for the R9.19 failure (R1.14: the lowest-level cause). */
+export const runsMissing = (s: RunStrip) =>
+  s.state === 'loading'
+    ? `run strip still loading after ${Math.round(s.waitedMs / 1000)} s`
+    : 'finished loading with no run control';
+
+/**
+ * Features every Issue element must offer (Proposal R9.19); compared across views. Every
+ * feature is read after the run-strip wait, so each view is compared once it has loaded.
+ */
+export async function issueFeatures(el: Locator, issue: Issue, strip?: RunStrip): Promise<Record<string, boolean>> {
+  const runs = strip ?? (await runStrip(el));
   const text = await el.innerText();
   return {
     track: /shape/i.test(text) && /deliver/i.test(text) && /done/i.test(text),
-    runs:
-      (await el
-        .getByRole('button', { name: /run/i })
-        .or(el.getByRole('link', { name: /run/i }))
-        .count()) > 0,
+    runs: runs.state === 'shown',
     toggle: (await el.getByRole('button', { name: /pause|resume/i }).count()) > 0,
     link: (await el.locator(`a[href="${issue.html_url}"]`).count()) > 0,
   };
@@ -165,8 +223,8 @@ const visibleHrefs = async (page: Page) =>
 
 /** Conclusions of the runs an Issue's run strip lists, read from each run row's text or label. */
 async function stripConclusions(page: Page, el: Locator): Promise<string[] | undefined> {
-  const strip = el.getByRole('button', { name: /run/i }).first();
-  if (!(await strip.count())) return undefined;
+  const { strip } = await runStrip(el);
+  if (!strip) return undefined;
   await strip.click();
   await sleep(500);
   const rows = await page
@@ -373,7 +431,8 @@ async function personView(page: Page, ctx: RunContext, f: Fixtures, notes: strin
     ['P', 'Shape'],
   ] as const) {
     const el = await mustIssue(page, f[k], 'R9.19', 'person view');
-    const feats = await issueFeatures(el, f[k]);
+    const strip = await runStrip(el);
+    const feats = await issueFeatures(el, f[k], strip);
     // The element's text is read only for a failure, so a wrong element can be told apart from a missing feature.
     for (const [name, has] of Object.entries(feats))
       if (!has)
@@ -381,7 +440,7 @@ async function personView(page: Page, ctx: RunContext, f: Fixtures, notes: strin
           false,
           'R9.19',
           `fixture ${k} to offer its ${name}`,
-          `missing; element text: ${quote(await el.innerText())}`,
+          `missing${name === 'runs' ? ` (${runsMissing(strip)})` : ''}; element text: ${quote(await el.innerText())}`,
         );
     Object.assign(features, feats);
     const cur = await currentStage(el);
@@ -420,9 +479,8 @@ async function personView(page: Page, ctx: RunContext, f: Fixtures, notes: strin
   // The run strip opens the run list with GitHub run links.
   let runLinks = 0;
   for (const k of ['A', 'B', 'D', 'F', 'P'] as const) {
-    const el = issueElement(page, f[k].title);
-    const strip = el.getByRole('button', { name: /run/i }).first();
-    if (!(await strip.count())) continue;
+    const { strip } = await runStrip(issueElement(page, f[k].title));
+    if (!strip) continue;
     await strip.click();
     await sleep(500);
     const links = await page
