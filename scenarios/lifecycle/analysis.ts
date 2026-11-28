@@ -12,6 +12,8 @@ export interface Run {
   repo: string;
   name: string;
   display_title: string;
+  /** The workflow file, `.github/workflows/<file>.yml`, possibly with an `@<ref>` suffix. */
+  path?: string;
   event: string;
   status: string;
   conclusion: string | null;
