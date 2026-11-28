@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import type { Comment } from '../../scenarios/lifecycle/analysis.ts';
 import {
   briefRecord,
+  classIn,
   isFinishedRecord,
   labelAddedAt,
   labelRemovedAt,
@@ -269,4 +270,63 @@ test('the unfinished record the repair stage writes first is a record but not fi
     const r = resolutionRecord([comment(body, '2026-11-27T10:02:00Z')], PENDING_AT);
     equal(r && isFinishedRecord(r), true);
   }
+});
+
+test("Core's category line 'D, Issue correction' parses as the Issue 規格需修正 class", () => {
+  const core = `<!-- nibfin:repair -->
+**Category:** D, Issue correction
+**Reason:** the Issue names a file that does not exist.
+**Basis:** the Shape stage's failure.
+**Handling:** corrected the Issue body and removed \`pending\`.
+`;
+  const r = resolutionRecord([comment(core, '2026-11-27T10:02:00Z')], PENDING_AT);
+  equal(r?.classLabel, 'D, Issue correction');
+  equal(r?.class, 'issue-correction');
+  equal(classIn('The repair stage sorted this stop as an Issue correction.'), 'issue-correction');
+  equal(classIn('issue-corrections'), 'issue-correction');
+  equal(classIn('Issue Corrections were made.'), 'issue-correction');
+});
+
+test('every wording the Issue 規格需修正 class accepted before still matches', () => {
+  for (const text of [
+    '規格需修正',
+    'Issue 規格需修正',
+    'issue spec needs fix',
+    'issue text correction',
+    'issue body amendment',
+    'specification fix',
+    'spec correction',
+    'issue-correction',
+  ])
+    equal(classIn(text), 'issue-correction', text);
+});
+
+test('a record of another class that mentions an Issue correction keeps its own class', () => {
+  const others: [string, string][] = [
+    ['A, External temporary', 'external-temporary'],
+    ['B, Unrelated flaky test', 'unrelated-flaky-test'],
+    ["C, Nibfin's own flow error", 'nibfin-flow-error'],
+    ['E, Product decision', 'product-decision'],
+    ['F, Operations or manual action', 'operations-or-manual'],
+    ['External temporary', 'external-temporary'],
+    ['Product decision', 'product-decision'],
+    ['外部暫時性問題', 'external-temporary'],
+    ['與該 Issue 無關的偶發測試失敗', 'unrelated-flaky-test'],
+    ['Nibfin 自身的流程錯誤', 'nibfin-flow-error'],
+    ['產品決策', 'product-decision'],
+    ['維運或人為操作', 'operations-or-manual'],
+  ];
+  for (const [label, id] of others) {
+    const body = `<!-- nibfin:repair -->
+**Category:** ${label}
+**Reason:** No Issue correction is needed.
+**Handling:** none; the Issue correction route does not apply.
+`;
+    const r = resolutionRecord([comment(body, '2026-11-27T10:02:00Z')], PENDING_AT);
+    equal(r?.classLabel, label);
+    equal(r?.class, id, label);
+  }
+  equal(classIn('This is a product decision. No Issue correction is needed.'), 'product-decision');
+  equal(classIn('外部暫時性問題：GitHub 回 502，不需要 Issue correction。'), 'external-temporary');
+  equal(classIn('The test was corrected; nothing else changed.'), undefined);
 });
