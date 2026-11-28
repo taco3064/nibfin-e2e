@@ -126,7 +126,7 @@ export const RESOLUTION_CLASSES: { id: ResolutionClassId; name: string; pattern:
     id: 'issue-correction',
     name: 'Issue 規格需修正',
     pattern:
-      /規格.{0,2}修正|issue[\s-]+(spec(ification)?|text|body)[\s-]+(needs?[\s-]+)?(fix|correct|amend)\w*|spec(ification)?[\s-]+(fix|correction)|issue-correction/i,
+      /規格.{0,2}修正|issue[\s-]+(spec(ification)?|text|body)[\s-]+(needs?[\s-]+)?(fix|correct|amend)\w*|spec(ification)?[\s-]+(fix|correction)|\bissue[\s-]+corrections?\b|issue-correction/i,
   },
   { id: 'product-decision', name: '產品決策', pattern: /產品決策|product[\s-]+decision/i },
   {
