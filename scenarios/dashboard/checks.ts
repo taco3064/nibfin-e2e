@@ -1,4 +1,9 @@
 // Pure checks the Dashboard and site scenarios use. No network, no browser.
+import type { Comment } from '../lifecycle/analysis.ts';
+import { markerOf, time } from '../lifecycle/analysis.ts';
+import { PENDING_MARKER } from '../lifecycle/marks.ts';
+import { labelAddedAt, resolutionRecord } from '../lib/resolution.ts';
+import type { ResolutionRecord } from '../lib/resolution.ts';
 
 /** The Nibfin image Job containers run (Proposal R5.7); only image and event data are used, never product label keys. */
 export const NIBFIN_IMAGE = 'ghcr.io/taco3064/nibfin';
@@ -757,4 +762,171 @@ export function countNear(text: string, word: RegExp): number | undefined {
     if (b) return b.n;
   }
   return undefined;
+}
+
+// ---- Pending resolution states (Proposal R9.52–R9.56, R9.1) ----------------------
+
+/** The Dashboard's three states of an Issue with `pending` (R9.52): 自動排除中, 等你選擇, 需要你處理. */
+export type ResolutionState = 'auto' | 'choose' | 'handle';
+
+/**
+ * The state a resolution record gives (R4.49, R9.52): no record yet is 自動排除中, options
+ * are 等你選擇, next steps are 需要你處理, and a record with neither gives no state.
+ */
+export function stateOfRecord(r: ResolutionRecord | undefined): ResolutionState | undefined {
+  if (!r) return 'auto';
+  if (r.options.length > 0) return 'choose';
+  if (r.nextSteps) return 'handle';
+  return undefined;
+}
+
+/** Terms that each name exactly one state. No rule fixes the wording, so they are loose. */
+export const STATE_TERMS: Record<ResolutionState, RegExp> = {
+  auto: /自動排除中|\brepairing\b|\bauto[\s-]?repair\w*|\bresolving automatically\b|\bauto[\s-]?resolv\w*/i,
+  choose: /等你選擇|\bchoose\b|\byour choice\b|\bwaiting for your decision\b/i,
+  handle: /需要你處理|\bneeds your action\b|\baction needed\b|\bact\b/i,
+};
+
+/** The single state an element's text names, or undefined when it names none or more than one. */
+export function shownState(text: string): ResolutionState | undefined {
+  const named = (Object.keys(STATE_TERMS) as ResolutionState[]).filter((s) => STATE_TERMS[s].test(text));
+  return named.length === 1 ? named[0] : undefined;
+}
+
+export interface LabelEvent {
+  event: string;
+  created_at: string;
+  label?: { name: string };
+}
+
+/** The time of the most recent `labeled pending` event while the Issue has `pending`, else undefined. */
+export function latestPending(labels: string[], events: LabelEvent[]): number | undefined {
+  return labels.includes('pending') ? labelAddedAt(events, 'pending') : undefined;
+}
+
+/** How far before the label Nibfin may write its pending comment (nibfin-core#777 writes the comment first). */
+export const PENDING_SKEW_MS = 60_000;
+/** How far behind GitHub the Dashboard may be: R9.24 polls at most every 60 s, plus a margin. */
+export const LAG_MS = 90_000;
+
+const lastWrite = (c: Comment) => Math.max(time(c.created_at), time(c.updated_at));
+
+/**
+ * Whether the Issue's latest `pending` is Nibfin's: a `pending` comment written or updated
+ * no earlier than `PENDING_SKEW_MS` before the most recent `labeled pending` event. A
+ * harness-added `pending` (fixture D) has no such comment.
+ */
+export function nibfinPending(labels: string[], events: LabelEvent[], comments: Comment[]): boolean {
+  const at = latestPending(labels, events);
+  if (at === undefined) return false;
+  return comments.some((c) => PENDING_MARKER.test(markerOf(c.body) ?? '') && lastWrite(c) >= at - PENDING_SKEW_MS);
+}
+
+/**
+ * Why an Issue may not show 自動排除中 when read at `readAt`, or undefined when it may: it
+ * has `pause`, its latest `pending` is not Nibfin's, or a record written after that
+ * `pending` is older than the Dashboard's lag. Records from before it are ignored.
+ */
+export function autoProblem(issue: { labels: string[] }, events: LabelEvent[], comments: Comment[], readAt: number): string | undefined {
+  if (issue.labels.includes('pause')) return 'it has pause';
+  const at = latestPending(issue.labels, events);
+  if (at === undefined) return `it has no pending label with a labeled event (labels [${issue.labels.join(', ')}])`;
+  const since = new Date(at).toISOString();
+  if (!nibfinPending(issue.labels, events, comments)) return `no Nibfin pending comment was written for its pending added at ${since}`;
+  const r = resolutionRecord(comments, at);
+  if (r && r.at <= readAt - LAG_MS) return `its resolution record ${r.url} (written ${new Date(r.at).toISOString()}) is more than ${LAG_MS / 1000} s older than the read at ${new Date(readAt).toISOString()}`;
+  return undefined;
+}
+
+/** Whether an Issue may show 自動排除中 when read at `readAt` (see `autoProblem`). */
+export function autoEligible(issue: { labels: string[] }, events: LabelEvent[], comments: Comment[], readAt: number): boolean {
+  return autoProblem(issue, events, comments, readAt) === undefined;
+}
+
+/** R9.1's expected needs-intervention Issues: the held ones minus those shown as 自動排除中 and eligible (R9.52). */
+export function needsExpected<T extends { html_url: string }>(held: T[], autoShownEligible: T[]): T[] {
+  const out = new Set(autoShownEligible.map((i) => i.html_url));
+  return held.filter((i) => !out.has(i.html_url));
+}
+
+/** Text for loose comparison: no markdown emphasis or code marks, whitespace collapsed, lower case. */
+export const normalText = (t: string) =>
+  t
+    .replace(/[`*_]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+
+/** Whether `text` shows `cause`: its first 20 characters (the Dashboard may shorten the rest). */
+export function causeShown(text: string, cause: string): boolean {
+  const c = normalText(cause);
+  if (!c) return false;
+  return normalText(text).includes(c.slice(0, Math.min(20, c.length)));
+}
+
+/** The loose next-steps heading list of `scenarios/lib/resolution.ts`. */
+const NEXT_STEPS_HEADING = /後續建議|下一步|建議步驟|後續步驟|next[\s-]*steps?|follow[\s-]*up|advice/i;
+const plainLine = (line: string) =>
+  line
+    .replace(/^[\s>#*_-]+/, '')
+    .replace(/\*\*|__/g, '')
+    .replace(/^\d+\s*[.)、:：]\s*/, '')
+    .trim();
+
+/** Whether a line is a heading, and its text: a markdown heading, a wholly bold line, or a label ending in a colon. */
+function headingText(line: string): string | undefined {
+  const t = line.trim();
+  if (/^#{1,6}\s/.test(t) || /^\*\*[^*]+\*\*[:：]?$/.test(t)) return plainLine(t).replace(/[:：]$/, '').trim();
+  const m = /^([^:：]{1,30}?)\s*[:：]\s*$/.exec(plainLine(t));
+  return m ? (m[1] ?? '').trim() : undefined;
+}
+
+/** The plain lines under a record's next-steps heading (R4.46), numbering and list marks removed. */
+export function nextStepLines(body: string): string[] {
+  const out: string[] = [];
+  let inNext = false;
+  for (const line of body.replace(/<!--[\s\S]*?-->/g, '').split(/\r?\n/)) {
+    if (!line.trim() || /^\s*(```|~~~)/.test(line)) continue;
+    const h = headingText(line);
+    if (h !== undefined) {
+      inNext = NEXT_STEPS_HEADING.test(h);
+      continue;
+    }
+    const field = /^([^:：]{1,30}?)\s*[:：]\s*(.+)$/.exec(plainLine(line));
+    if (!inNext && field && NEXT_STEPS_HEADING.test(field[1] ?? '')) {
+      out.push((field[2] ?? '').trim());
+      continue;
+    }
+    if (inNext) {
+      const t = plainLine(line);
+      if (t) out.push(t);
+    }
+  }
+  return out;
+}
+
+/** An option's text without its recommendation mark, for matching what the dialog shows. */
+export const optionLabel = (text: string) =>
+  text
+    .replace(/[（(【[]\s*(建議|推薦|recommended|recommendation)\s*[)）】\]]/gi, '')
+    .replace(/\s*[-—–:：]?\s*(建議|推薦|recommended)\s*$/i, '')
+    .trim();
+
+/**
+ * The option number a dialog choice names: a leading number ("2", "Option 2", "選項 2"),
+ * else the option whose label's first 20 characters the choice shows; undefined otherwise.
+ */
+export function optionOfChoice(name: string, options: { n: number; text: string }[]): number | undefined {
+  const lead = /^\s*(?:option|選項)?\s*(\d+)\b/i.exec(name);
+  if (lead && options.some((o) => o.n === Number(lead[1]))) return Number(lead[1]);
+  return options.find((o) => causeShown(name, optionLabel(o.text)))?.n;
+}
+
+/** The option number a decision comment names: `option=N` in its marker, else a text that is only a number. */
+export function decisionOption(body: string): number | undefined {
+  const marked = /<!--\s*nibfin:[^>]*\boption\s*[=:]\s*(\d+)/i.exec(body);
+  if (marked) return Number(marked[1]);
+  const text = body.replace(/<!--[\s\S]*?-->/g, '').trim();
+  const only = /^(?:option|選項)?\s*(\d+)$/i.exec(text);
+  return only ? Number(only[1]) : undefined;
 }

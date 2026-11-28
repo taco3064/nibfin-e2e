@@ -176,7 +176,7 @@ async function planningProgress(page: Page, ctx: RunContext, notes: string[]) {
 }
 
 /** The read-only repository must be below triage for the account (and have an open Issue); otherwise a precondition, not a product failure. */
-async function readOnlyPrecondition(ctx: RunContext, opts: { openIssue?: boolean } = {}): Promise<void> {
+export async function readOnlyPrecondition(ctx: RunContext, opts: { openIssue?: boolean } = {}): Promise<void> {
   const { data } = await ctx.github.rest<{ permissions?: Record<string, boolean>; open_issues_count: number }>('GET', `/repos/${READ_ONLY_REPO}`);
   const p = data.permissions;
   if (!p || p.admin || p.maintain || p.push || p.triage) throw new Error(`precondition: GitHub does not report the account below triage on ${READ_ONLY_REPO} (permissions ${JSON.stringify(p)}); nothing is asserted about the product`);
