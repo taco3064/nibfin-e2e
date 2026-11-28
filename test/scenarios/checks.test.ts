@@ -1,6 +1,9 @@
 import { deepEqual, equal, ok, throws } from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  ALREADY_LOGGED_IN,
+  LOGIN_START,
+  noRelayedUrlObserved,
   classifyUpdateMarker,
   commandInputs,
   commandSchemaFrom,
@@ -582,4 +585,70 @@ test('pauseMarkers and pausePreconditionProblem: Pause control labels are not ma
     pausePreconditionProblem({ present: true, text: 'D Shape Deliver Done', pauseControls: 0, resumeControls: 0 }),
     'no Pause or Resume control',
   );
+});
+
+test('the login start matcher takes start, log in, continue, next, preview or confirm as a leading whole word', () => {
+  for (const name of ['Start', 'Log in', 'Login', 'Continue', 'Start login', 'Next', 'Preview', 'Confirm'])
+    ok(LOGIN_START.test(name), name);
+  for (const name of ['Close', 'Cancel', 'Cancel login', 'Restart', 'Starting', 'Logout']) ok(!LOGIN_START.test(name), name);
+});
+
+test('an existing login is recognised only with the word already', () => {
+  for (const t of ['Claude is already logged in', 'Already signed in as you', 'already  authenticated'])
+    ok(ALREADY_LOGGED_IN.test(t), t);
+  for (const t of ['Claude is not logged in', 'Logged in successfully', 'Sign in to continue'])
+    ok(!ALREADY_LOGGED_IN.test(t), t);
+});
+
+test('the no-relayed-URL reason names each dialog step and what the dialog showed', () => {
+  const base = {
+    provider: { kind: 'set' } as const,
+    start: { kind: 'clicked', name: 'Start login' } as const,
+    waitedMs: 180_000,
+    buttons: ['Cancel'],
+    fields: [{ role: 'combobox', name: 'Provider' }],
+    text: 'Waiting for the CLI…\n  still   waiting ',
+  };
+  equal(
+    noRelayedUrlObserved(base),
+    'no https URL after 180 s; provider: set to claude; start: clicked "Start login"; dialog buttons: "Cancel"; ' +
+      'dialog fields: combobox "Provider"; dialog text ends: "Waiting for the CLI… still waiting"',
+  );
+  const absent = noRelayedUrlObserved({ ...base, provider: { kind: 'absent' }, buttons: [], fields: undefined });
+  ok(absent.includes('; provider: no provider field;'), absent);
+  ok(absent.includes('; dialog buttons: none; dialog fields: could not be read;'), absent);
+  const failed = noRelayedUrlObserved({
+    ...base,
+    provider: { kind: 'failed', error: 'locator.selectOption: Timeout 500ms exceeded.' },
+  });
+  ok(failed.includes('; provider: could not be set: locator.selectOption: Timeout 500ms exceeded.;'), failed);
+  equal(
+    noRelayedUrlObserved({ ...base, start: { kind: 'not-needed', why: 'url' } }).split('; ')[2],
+    'start: not needed (the dialog showed a URL)',
+  );
+  equal(
+    noRelayedUrlObserved({ ...base, start: { kind: 'not-needed', why: 'code field' } }).split('; ')[2],
+    'start: not needed (the dialog showed a code field)',
+  );
+  const none = noRelayedUrlObserved({ ...base, start: { kind: 'none', waitedMs: 15_000, shown: ['Close', 'Help'] } });
+  ok(none.includes(`; start: no ${LOGIN_START} control appeared within 15 s; buttons shown: "Close", "Help";`), none);
+  const unread = noRelayedUrlObserved({ ...base, start: { kind: 'none', waitedMs: 1_250, shown: undefined } });
+  ok(unread.includes('within 1.3 s; the buttons shown could not be read;'), unread);
+  ok(!none.includes('existing login'), none);
+});
+
+test('the no-relayed-URL reason quotes a line reporting an existing login and only the end of the text', () => {
+  const m = noRelayedUrlObserved({
+    provider: { kind: 'absent' },
+    start: { kind: 'none', waitedMs: 15_000, shown: [] },
+    waitedMs: 180_000,
+    buttons: [],
+    fields: [],
+    text: `${'x'.repeat(400)}\nClaude: already   logged in (setup token)\nClose`,
+  });
+  ok(m.includes('; start: no /^(start|log ?in|continue|next|preview|confirm)\\b/i control appeared within 15 s; no buttons shown;'), m);
+  ok(m.includes('; the dialog reports an existing login: "Claude: already logged in (setup token)";'), m);
+  const tail = /dialog text ends: "([^"]*)"$/.exec(m)?.[1] ?? '';
+  equal(tail.length, 300);
+  ok(tail.endsWith('Claude: already logged in (setup token) Close'), tail);
 });

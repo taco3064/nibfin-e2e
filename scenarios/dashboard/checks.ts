@@ -416,19 +416,102 @@ const SHOWN_NAME_MAX = 40;
  * shown" for an empty list, or "the buttons shown could not be read" when `shown` is undefined.
  */
 export function missingButtonMessage(rule: string, name: RegExp, where: string, shown: string[] | undefined): string {
-  const head = `${rule}: expected a ${name} button in ${where}; observed none`;
-  if (shown === undefined) return `${head}; the buttons shown could not be read`;
-  if (!shown.length) return `${head}; no buttons shown`;
+  return `${rule}: expected a ${name} button in ${where}; observed none; ${shownButtons(shown)}`;
+}
+
+/** Names quoted for a reason: whitespace-collapsed, each trimmed to 40 characters, at most 15, then "… and N more". */
+function quotedNames(names: string[]): string {
   const trim = (s: string) => {
     const t = s.replace(/\s+/g, ' ').trim();
     return t.length > SHOWN_NAME_MAX ? `${t.slice(0, SHOWN_NAME_MAX - 1)}…` : t;
   };
-  const listed = shown
+  const listed = names
     .slice(0, SHOWN_MAX)
     .map((s) => `"${trim(s)}"`)
     .join(', ');
-  const more = shown.length > SHOWN_MAX ? ` … and ${shown.length - SHOWN_MAX} more` : '';
-  return `${head}; buttons shown: ${listed}${more}`;
+  const more = names.length > SHOWN_MAX ? ` … and ${names.length - SHOWN_MAX} more` : '';
+  return `${listed}${more}`;
+}
+
+/** The buttons a scope showed, as a missing-button reason states them. */
+function shownButtons(shown: string[] | undefined): string {
+  if (shown === undefined) return 'the buttons shown could not be read';
+  if (!shown.length) return 'no buttons shown';
+  return `buttons shown: ${quotedNames(shown)}`;
+}
+
+// ---- Login relay ----------------------------------------------------------------
+
+/**
+ * The control that starts or continues a Dashboard login (Proposal R6.16). Anchored at
+ * the start of the name and ending on a word boundary, so "Close", "Cancel",
+ * "Cancel login" and "Restart" never match.
+ */
+export const LOGIN_START = /^(start|log ?in|continue|next|preview|confirm)\b/i;
+
+/** Dialog text that reports an existing login; it needs the word "already", so "not logged in" does not match. */
+export const ALREADY_LOGGED_IN = /\balready\s+(logged|signed)\s+in\b|\balready\s+authenticated\b/i;
+
+/** What the login dialog's provider step did: set to claude, no provider field, or the error setting it raised. */
+export type ProviderStep = { kind: 'set' } | { kind: 'absent' } | { kind: 'failed'; error: string };
+
+/**
+ * What the login dialog's start step did: the control it clicked, no click because the
+ * dialog already showed a URL or a code field, or no start control within the wait
+ * together with the buttons shown (undefined when they could not be read).
+ */
+export type StartStep =
+  | { kind: 'clicked'; name: string }
+  | { kind: 'not-needed'; why: 'url' | 'code field' }
+  | { kind: 'none'; waitedMs: number; shown: string[] | undefined };
+
+const LOGGED_IN_LINE_MAX = 120;
+const DIALOG_TEXT_TAIL = 300;
+
+const seconds = (ms: number) => `${Math.round(ms / 100) / 10} s`;
+
+/**
+ * The observed part of the R6.16 failure when the login dialog relayed no https URL:
+ * how long it waited, the provider and start steps' outcomes, the line reporting an
+ * existing login if the text has one, the dialog's buttons and fields (undefined when
+ * they could not be read) and the end of its text. It does not redact; the scenario's
+ * failure handling redacts every reason.
+ */
+export function noRelayedUrlObserved(o: {
+  provider: ProviderStep;
+  start: StartStep;
+  waitedMs: number;
+  buttons: string[] | undefined;
+  fields: FormField[] | undefined;
+  text: string;
+}): string {
+  const parts = [`no https URL after ${seconds(o.waitedMs)}`];
+  const p = o.provider;
+  parts.push(
+    `provider: ${p.kind === 'set' ? 'set to claude' : p.kind === 'absent' ? 'no provider field' : `could not be set: ${p.error}`}`,
+  );
+  const s = o.start;
+  parts.push(
+    `start: ${
+      s.kind === 'clicked'
+        ? `clicked "${s.name}"`
+        : s.kind === 'not-needed'
+          ? `not needed (the dialog showed ${s.why === 'url' ? 'a URL' : 'a code field'})`
+          : `no ${LOGIN_START} control appeared within ${seconds(s.waitedMs)}; ${shownButtons(s.shown)}`
+    }`,
+  );
+  const line = o.text.split('\n').find((l) => ALREADY_LOGGED_IN.test(l));
+  if (line !== undefined) {
+    const t = line.replace(/\s+/g, ' ').trim();
+    const quoted = t.length > LOGGED_IN_LINE_MAX ? `${t.slice(0, LOGGED_IN_LINE_MAX - 1)}…` : t;
+    parts.push(`the dialog reports an existing login: "${quoted}"`);
+  }
+  const listed = <T>(xs: T[] | undefined, show: (x: T[]) => string) =>
+    xs === undefined ? 'could not be read' : xs.length ? show(xs) : 'none';
+  parts.push(`dialog buttons: ${listed(o.buttons, quotedNames)}`);
+  parts.push(`dialog fields: ${listed(o.fields, (fs) => fs.map((f) => `${f.role} "${f.name}"`).join(', '))}`);
+  parts.push(`dialog text ends: "${o.text.replace(/\s+/g, ' ').trim().slice(-DIALOG_TEXT_TAIL)}"`);
+  return parts.join('; ');
 }
 
 // ---- Live data ------------------------------------------------------------------
