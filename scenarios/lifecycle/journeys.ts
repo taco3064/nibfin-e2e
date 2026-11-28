@@ -33,6 +33,13 @@ const DIRECT_SPAN_MS = 60_000;
  * rather than through the observer's snapshot and its cached job reads, which may miss a
  * short job (Issue #544). The wait fails at once when such a job completed before any
  * read saw it running, and otherwise ends on `stageGone`, the stall limit or the deadline.
+ *
+ * `since` is passed to `stageGone` (its default applies when absent). `whileRunning` is a
+ * further condition checked on each direct read that sees the job `in_progress`: the job
+ * is returned only when the condition holds, and is read again with it every
+ * `DIRECT_READ_MS` while it does not. If the job then completes before a read saw the
+ * condition hold, the wait fails at once with the job's times and the condition's last
+ * read (Issue #581).
  */
 export async function stageJobRunning(
   k: Kit,
@@ -43,6 +50,13 @@ export async function stageJobRunning(
     deadlineMs: number;
     show?: (s: Snapshot) => Promise<string>;
     /** The Issue's name in the reason (default `P`). */ who?: string;
+    /** Only the stage's jobs created at or after this epoch ms count for `stageGone`. */ since?: number;
+    whileRunning?: {
+      /** What the wait still needs, as it reads after "before" in the reason. */
+      what: string;
+      /** Whether the condition holds now; `last` describes the read that found it unmet. */
+      check: (j: Job & { stage: Stage; run: Run }) => Promise<{ ok: true } | { ok: false; last: string }>;
+    };
   },
 ): Promise<Job & { stage: Stage; run: Run }> {
   const pause = k.sleep ?? sleep;
@@ -51,25 +65,38 @@ export async function stageJobRunning(
   const finished = new Set<number>();
   /** The previous direct read of each job: when, and its status then. */
   const lastRead = new Map<number, { at: number; status: string }>();
+  /** Jobs seen running while `whileRunning` did not hold, with the condition's last read. */
+  const unmet = new Map<number, string>();
   let missed: string | undefined;
   const read = async (run: Run & { stage: Stage }): Promise<(Job & { stage: Stage; run: Run }) | undefined> => {
     const at = k.now();
     const jobs = await k.gh.list<Job>(`/repos/${k.exec}/actions/runs/${run.id}/jobs?filter=latest`, 'jobs');
     const own = jobs.filter(selfHosted);
     const live = own.find((j) => j.status === 'in_progress');
-    if (live) return { ...live, stage, run };
+    if (live) {
+      const j = { ...live, stage, run };
+      if (!o.whileRunning) return j;
+      const r = await o.whileRunning.check(j);
+      if (r.ok) return j;
+      unmet.set(live.id, r.last);
+      return undefined;
+    }
     const done = own.find(
       (j) => j.status === 'completed' && j.conclusion !== 'cancelled' && j.conclusion !== 'skipped',
     );
     if (done) {
+      const head = `${o.who ?? 'P'}'s ${stage} job ${done.id} (run ${run.id}) completed (${String(done.conclusion)})`;
+      const times = `started ${String(done.started_at)}, completed ${String(done.completed_at)}`;
+      const last = unmet.get(done.id);
+      if (o.whileRunning && last !== undefined) {
+        missed = redact(`${head} after the wait saw it running, before ${o.whileRunning.what}: ${times}; ${last}`, k.ctx.secretValues());
+        return undefined;
+      }
       const prev = lastRead.get(done.id);
       const seen = prev
         ? `the wait last read it at ${iso(prev.at)} (${prev.status})`
         : `on its first read at ${iso(at)}`;
-      missed = redact(
-        `${o.who ?? 'P'}'s ${stage} job ${done.id} (run ${run.id}) completed (${String(done.conclusion)}) before the wait saw it running: started ${String(done.started_at)}, completed ${String(done.completed_at)}; ${seen}`,
-        k.ctx.secretValues(),
-      );
+      missed = redact(`${head} before the wait saw it running: ${times}; ${seen}`, k.ctx.secretValues());
       return undefined;
     }
     for (const j of own) lastRead.set(j.id, { at, status: j.status });
@@ -91,7 +118,7 @@ export async function stageJobRunning(
     }
   };
   return k.obs.until(o.desc, fn, o.deadlineMs, o.show, {
-    gonePast: firstOf(async () => missed, k.stageGone(k.exec, n, stage)),
+    gonePast: firstOf(async () => missed, k.stageGone(k.exec, n, stage, { since: o.since })),
   });
 }
 

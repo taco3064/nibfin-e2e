@@ -5,6 +5,7 @@ import { deepEqual, equal, rejects } from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Job } from '../../scenarios/lifecycle/analysis.ts';
 import { stageJobRunning } from '../../scenarios/lifecycle/journeys.ts';
+import { deliverWithCommits } from '../../scenarios/lifecycle/phase1.ts';
 import { DEADLINE, Kit, STALL } from '../../scenarios/lifecycle/kit.ts';
 import { clock, context, routes } from './fake.ts';
 
@@ -183,3 +184,83 @@ test("a deliver job that completed before any read saw it running ends A's deliv
   equal(c.now() - T0 < 2 * 60_000, true, 'it ended on the read that saw it completed');
   equal(c.now() - T0 < STALL, true);
 });
+
+// Step 3 of interrupted-deliver reads I's deliver jobs directly too, and needs a commit on
+// I's branch while the job runs (Issue #581, Proposal R3.41, R1.14).
+const compare = 'GET /repos/o/exec/compare/main...nibfin/issue-6';
+const branchRead = 'GET /repos/o/exec/branches/nibfin/issue-6';
+
+test("a deliver job in progress for less than one snapshot interval with a commit on its branch is found by I's step 3", async () => {
+  const c = clock(T0);
+  const f = routes({
+    ...base,
+    'GET /repos/o/exec/actions/runs': {
+      workflow_runs: [run(5, 'shape', 'completed', iso(0)), run(9, 'deliver', 'in_progress', iso(30_000))],
+    },
+    'GET /repos/o/exec/actions/runs/9/jobs': () => ({ jobs: [timedJob(c.now, 70_000, 100_000, { id: 21, run: 9 })] }),
+    [compare]: () => (c.now() - T0 < 80_000 ? { status: 404, data: { message: 'Not Found' } } : { ahead_by: 1 }),
+    [branchRead]: { commit: { sha: 'h-1' } },
+    'GET /repos/o/exec/issues': [issue],
+  });
+  const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
+  const { oldJob, h1 } = await deliverWithCommits(k, 6, { since: T0, show: k.show('o/exec', 6) });
+  deepEqual([oldJob.id, oldJob.status, oldJob.stage, oldJob.run.id], [21, 'in_progress', 'deliver', 9]);
+  equal(h1, 'h-1');
+  equal(c.now() - T0 < 100_000, true, 'found while it was running');
+  equal(f.calls.filter((x) => x.startsWith(compare)).length > 1, true, 'the branch is read again while the job runs');
+});
+
+test("a deliver job that completed before any read saw it running ends I's step 3 at once with its times", async () => {
+  const c = clock(T0);
+  const runs = () => [
+    run(9, 'deliver', c.now() - T0 < 67_000 ? 'in_progress' : 'completed', iso(30_000)),
+    ...(c.now() - T0 >= 66_000 ? [run(10, 'review', 'in_progress', iso(66_000))] : []),
+  ];
+  const f = routes({
+    ...base,
+    'GET /repos/o/exec/actions/runs': () => ({ workflow_runs: runs() }),
+    'GET /repos/o/exec/actions/runs/9/jobs': () => ({ jobs: [timedJob(c.now, 62_000, 65_000, { id: 21, run: 9 })] }),
+    'GET /repos/o/exec/actions/runs/10/jobs': { jobs: [] },
+    [compare]: { ahead_by: 1 },
+    [branchRead]: { commit: { sha: 'h-1' } },
+    'GET /repos/o/exec/issues': [issue],
+  });
+  const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
+  await rejects(
+    deliverWithCommits(k, 6, { since: T0, show: k.show('o/exec', 6) }),
+    new RegExp(
+      `^Error: gave up waiting for I's deliver job to run with commits on its branch: I's deliver job 21 \\(run 9\\) completed \\(success\\) before the wait saw it running: started ${iso(62_000)}, completed ${iso(65_000)}; the wait last read it at ${iso(60_000)} \\(queued\\); observed: o/exec#6 open`,
+    ),
+  );
+  equal(c.now() - T0 < 2 * 60_000, true, 'it ended on the read that saw it completed');
+  equal(c.now() - T0 < STALL, true);
+});
+
+for (const [name, answer, last] of [
+  ['0 commits ahead', { ahead_by: 0 }, '0 commits ahead of main'],
+  ['missing', { status: 404, data: { message: 'Not Found' } }, 'not found \\(404\\)'],
+] as const) {
+  test(`a deliver job seen running that completes while its branch is ${name} ends I's step 3 at once with the last branch read`, async () => {
+    const c = clock(T0);
+    const f = routes({
+      ...base,
+      'GET /repos/o/exec/actions/runs': () => ({
+        workflow_runs: [run(9, 'deliver', c.now() - T0 < 120_000 ? 'in_progress' : 'completed', iso(30_000))],
+      }),
+      'GET /repos/o/exec/actions/runs/9/jobs': () => ({ jobs: [timedJob(c.now, 62_000, 120_000, { id: 21, run: 9 })] }),
+      [compare]: answer,
+      [branchRead]: { commit: { sha: 'h-1' } },
+      'GET /repos/o/exec/issues': [issue],
+    });
+    const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
+    await rejects(
+      deliverWithCommits(k, 6, { since: T0, show: k.show('o/exec', 6) }),
+      new RegExp(
+        `^Error: gave up waiting for I's deliver job to run with commits on its branch: I's deliver job 21 \\(run 9\\) completed \\(success\\) after the wait saw it running, before a read saw a commit on its branch: started ${iso(62_000)}, completed ${iso(120_000)}; the branch was last read at ${iso(110_000)}: ${last}; observed: o/exec#6 open`,
+      ),
+    );
+    equal(c.now() - T0 < 3 * 60_000, true, 'it ended on the read that saw it completed');
+    equal(c.now() - T0 < STALL, true);
+    equal(f.calls.some((x) => x.startsWith(branchRead)), false, 'no branch head is read without a commit');
+  });
+}

@@ -21,6 +21,7 @@ import {
 import type { Comment, Issue, Job, Run, Stage } from './analysis.ts';
 import { DEADLINE, changeRequest, finishAt, hostedRunProblems, stageSeen, lifecycle, message, redact } from './kit.ts';
 import type { Kit } from './kit.ts';
+import { stageJobRunning } from './journeys.ts';
 import { AWAITS_REVIEW, RELOGIN, SHAPE_MARKER } from './marks.ts';
 import type { Snapshot } from './observe.ts';
 
@@ -252,6 +253,44 @@ async function dispatched(
 }
 
 /**
+ * Waits for Issue `n`'s deliver job to be `in_progress` while `nibfin/issue-<n>` is at
+ * least one commit ahead of `main`, and returns that job with the branch head read then.
+ * The jobs are read directly, so a short deliver job is still seen, and the branch is
+ * read again on each read while the job runs without a commit. The wait fails at once
+ * when the job completed before a read saw it running, or completed after one did but
+ * before a read saw a commit (Issue #581).
+ */
+export async function deliverWithCommits(
+  k: Kit,
+  n: number,
+  o: { since: number; show?: (s: Snapshot) => Promise<string> },
+): Promise<{ oldJob: Job & { stage: Stage; run: Run }; h1: string }> {
+  const branch = `nibfin/issue-${n}`;
+  let h1: string | undefined;
+  const oldJob = await stageJobRunning(k, n, 'deliver', {
+    desc: "I's deliver job to run with commits on its branch",
+    deadlineMs: DEADLINE.stage,
+    show: o.show,
+    who: 'I',
+    since: o.since,
+    whileRunning: {
+      what: 'a read saw a commit on its branch',
+      check: async () => {
+        const at = new Date(k.now()).toISOString();
+        const cmp = await k.gh.rest<{ ahead_by: number }>('GET', `/repos/${k.exec}/compare/main...${branch}`, undefined, [404]);
+        if (cmp.status === 404) return { ok: false, last: `the branch was last read at ${at}: not found (404)` };
+        if (cmp.data.ahead_by < 1) return { ok: false, last: `the branch was last read at ${at}: ${cmp.data.ahead_by} commits ahead of main` };
+        const { data } = await k.gh.rest<{ commit: { sha: string } }>('GET', `/repos/${k.exec}/branches/${branch}`);
+        h1 = data.commit.sha;
+        return { ok: true };
+      },
+    },
+  });
+  if (h1 === undefined) throw new Error(`I's deliver job ${oldJob.id} was returned without a branch head`);
+  return { oldJob, h1 };
+}
+
+/**
  * Why I's deliver job and I2's shape job can no longer hold both Runners at once: they
  * cannot cover the registered Runners, ran on the same one, I's job completed before
  * I2's started, or I2's job completed before I's started. `oldJob` is `undefined` while
@@ -378,25 +417,8 @@ export const interruptedDeliver: Scenario = lifecycle({
       const n3 = await file('i3', 'Add sign', changeRequest(k.slug('i3'), 'sign', 'returns -1, 0 or 1 for the sign of its argument'));
 
       // 3: I's Deliver runs and has pushed to its branch. It runs after step 4: I2 was filed when I got shaped or its deliver run appeared.
-      const { oldJob, h1 } = await k.obs.until(
-        "I's deliver job to run with commits on its branch",
-        async (s) => {
-          const j = (await k.agentJobs(s, exec, n, ['deliver'])).find((x) => x.status === 'in_progress');
-          if (!j) return undefined;
-          const cmp = await k.gh.rest<{ ahead_by: number }>(
-            'GET',
-            `/repos/${exec}/compare/main...${branch}`,
-            undefined,
-            [404],
-          );
-          if (cmp.status === 404 || cmp.data.ahead_by < 1) return undefined;
-          const { data } = await k.gh.rest<{ commit: { sha: string } }>('GET', `/repos/${exec}/branches/${branch}`);
-          return { oldJob: j, h1: data.commit.sha };
-        },
-        DEADLINE.stage,
-        show,
-        { gonePast: iGone },
-      );
+      // I's deliver jobs are read directly, so a short Deliver is still seen, and a job that ends before a read saw it running with a commit ends the wait at once (Issue #581).
+      const { oldJob, h1 } = await deliverWithCommits(k, n, { since: iFiledAt - 60_000, show });
 
       // 5: I3 is dispatched while the member is online; its job queues (R4.23). I2 may be in Shape or already in Deliver.
       const d3 = await k.obs.until(
