@@ -23,6 +23,8 @@ export interface HostServices {
   /** GitHub REST as the collaborator account (`E2E_PEER_GITHUB_TOKEN`): its own SSH keys and the `review-events` PR reviews. */
   peerGithub: GitHub;
   peerToken(): string;
+  /** The harness log (stderr): one line per message, never a credential. */
+  log(message: string): void;
   /** Set by the `collaborator` step once the peer user is ready. */
   peer?: PeerHandle;
 }
@@ -54,5 +56,6 @@ export function createServices(
     sandboxToken,
     peerGithub: createGitHub(peerToken, fetch, undefined, { log }, { log }),
     peerToken,
+    log,
   };
 }

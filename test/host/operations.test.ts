@@ -22,6 +22,7 @@ function services(
     start: () => fakeRunning(),
     peerGithub: createGitHub(() => 'peer-token', fetchFn),
     peerToken: () => 'peer-token',
+    log: () => {},
   };
 }
 

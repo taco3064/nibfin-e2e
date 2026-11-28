@@ -1,9 +1,10 @@
 import { join } from 'node:path';
 import { NEVER } from '../abort.ts';
 import { SANDBOX } from './config.ts';
-import { childEnv } from './exec.ts';
+import { childEnv, deferredRunning } from './exec.ts';
 import { readClaudeSettings } from './login.ts';
 import { createHostOperations } from './operations.ts';
+import { waitForCoreLimit } from './ratelimit.ts';
 import { setVisibility } from './sandbox.ts';
 import type { HostServices } from './services.ts';
 import type { HostContext } from '../types.ts';
@@ -13,19 +14,27 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /** The host as scenarios see it. */
 export function createHostContext(host: HostServices): HostContext {
   const executionDir = join(host.repoRoot, '.e2e-work', 'sandbox');
+  // gh nibfin spends the same account's REST limit as the harness, so each command first
+  // waits for the reset when little of it is left. A failed read only logs and goes on.
+  const limitWait = (args: string[]) =>
+    waitForCoreLimit(host.github, { log: host.log, what: ['gh nibfin', ...args.slice(0, 2)].join(' ') });
   return {
     ...createHostOperations(host),
     sandbox: { ...SANDBOX },
     signal: NEVER,
     executionDir,
-    ghNibfin: (args, options = {}) =>
-      host.exec(['gh', 'nibfin', ...args], { ...options, cwd: executionDir, ghToken: host.sandboxToken() }),
+    ghNibfin: async (args, options = {}) => {
+      await limitWait(args);
+      return host.exec(['gh', 'nibfin', ...args], { ...options, cwd: executionDir, ghToken: host.sandboxToken() });
+    },
     gh: (args, options = {}) => host.exec(['gh', ...args], { ...options, ghToken: host.sandboxToken() }),
     workPath: (...parts) => join(host.workDir(), ...parts),
     claudeSettings: async () => (await readClaudeSettings(host.exec)).settings,
     github: host.github,
     startGhNibfin: (args, options = {}) =>
-      host.start(['gh', 'nibfin', ...args], { cwd: executionDir, ghToken: host.sandboxToken(), path: options.path }),
+      deferredRunning(limitWait(args), () =>
+        host.start(['gh', 'nibfin', ...args], { cwd: executionDir, ghToken: host.sandboxToken(), path: options.path }),
+      ),
     start: (argv) => host.start(argv),
     exec: (argv, options = {}) => host.exec(argv, { cwd: options.cwd, input: options.input, env: options.env }),
     workDir: () => host.workDir(),

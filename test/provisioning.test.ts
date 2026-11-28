@@ -52,6 +52,7 @@ function harness(opts: { exec?: Exec; env?: Record<string, string>; fetch?: type
     sandboxToken,
     peerGithub: createGitHub(() => requireEnv(env, 'E2E_PEER_GITHUB_TOKEN'), fake.fetch),
     peerToken: () => requireEnv(env, 'E2E_PEER_GITHUB_TOKEN'),
+    log: () => {},
   };
   const steps = new Map(createProvisioning(services).map((s) => [s.id, s]));
   const facts = new Map<string, Record<string, unknown> | undefined>();

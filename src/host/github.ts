@@ -93,8 +93,15 @@ function rootCause(error: unknown): { code?: string; message?: string } {
 const isAbort = (error: unknown) =>
   error instanceof Object && ['AbortError', 'TimeoutError'].includes((error as { name?: unknown }).name as string);
 
-const DEFAULT_MAX_WAIT_MS = 65 * 60_000;
-const MINUTE_MS = 60_000;
+/** The most one rate-limit wait may last: one full hourly window plus slack. */
+export const DEFAULT_MAX_WAIT_MS = 65 * 60_000;
+/** The wait for a secondary limit, or for a reset GitHub did not state: one minute. */
+export const MINUTE_MS = 60_000;
+
+/** The wait until a rate limit resets at `resetSeconds` (epoch seconds), plus one second of slack. */
+export function resetDelay(resetSeconds: number, now: number): number {
+  return Math.max(0, resetSeconds * 1000 - now) + 1000;
+}
 
 /**
  * How long GitHub asks a rate-limited response to wait, in GitHub's documented order:
@@ -115,7 +122,7 @@ function rateLimitDelay(
   if (headers.get('x-ratelimit-remaining')?.trim() === '0') {
     const reset = headers.get('x-ratelimit-reset')?.trim();
     if (reset === undefined || !/^\d+$/.test(reset)) return MINUTE_MS;
-    return Math.max(0, Number(reset) * 1000 - now) + 1000;
+    return resetDelay(Number(reset), now);
   }
   const message = (data as { message?: unknown } | undefined)?.message;
   if (typeof message === 'string' && /secondary rate limit/i.test(message)) return MINUTE_MS * 2 ** secondaryTries;

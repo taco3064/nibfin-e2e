@@ -238,6 +238,7 @@ function services(
     peerGithub: peer.gh,
     peerToken: () => 'peer-secret',
     start: () => fakeRunning(),
+    log: () => {},
   };
   return { host, calls, peer, sandbox };
 }
