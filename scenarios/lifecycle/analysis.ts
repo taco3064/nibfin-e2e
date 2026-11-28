@@ -295,16 +295,73 @@ export function concurrentPair(windows: Window[]): [Window, Window] | undefined 
 }
 
 /** Pairs of windows of one Issue that overlap. */
-export function sameIssueOverlaps(windows: Window[]): [Window, Window][] {
-  const out: [Window, Window][] = [];
+export function sameIssueOverlaps<W extends Window>(windows: W[]): [W, W][] {
+  const out: [W, W][] = [];
   for (let i = 0; i < windows.length; i++) {
     for (let j = i + 1; j < windows.length; j++) {
-      const a = windows[i] as Window;
-      const b = windows[j] as Window;
+      const a = windows[i] as W;
+      const b = windows[j] as W;
       if (a.issue === b.issue && overlap(a, b)) out.push([a, b]);
     }
   }
   return out;
+}
+
+/**
+ * A job's window with the job it came from: `reread` when the job was read again by id
+ * because its run job list showed it unfinished, and `readAt` (the clock at that read)
+ * when GitHub still showed it unfinished then.
+ */
+export type ReadWindow = Window & { job: Job; reread: boolean; readAt?: number };
+
+/**
+ * Windows of one Issue's jobs, judged from GitHub's own times. A run job list can be
+ * read before a job's completion shows up, and `jobWindow` ends such a job at
+ * `Infinity`, so every job listed without `completed_at` (queued ones included, which may
+ * have started since) is read again by id once. A job still unfinished on that read ends
+ * at the read time (never before its start) instead of `Infinity`. A failed read is not
+ * caught, so its GitHub error stays the cause.
+ */
+export async function rereadWindows(
+  jobs: (Job & { stage: Stage })[],
+  issue: string,
+  read: (id: number) => Promise<Job>,
+  now: () => number,
+): Promise<ReadWindow[]> {
+  const out: ReadWindow[] = [];
+  for (const listed of jobs) {
+    if (listed.completed_at) {
+      const w = jobWindow(listed, issue, listed.stage);
+      if (w) out.push({ ...w, job: listed, reread: false });
+      continue;
+    }
+    const job = await read(listed.id);
+    const w = jobWindow(job, issue, listed.stage);
+    if (!w) continue;
+    if (job.completed_at) {
+      out.push({ ...w, job, reread: true });
+      continue;
+    }
+    const readAt = now();
+    out.push({ ...w, end: Math.max(readAt, w.start), job, reread: true, readAt });
+  }
+  return out;
+}
+
+/** Stage, job, run, status and GitHub's times of a window's job, and where its times were read. */
+export function describeReadWindow(w: ReadWindow): string {
+  const { job } = w;
+  const st = `${job.status}${job.conclusion ? `/${job.conclusion}` : ''}`;
+  const end = job.completed_at
+    ? `completed_at ${job.completed_at}`
+    : `running as of ${w.readAt === undefined ? 'an unknown time' : new Date(w.readAt).toISOString()}`;
+  const from = w.reread ? 'read again by job id' : 'from the run job list';
+  return `${w.stage} job ${job.id} (run ${job.run_id}) ${st}, started_at ${String(job.started_at)}, ${end}, ${from}`;
+}
+
+/** The R4.25/R4.36 failure for two overlapping windows of one Issue: both jobs' times and the next step. */
+export function sameIssueOverlapMessage(a: ReadWindow, b: ReadWindow): string {
+  return `${a.issue}: ${describeReadWindow(a)}; and ${describeReadWindow(b)}; overlapped. Compare both runs on GitHub: if GitHub's times overlap, the Issue's concurrency group did not hold (file a request)`;
 }
 
 const LOG_LINE = /^\uFEFF?(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z) ?(.*)$/;
