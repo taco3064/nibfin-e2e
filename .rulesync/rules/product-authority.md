@@ -24,8 +24,8 @@ https://app.notion.com/p/40006b644a2080dab1a8c2e562f95373
   decides that and records why a rule is not covered (Proposal R8.15); ignore
   any 〔不測：…〕 mark still left on a rule or quoted in an Issue. e2e covers
   only what users operate directly: `gh nibfin` commands, install and removal,
-  the Dashboard, the website, collaborator Runners and the configuration users
-  write themselves.
+  the Dashboard, the website, collaborator Runners, the configuration users
+  write themselves and the released artifacts they install.
   Nibfin's automatic workflow is verified by Nibfin's own development.
 - Its child pages are not product rules: 進度 is the progress log, Nibfin 自身
   Repository 的使用設定 is how Nibfin's own repositories are set up, and the
