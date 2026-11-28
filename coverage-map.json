@@ -142,7 +142,7 @@
   { "id": "R4.48", "platforms": ["linux"], "scenarios": ["resolution-spec-fix"] },
   { "id": "R4.49", "platforms": ["linux"], "scenarios": ["failure-pending"] },
   { "id": "R4.50", "notE2e": "沒有公開方式讓排除階段本身失敗，由 core 單元測試確保" },
-  { "id": "R4.51", "platforms": ["linux"], "scenarios": ["resolution-decision"] },
+  { "id": "R4.51", "platforms": ["linux"], "scenarios": ["resolution-decision", "resolution-decision-words"] },
   { "id": "R4.52", "platforms": ["linux"], "scenarios": ["failure-pending"] },
   { "id": "R5.2", "platforms": ["linux"], "scenarios": ["init-files"] },
   { "id": "R5.3", "platforms": ["linux"], "scenarios": ["init-files"] },
