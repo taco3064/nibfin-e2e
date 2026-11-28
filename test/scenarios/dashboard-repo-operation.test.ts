@@ -20,11 +20,13 @@ let skipped = '';
 /**
  * Launches Chrome the way `openPage` does: the Chrome channel, then `which google-chrome`.
  * Its own profile directory, because test files run in parallel and a profile admits one browser.
+ * The directory name is kept short: Chrome puts its singleton socket under `<base>/tmp/`, and a
+ * Unix socket path longer than 107 bytes (as `test-browser-repo-operation` made it on CI) aborts Chrome.
  */
 async function launch(): Promise<BrowserContext> {
   await registerIssueEngine();
   const { profileDir, options } = browserLaunchOptions(
-    join(ROOT, '.e2e-work', 'test-browser-repo-operation'),
+    join(ROOT, '.e2e-work', 'tb-repo'),
     childEnv(process.env),
     {},
   );
