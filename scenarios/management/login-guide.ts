@@ -83,6 +83,11 @@ export type WaitEnd = 'found' | 'exited' | 'timeout' | 'aborted';
 /**
  * Polls the child's output until `find` returns a value, the child exits, the deadline
  * passes or `signal` aborts. Never resolves `found` without a value.
+ *
+ * The deadline counts from the child's real start. A `gh nibfin` child may first wait for
+ * GitHub's rate-limit reset before it is spawned (a deferred `Running`, whose output stays
+ * empty until then); that wait is not the child's time to print. A child that never starts
+ * (stopped first, or its start threw) ends as `exited`.
  */
 export async function waitForOutput<T>(
   child: Pick<Running, 'output' | 'waitFor'>,
@@ -91,6 +96,20 @@ export async function waitForOutput<T>(
   opts: { pollMs?: number; signal?: AbortSignal; now?: () => number } = {},
 ): Promise<{ end: WaitEnd; value?: T }> {
   const now = opts.now ?? Date.now;
+  // A pattern that always matches: it resolves once the child has started (at once for a
+  // child that is already running) and rejects when it can never start.
+  const started = await untilAborted(
+    child.waitFor(/(?:)/, timeoutMs).then(
+      () => true,
+      () => false,
+    ),
+    opts.signal,
+  );
+  if (started === 'aborted') return { end: 'aborted' };
+  if (!started) {
+    const last = find(child.output());
+    return last === undefined ? { end: 'exited' } : { end: 'found', value: last };
+  }
   const start = now();
   const deadline = start + timeoutMs;
   let exited = false;
@@ -111,6 +130,20 @@ export async function waitForOutput<T>(
     if (now() >= deadline) return { end: 'timeout' };
     await new Promise((r) => setTimeout(r, Math.max(0, Math.min(opts.pollMs ?? 500, deadline - now()))));
   }
+}
+
+/** `work`'s result, or `'aborted'` as soon as `signal` aborts first. */
+function untilAborted<T>(work: Promise<T>, signal: AbortSignal | undefined): Promise<T | 'aborted'> {
+  if (!signal) return work;
+  if (signal.aborted) return Promise.resolve('aborted');
+  return new Promise((resolve) => {
+    const onAbort = () => resolve('aborted');
+    signal.addEventListener('abort', onAbort, { once: true });
+    void work.then((v) => {
+      signal.removeEventListener('abort', onAbort);
+      resolve(v);
+    });
+  });
 }
 
 /**

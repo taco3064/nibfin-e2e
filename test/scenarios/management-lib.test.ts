@@ -15,6 +15,7 @@ import { isNibfinRunFor, leafCommands, parseHelp, parseRemaining } from '../../s
 import { mainDigest, requireCurrentImage } from '../../scenarios/lib/image.ts';
 import { schemaValidator } from '../../scenarios/lib/schema.ts';
 import { waitFor } from '../../scenarios/lib/wait.ts';
+import { deferredRunning } from '../../src/host/exec.ts';
 import {
   guideTail,
   GUIDE_LINE,
@@ -582,8 +583,11 @@ function drivenChild() {
       for (const w of waiters) w();
     },
     output: () => out,
-    waitFor: (_p: RegExp, ms: number) =>
-      new Promise<RegExpExecArray>((_resolve, reject) => {
+    // Like a real child: a pattern already in the output resolves at once.
+    waitFor: (p: RegExp, ms: number) =>
+      new Promise<RegExpExecArray>((resolve, reject) => {
+        const m = new RegExp(p.source, p.flags.replace('g', '')).exec(out);
+        if (m) return resolve(m);
         if (exited) return reject(new Error('exited'));
         const t = setTimeout(() => reject(new Error('timeout')), ms);
         waiters.add(() => (clearTimeout(t), reject(new Error('exited'))));
@@ -617,6 +621,35 @@ test('waitForOutput: found when the step line streams in, exited when the child 
   ac.abort();
   deepEqual(await waitForOutput(e, find, 2000, { pollMs: 5, signal: ac.signal }), { end: 'aborted' });
   e.exit();
+});
+
+test("waitForOutput: the deadline counts from the child's real start, not from a rate-limit wait before it", async () => {
+  const find = (o: string) => loginGuide(o).url;
+  // The start waits 80 ms (as for a rate-limit reset), longer than the 40 ms deadline; the
+  // child then prints the step line after 10 ms of its own.
+  const late = drivenChild();
+  const child = deferredRunning(new Promise((r) => setTimeout(r, 80)), () => {
+    setTimeout(() => late.write('open https://auth.example/after-wait\n'), 10);
+    return { ...late, stop: async () => ({ code: 0, stdout: '', stderr: '' }) };
+  });
+  deepEqual(await waitForOutput(child, find, 40, { pollMs: 5 }), { end: 'found', value: 'https://auth.example/after-wait' });
+  late.exit();
+
+  // Stopped before it started: it never prints, so it ends as exited, not as a timeout.
+  const never = deferredRunning(new Promise((r) => setTimeout(r, 20)), () => {
+    throw new Error('must not start');
+  });
+  await never.stop();
+  deepEqual(await waitForOutput(never, find, 2000, { pollMs: 5 }), { end: 'exited' });
+
+  // An abort during the wait before the start ends the wait at once.
+  const ac = new AbortController();
+  const slow = deferredRunning(new Promise((r) => setTimeout(r, 2000)), () => {
+    throw new Error('must not start');
+  });
+  setTimeout(() => ac.abort(), 10);
+  deepEqual(await waitForOutput(slow, find, 50, { pollMs: 5, signal: ac.signal }), { end: 'aborted' });
+  await slow.stop();
 });
 
 test('statusRunners reads one provider from .host.runners.runners; an unreadable list is undefined', () => {
