@@ -7,9 +7,11 @@ import { join } from 'node:path';
 import { chromium, selectors } from 'playwright-core';
 import type { BrowserContext, Locator, Page } from 'playwright-core';
 import type { Env, Running } from '../../src/host/exec.ts';
+import type { GitHub } from '../../src/host/github.ts';
 import type { Outcome, RunContext, RuleId, Scenario } from '../../src/types.ts';
-import { buttonNamesFromAriaSnapshot, fieldsFromAriaSnapshot, missingButtonMessage, parseJobStarts, parseSessionUrl, redact, updateMarkerState } from './checks.ts';
-import type { ContainerStart, FormField, Reply, SessionUrl } from './checks.ts';
+import type { Comment } from '../lifecycle/analysis.ts';
+import { autoProblem, buttonNamesFromAriaSnapshot, fieldsFromAriaSnapshot, missingButtonMessage, parseJobStarts, parseSessionUrl, redact, shownState, updateMarkerState } from './checks.ts';
+import type { ContainerStart, FormField, LabelEvent, Reply, ResolutionState, SessionUrl } from './checks.ts';
 import { sleep, until } from './github.ts';
 
 // ---- Scenario wrapper ---------------------------------------------------------
@@ -21,12 +23,14 @@ export interface Secrets {
 
 /**
  * A linux scenario whose reasons never carry a session proof or a registered secret.
- * `run` returns the passed reason or throws the failure.
+ * `run` returns the passed reason or throws the failure. An optional `gate` runs first; the
+ * outcome it returns (for example `waiting`, Proposal R8.20) is the result and `run` is skipped.
  */
 export function defineScenario(def: {
   id: string;
   rules: RuleId[];
   requires?: string[];
+  gate?(ctx: RunContext): Promise<Outcome | undefined>;
   run(ctx: RunContext, secrets: Secrets): Promise<string>;
 }): Scenario {
   return {
@@ -39,6 +43,8 @@ export function defineScenario(def: {
       const secrets: Secrets = { add: (v) => void seen.add(v) };
       const safeCtx: RunContext = { ...ctx, log: (m) => ctx.log(redact(m, seen)) };
       try {
+        const gated = def.gate && (await def.gate(safeCtx));
+        if (gated) return { status: gated.status, reason: redact(gated.reason, seen) };
         return { status: 'passed', reason: redact(await def.run(safeCtx, secrets), seen) };
       } catch (error) {
         return { status: 'failed', reason: redact(error instanceof Error ? error.message : String(error), seen) };
@@ -616,4 +622,48 @@ export function providerLogin(status: unknown, provider: string): boolean | unde
 /** True when some object in the status names claude and reports it logged in. */
 export function claudeLoggedIn(status: unknown): boolean {
   return providerLogin(status, 'claude') === true;
+}
+
+// ---- Pending resolution states (Proposal R9.52, R9.1) ------------------------------
+
+/** An Issue's labels, events and comments, read fresh from GitHub. */
+export interface IssueHistory {
+  labels: string[];
+  events: LabelEvent[];
+  comments: Comment[];
+}
+
+export async function issueHistory(gh: GitHub, repo: string, n: number): Promise<IssueHistory> {
+  const [issue, events, comments] = await Promise.all([
+    gh.rest<{ labels: ({ name: string } | string)[] }>('GET', `/repos/${repo}/issues/${n}`),
+    gh.list<LabelEvent>(`/repos/${repo}/issues/${n}/events`),
+    gh.list<Comment>(`/repos/${repo}/issues/${n}/comments`),
+  ]);
+  return { labels: issue.data.labels.map((l) => (typeof l === 'string' ? l : l.name)), events, comments };
+}
+
+/** The state an Issue's element shows (R9.52), or undefined when it is not shown or names no single state. */
+export async function elementState(page: Page, title: string): Promise<{ state: ResolutionState | undefined; text: string }> {
+  const el = issueElement(page, title);
+  const text = (await el.count()) ? await el.innerText().catch(() => '') : '';
+  return { state: shownState(text), text };
+}
+
+export interface AutoShown<T> {
+  issue: T;
+  /** Why it may not show 自動排除中 (see `autoProblem`), or undefined when it may. */
+  problem: string | undefined;
+  readAt: number;
+}
+
+/** The given Issues whose element the page shows as 自動排除中, each judged against a fresh GitHub read. */
+export async function readAutoShown<T extends { repo: string; number: number; title: string }>(page: Page, gh: GitHub, issues: T[]): Promise<AutoShown<T>[]> {
+  const out: AutoShown<T>[] = [];
+  for (const issue of issues) {
+    const readAt = Date.now();
+    if ((await elementState(page, issue.title)).state !== 'auto') continue;
+    const h = await issueHistory(gh, issue.repo, issue.number);
+    out.push({ issue, readAt, problem: autoProblem({ labels: h.labels }, h.events, h.comments, readAt) });
+  }
+  return out;
 }
