@@ -1,8 +1,16 @@
 // The product-decision branch of the pending resolution stage (Proposal R4.45, R4.51): a
 // fixture that leaves how halves round to a person stops with `pending`; the resolution
-// record gives 2–4 numbered options with one recommended and changes nothing; the Owner
-// answers with an option number alone and removes `pending`; the next Shape changes the
-// Issue as decided and publishes. Reported `waiting` until the stage is delivered (R8.20).
+// record gives 2–4 numbered options with one recommended and changes nothing; a decision
+// comment answers with an option number alone and `pending` is removed; the next Shape
+// changes the Issue as decided and publishes. Reported `waiting` until the stage is
+// delivered (R8.20).
+//
+// Until the amended R4.51 is delivered, the Owner alone answers. After it, the Owner
+// answers first and the second write collaborator answers later with an option of a
+// different rule, and the Issue must newly name the later option's rule, not the Owner's;
+// when no two options resolve to different rules, the collaborator's answer alone decides.
+import { GitHubError } from '../../src/host/github.ts';
+import type { GitHub } from '../../src/host/github.ts';
 import type { Outcome } from '../../src/types.ts';
 import { briefRecord, pendingAddedAt, resolutionGate, resolutionRecord } from '../lib/resolution.ts';
 import type { ResolutionOption, ResolutionRecord } from '../lib/resolution.ts';
@@ -123,19 +131,50 @@ export function optionRule(text: string): RuleName | undefined {
 
 const termsOf = (rule: RuleName) => ROUNDING_RULES.find((r) => r.id === rule)?.terms ?? [];
 
+/** An option together with the one rounding rule it resolves to. */
+export interface OptionPick {
+  option: ResolutionOption;
+  rule: RuleName;
+}
+
+/** The record's options that resolve to one rule with a term not in `oldBody`, in record order. */
+export function qualifying(r: ResolutionRecord, oldBody: string): OptionPick[] {
+  return r.options.flatMap((option) => {
+    const rule = optionRule(option.text);
+    return rule && termsOf(rule).some((t) => !t.test(oldBody)) ? [{ option, rule }] : [];
+  });
+}
+
 /**
  * The option the harness decides on: the first non-recommended option that resolves to
  * one rule with a term not in `oldBody`, else the recommended one if it qualifies.
  */
-export function chooseOption(
+export function chooseOption(r: ResolutionRecord, oldBody: string): OptionPick | undefined {
+  const ok = qualifying(r, oldBody);
+  return ok.find((x) => !x.option.recommended) ?? ok.find((x) => x.option.recommended);
+}
+
+/**
+ * Two qualifying options with different rules: `overridden`, answered first, and `winner`,
+ * answered later by another write collaborator. The winner prefers a non-recommended
+ * option, so a Shape that follows the recommendation instead of the latest comment cannot
+ * pass by chance; the overridden one prefers the recommended option. Undefined when fewer
+ * than two distinct rules qualify.
+ */
+export function chooseTwoOptions(
   r: ResolutionRecord,
   oldBody: string,
-): { option: ResolutionOption; rule: RuleName } | undefined {
-  const ok = r.options.flatMap((option) => {
-    const rule = optionRule(option.text);
-    return rule && termsOf(rule).some((t) => !t.test(oldBody)) ? [{ option, rule }] : [];
-  });
-  return ok.find((x) => !x.option.recommended) ?? ok.find((x) => x.option.recommended);
+): { overridden: OptionPick; winner: OptionPick } | undefined {
+  const ok = qualifying(r, oldBody);
+  const byRecommended = (first: boolean) => [
+    ...ok.filter((x) => x.option.recommended === first),
+    ...ok.filter((x) => x.option.recommended !== first),
+  ];
+  for (const winner of byRecommended(false)) {
+    const overridden = byRecommended(true).find((x) => x.rule !== winner.rule);
+    if (overridden) return { overridden, winner };
+  }
+  return undefined;
 }
 
 /** The text of a term of `rule` that `newBody` newly carries (absent from `oldBody`), or undefined. */
@@ -154,6 +193,78 @@ export function reflects(oldBody: string, newBody: string, rule: RuleName): bool
   return reflectedTerm(oldBody, newBody, rule) !== undefined;
 }
 
+/** Every rule `newBody` newly names (a term absent from `oldBody`), in `ROUNDING_RULES` order. */
+export function newlyNamed(oldBody: string, newBody: string): RuleName[] {
+  return ROUNDING_RULES.filter((r) => reflectedTerm(oldBody, newBody, r.id) !== undefined).map((r) => r.id);
+}
+
+/**
+ * The rule a decision in the person's own words states: one with a term not in `oldBody`.
+ * It prefers, in `ROUNDING_RULES` order, a rule whose terms appear in no option's text
+ * (`unnamed`), so Shape can only learn it from the words; then a rule no option resolves
+ * to; then any rule an option resolves to. Undefined when no rule has a new term.
+ */
+export function chooseWordsRule(
+  r: ResolutionRecord,
+  oldBody: string,
+): { rule: RuleName; unnamed: boolean } | undefined {
+  const fresh = ROUNDING_RULES.filter((x) => x.terms.some((t) => !t.test(oldBody)));
+  const unnamed = fresh.find((x) => !r.options.some((o) => x.terms.some((t) => t.test(o.text))));
+  if (unnamed) return { rule: unnamed.id, unnamed: true };
+  const resolved = new Set(r.options.map((o) => optionRule(o.text)));
+  const other = fresh.find((x) => !resolved.has(x.id)) ?? fresh[0];
+  return other && { rule: other.id, unnamed: false };
+}
+
+/** One sentence per rule, without digits, that names that rule's terms and no other rule's. */
+export const WORDS_RULE_TEXT: Record<RuleName, string> = {
+  'half-down': 'Round exact halves toward zero.',
+  'half-away': 'Round exact halves away from zero.',
+  'half-up': 'Round exact halves toward positive infinity.',
+  'half-even': "Round exact halves to the nearest even integer (banker's rounding).",
+};
+
+/**
+ * A decision in the person's own words: the rule's sentence, a request to add `label`
+ * (a part Shape cannot apply, R4.51), and a line saying the harness wrote it. It carries
+ * no option number; the only digits are inside the label.
+ */
+export function wordsDecision(rule: RuleName, label: string): string {
+  return [
+    WORDS_RULE_TEXT[rule],
+    `Also add the label \`${label}\` to this Issue.`,
+    'This decision was written by the automated nibfin-e2e harness.',
+  ].join('\n\n');
+}
+
+/** Whether `text` is only a number, or has a standalone integer equal to one of `numbers`. */
+export function bareNumberIn(text: string, numbers: number[]): boolean {
+  if (/^\s*\d+\s*$/.test(text)) return true;
+  return (text.match(/\b\d+\b/g) ?? []).some((t) => numbers.includes(Number(t)));
+}
+
+/**
+ * Whether a part Shape cannot apply was handled openly (R4.51): the Issue carries `label`,
+ * or a comment other than the decision, written or updated at or after `removedAt`, names
+ * it. `read` lists the comments considered, for a failure message.
+ */
+export function unappliedNamed(input: {
+  labels: string[];
+  comments: Comment[];
+  label: string;
+  decisionId: number;
+  removedAt: number;
+}): { ok: boolean; where?: string; read: string[] } {
+  const later = input.comments.filter(
+    (c) => c.id !== input.decisionId && Math.max(time(c.created_at), time(c.updated_at)) >= input.removedAt,
+  );
+  const read = later.map((c) => `${c.html_url} by ${c.user?.login ?? 'unknown'}`);
+  if (input.labels.includes(input.label)) return { ok: true, where: `the Issue carries ${input.label}`, read };
+  const want = input.label.toLowerCase();
+  const naming = later.find((c) => (c.body ?? '').toLowerCase().includes(want));
+  return naming ? { ok: true, where: `${naming.html_url} names ${input.label}`, read } : { ok: false, read };
+}
+
 const normal = (b: string) =>
   b
     .replace(/\r\n/g, '\n')
@@ -167,12 +278,138 @@ export function bodyUnchanged(base: string, read: string): boolean {
   return normal(base) === normal(read);
 }
 
+// ---- shared steps ----
+
+/**
+ * Waits for the resolution record written after `pendingAt` and returns it with the
+ * snapshot that showed it. It ends early when `pending` goes first or the Issue closes,
+ * and throws naming the marker keys seen after `pendingAt`.
+ */
+export async function awaitResolutionRecord(
+  k: Kit,
+  n: number,
+  pendingAt: number,
+): Promise<{ r: ResolutionRecord; s: Snapshot }> {
+  const { exec } = k;
+  let keys: string[] = [];
+  const markerKeys = (cs: Comment[]) =>
+    cs
+      .filter((x) => Math.max(time(x.created_at), time(x.updated_at)) >= pendingAt)
+      .flatMap((x) => markerOf(x.body) ?? []);
+  const closed = k.stageGone(exec, n, 'shape', { since: pendingAt - MIN, allowPending: true, jobs: false });
+  try {
+    return await k.obs.until(
+      `a resolution record on #${n}`,
+      async (s) => {
+        const cs = await k.obs.comments(exec, n);
+        keys = markerKeys(cs);
+        const r = resolutionRecord(cs, pendingAt);
+        return r ? { r, s } : undefined;
+      },
+      DEADLINE.stage,
+      (s) => `#${n} labels: ${k.labels(s, exec, n).join(', ') || 'none'}`,
+      {
+        quiet: true,
+        gonePast: async (s) =>
+          k.issue(s, exec, n) && !k.labels(s, exec, n).includes('pending')
+            ? `#${n} lost pending before a resolution record appeared`
+            : closed(s),
+      },
+    );
+  } catch (error) {
+    throw new Error(
+      `no resolution record on #${n} after pending was added at ${new Date(pendingAt).toISOString()} (${message(error)}); marker keys seen after it: ${keys.join(', ') || 'none'}`,
+      { cause: error },
+    );
+  }
+}
+
+/**
+ * Waits for a new shape run created at or after `removedAt` and then for `shaped`. It
+ * ends with a named reason when Shape stops again with `pending`, the Issue closes, or
+ * another agent stage runs before any new shape run.
+ */
+export async function awaitShapeAfterDecision(
+  k: Kit,
+  n: number,
+  removedAt: number,
+  show: (s: Snapshot) => Promise<string>,
+): Promise<void> {
+  const { exec } = k;
+  const shapeGone = k.stageGone(exec, n, 'shape', { since: removedAt - MIN, publishes: 'shaped' });
+  const gonePast = async (s: Snapshot) => (await shapeGone(s)) ?? unexpectedStage(k, s, n, removedAt);
+  await k.obs.until(
+    `a new shape run on #${n} after pending was removed`,
+    (s) => k.stages(s, exec, n, ['shape']).find((x) => time(x.created_at) >= removedAt),
+    DEADLINE.stage,
+    show,
+    { gonePast },
+  );
+  await k.obs.until(
+    `#${n} to get shaped after the decision`,
+    (s) => (k.labels(s, exec, n).includes('shaped') ? true : undefined),
+    DEADLINE.stage,
+    show,
+    { gonePast },
+  );
+}
+
+/** Who writes a decision comment: the Owner through the harness client, or another write collaborator. */
+export interface DecisionAuthor {
+  /** How the author appears in failure text. */
+  name: string;
+  github: GitHub;
+  /** The login the read-back comment must carry; unchecked when absent. */
+  login?: string;
+}
+
+/**
+ * Posts `body` on Issue `n` as `author` and reads it back through the Owner's client; it
+ * throws when GitHub refuses the comment (naming the author and HTTP status), or when the
+ * read-back body or author differs.
+ */
+export async function postDecision(k: Kit, n: number, body: string, author: DecisionAuthor): Promise<Comment> {
+  let posted: Comment;
+  try {
+    ({ data: posted } = await author.github.rest<Comment>('POST', `/repos/${k.exec}/issues/${n}/comments`, { body }));
+  } catch (error) {
+    const status = error instanceof GitHubError ? ` (HTTP ${error.status})` : '';
+    throw new Error(`${author.name} could not post the decision comment on #${n}${status}: ${message(error)}`, {
+      cause: error,
+    });
+  }
+  const { data: back } = await k.gh.rest<Comment>('GET', `/repos/${k.exec}/issues/comments/${posted.id}`);
+  if (back.body !== body)
+    throw new Error(
+      `the decision comment ${posted.id} on #${n} reads back "${briefRecord(back.body ?? '', 40)}", expected "${briefRecord(body, 40)}"`,
+    );
+  if (author.login !== undefined && back.user?.login !== author.login)
+    throw new Error(
+      `the decision comment ${posted.id} on #${n} reads back as written by ${back.user?.login ?? 'nobody'}, expected ${author.login}`,
+    );
+  return back;
+}
+
+/** Why the wait for the next Shape can no longer succeed: another agent stage ran before any new shape run. */
+export function unexpectedStage(k: Kit, s: Snapshot, n: number, removedAt: number): string | undefined {
+  const runs = k.stages(s, k.exec, n, AGENT_STAGES).filter((r) => time(r.created_at) >= removedAt);
+  const firstShape = runs.filter((r) => r.stage === 'shape').sort((a, b) => time(a.created_at) - time(b.created_at))[0];
+  const other = runs.find(
+    (r) => r.stage !== 'shape' && (!firstShape || time(r.created_at) < time(firstShape.created_at)),
+  );
+  return other
+    ? `after pending was removed, a ${other.stage} run ${other.id} started (created ${other.created_at}) before any new shape run`
+    : undefined;
+}
+
 // ---- the scenario ----
 
 export const resolutionDecision = lifecycle({
   id: 'resolution-decision',
   rules: ['R4.45', 'R4.51'],
   concurrent: true,
+  // The later decision is written by the second write collaborator, so its account must be provisioned.
+  requires: ['collaborator'],
   async run(k) {
     const gate = await resolutionGate(k.gh, 'stage');
     if (gate) return gate;
@@ -184,6 +421,16 @@ export const resolutionDecision = lifecycle({
     }
   },
 });
+
+/** One decision comment the scenario writes, in order. */
+interface Answer {
+  author: DecisionAuthor;
+  pick: OptionPick;
+  comment?: Comment;
+}
+
+const describe = (a: Answer) =>
+  `${a.comment?.user?.login ?? a.author.name}'s ${a.comment?.html_url ?? 'comment'} (option ${a.pick.option.n}, ${a.pick.rule}: "${briefRecord(a.pick.option.text, 80)}")`;
 
 async function decide(k: Kit, filed: (n: number) => void): Promise<Outcome> {
   const c = new Checks();
@@ -204,40 +451,13 @@ async function decide(k: Kit, filed: (n: number) => void): Promise<Outcome> {
   }
   const stopBody = stopped.body ?? '';
   const pendingAt = await pendingAddedAt(k.gh, exec, n);
-  const since = new Date(pendingAt).toISOString();
 
   // The resolution record (R4.49), read without acting.
-  let keys: string[] = [];
-  const markerKeys = (cs: Comment[]) =>
-    cs
-      .filter((x) => Math.max(time(x.created_at), time(x.updated_at)) >= pendingAt)
-      .flatMap((x) => markerOf(x.body) ?? []);
-  const closed = k.stageGone(exec, n, 'shape', { since: pendingAt - MIN, allowPending: true, jobs: false });
   let seen: { r: ResolutionRecord; s: Snapshot };
   try {
-    seen = await k.obs.until(
-      `a resolution record on #${n}`,
-      async (s) => {
-        const cs = await k.obs.comments(exec, n);
-        keys = markerKeys(cs);
-        const r = resolutionRecord(cs, pendingAt);
-        return r ? { r, s } : undefined;
-      },
-      DEADLINE.stage,
-      (s) => `#${n} labels: ${k.labels(s, exec, n).join(', ') || 'none'}`,
-      {
-        quiet: true,
-        gonePast: async (s) =>
-          k.issue(s, exec, n) && !k.labels(s, exec, n).includes('pending')
-            ? `#${n} lost pending before a resolution record appeared`
-            : closed(s),
-      },
-    );
+    seen = await awaitResolutionRecord(k, n, pendingAt);
   } catch (error) {
-    c.fail(
-      'R4.45',
-      `no resolution record on #${n} after pending was added at ${since} (${message(error)}); marker keys seen after it: ${keys.join(', ') || 'none'}`,
-    );
+    c.fail('R4.45', message(error));
     return c.outcome('');
   }
   const { r } = seen;
@@ -274,7 +494,7 @@ async function decide(k: Kit, filed: (n: number) => void): Promise<Outcome> {
     `#${n} got a native Blocked by ${blockers.map((b) => `#${b.number}`).join(', ')} after pending`,
   );
 
-  // The decision (R4.51): one option number alone, then pending removed.
+  // The decision (R4.51): option numbers alone, then pending removed.
   const pick = chooseOption(r, filedBody);
   if (!r.options.length || !pick) {
     c.notExercised(
@@ -283,48 +503,67 @@ async function decide(k: Kit, filed: (n: number) => void): Promise<Outcome> {
     );
     return c.outcome('');
   }
+  const owner: DecisionAuthor = { name: 'the Owner', github: k.gh };
+  let answers: Answer[];
+  const amended = await resolutionGate(k.gh, 'decision');
+  if (amended) {
+    // Until the amended R4.51 is delivered, only the Owner's single bare number is checked.
+    c.note(`the latest-decision check by a second write collaborator is waiting: ${amended.reason}`);
+    answers = [{ author: owner, pick }];
+  } else {
+    let peer: DecisionAuthor;
+    try {
+      const p = k.ctx.peer();
+      peer = { name: `the collaborator ${p.login}`, github: p.github, login: p.login };
+    } catch (error) {
+      c.fail('R4.51', `the second write collaborator cannot decide: ${message(error)}`);
+      return c.outcome('');
+    }
+    const two = chooseTwoOptions(r, filedBody);
+    if (two)
+      answers = [
+        { author: owner, pick: two.overridden },
+        { author: peer, pick: two.winner },
+      ];
+    else {
+      c.note(
+        `only ${peer.login ?? 'the collaborator'} decided: fewer than two options resolve to distinct rules new to the Issue`,
+      );
+      answers = [{ author: peer, pick }];
+    }
+  }
   const { data: before } = await k.gh.rest<Issue>('GET', `/repos/${exec}/issues/${n}`);
   c.check(
     'R4.45',
     bodyUnchanged(stopBody, before.body ?? ''),
     `#${n}'s body changed after pending, before the decision: ${briefRecord(before.body ?? '')}`,
   );
-  const answer = String(pick.option.n);
-  const { data: posted } = await k.gh.rest<Comment>('POST', `/repos/${exec}/issues/${n}/comments`, { body: answer });
-  const { data: back } = await k.gh.rest<Comment>('GET', `/repos/${exec}/issues/comments/${posted.id}`);
-  if (back.body !== answer)
-    throw new Error(
-      `the decision comment ${posted.id} on #${n} reads back "${briefRecord(back.body ?? '', 40)}", expected "${answer}"`,
-    );
+  for (const a of answers) {
+    try {
+      a.comment = await postDecision(k, n, String(a.pick.option.n), a.author);
+    } catch (error) {
+      if (a.author === owner) throw error;
+      c.fail('R4.51', message(error));
+      return c.outcome('');
+    }
+  }
   await k.removeLabel(exec, n, 'pending');
   const removedAt = k.now();
-  const chosen = `option ${answer} (${pick.rule}): "${briefRecord(pick.option.text, 120)}"`;
+  const winner = answers.at(-1) as Answer;
+  const overridden = answers.length > 1 ? answers[0] : undefined;
+  const chosen = answers.map(describe).join(', then ');
 
-  // The next Shape applies the decision and publishes.
-  const shapeGone = k.stageGone(exec, n, 'shape', { since: removedAt - MIN, publishes: 'shaped' });
-  const gonePast = async (s: Snapshot) => (await shapeGone(s)) ?? unexpectedStage(k, s, n, removedAt);
+  // The next Shape applies the latest decision and publishes.
   try {
-    await k.obs.until(
-      `a new shape run on #${n} after pending was removed`,
-      (s) => k.stages(s, exec, n, ['shape']).find((x) => time(x.created_at) >= removedAt),
-      DEADLINE.stage,
-      show,
-      { gonePast },
-    );
-    await k.obs.until(
-      `#${n} to get shaped after the decision`,
-      (s) => (k.labels(s, exec, n).includes('shaped') ? true : undefined),
-      DEADLINE.stage,
-      show,
-      { gonePast },
-    );
+    await awaitShapeAfterDecision(k, n, removedAt, show);
   } catch (error) {
     c.fail('R4.51', `after deciding ${chosen}: ${message(error)}`);
     return c.outcome('');
   }
   const { data: after } = await k.gh.rest<Issue>('GET', `/repos/${exec}/issues/${n}`);
   const body = after.body ?? '';
-  const term = reflectedTerm(filedBody, body, pick.rule);
+  const term = reflectedTerm(filedBody, body, winner.pick.rule);
+  const named = () => newlyNamed(filedBody, body).join(', ') || 'none';
   c.check(
     'R4.51',
     !bodyUnchanged(filedBody, body),
@@ -333,21 +572,15 @@ async function decide(k: Kit, filed: (n: number) => void): Promise<Outcome> {
   c.check(
     'R4.51',
     term !== undefined,
-    `#${n}'s new body does not newly name ${pick.rule} after deciding ${chosen}: ${briefRecord(body)}`,
+    `#${n}'s new body does not newly name ${winner.pick.rule} after deciding ${chosen}; it newly names: ${named()}: ${briefRecord(body)}`,
   );
+  if (overridden)
+    c.check(
+      'R4.51',
+      reflectedTerm(filedBody, body, overridden.pick.rule) === undefined,
+      `#${n}'s new body newly names the earlier, overridden ${overridden.pick.rule} after deciding ${chosen}; it newly names: ${named()}: ${briefRecord(body)}`,
+    );
   return c.outcome(
     `#${n} stopped with a 產品決策 record of ${r.options.length} options; deciding ${chosen} made the next Shape write "${term ?? ''}" into the Issue and publish`,
   );
-}
-
-/** Why the wait for the next Shape can no longer succeed: another agent stage ran before any new shape run. */
-function unexpectedStage(k: Kit, s: Snapshot, n: number, removedAt: number): string | undefined {
-  const runs = k.stages(s, k.exec, n, AGENT_STAGES).filter((r) => time(r.created_at) >= removedAt);
-  const firstShape = runs.filter((r) => r.stage === 'shape').sort((a, b) => time(a.created_at) - time(b.created_at))[0];
-  const other = runs.find(
-    (r) => r.stage !== 'shape' && (!firstShape || time(r.created_at) < time(firstShape.created_at)),
-  );
-  return other
-    ? `after pending was removed, a ${other.stage} run ${other.id} started (created ${other.created_at}) before any new shape run`
-    : undefined;
 }
