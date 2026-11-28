@@ -3,7 +3,7 @@
 // they check; the scenarios then read GitHub to judge them.
 import { AGENT_STAGES, selfHosted, time, wakeRuns } from './analysis.ts';
 import type { Issue, Job, Pull, Run, Stage } from './analysis.ts';
-import { DEADLINE, changeRequest, redact } from './kit.ts';
+import { DEADLINE, changeRequest, message, redact } from './kit.ts';
 import type { Kit } from './kit.ts';
 import type { Snapshot } from './observe.ts';
 import { sleep, waitFor } from '../lib/wait.ts';
@@ -27,12 +27,18 @@ export const DIRECT_READ_MS = 10_000;
 /** How long `stageJobRunning` reads directly on one snapshot before it lets the observer read the next one (its default interval). */
 const DIRECT_SPAN_MS = 60_000;
 
+/** How the shared wait of `stageJobRunning` ended through its `gonePast`, when it did. */
+type JobWaitExit = 'missed' | 'hard' | 'followed';
+
 /**
  * Waits for a self-hosted job of an Issue's `stage` to be `in_progress`, reading the
  * jobs of the Issue's unfinished runs of that stage directly every `DIRECT_READ_MS`
  * rather than through the observer's snapshot and its cached job reads, which may miss a
  * short job (Issue #544). The wait fails at once when such a job completed before any
  * read saw it running, and otherwise ends on `stageGone`, the stall limit or the deadline.
+ * Every reason from `stageGone` also names what the direct reads saw: each run read, the
+ * stage's job in its last read (or that no read saw a run of the stage), and the last
+ * direct read error, if any.
  *
  * `since` is passed to `stageGone` (its default applies when absent). `whileRunning` is a
  * further condition checked on each direct read that sees the job `in_progress`: the job
@@ -41,38 +47,107 @@ const DIRECT_SPAN_MS = 60_000;
  * condition hold, the wait fails at once with the job's times and the condition's last
  * read (Issue #581).
  */
-export async function stageJobRunning(
+export async function stageJobRunning(k: Kit, n: number, stage: Stage, o: StageJobOptions): Promise<StageJob> {
+  return waitStageJob(k, n, stage, o).wait;
+}
+
+/**
+ * `stageJobRunning`, except that a wait ending because the job can no longer be seen
+ * running gives `{ missed }` with the full reason instead of failing: the job completed
+ * before any read saw it running, or a job of the stage completed and a run of another
+ * agent stage followed. Every other end (the Issue closed, `pending`, the deadline, the
+ * stall limit, an abort) still fails.
+ */
+export async function stageJobRunningOrMissed(
   k: Kit,
   n: number,
   stage: Stage,
-  o: {
-    desc: string;
-    deadlineMs: number;
-    show?: (s: Snapshot) => Promise<string>;
-    /** The Issue's name in the reason (default `P`). */ who?: string;
-    /** Only the stage's jobs created at or after this epoch ms count for `stageGone`. */ since?: number;
-    whileRunning?: {
-      /** What the wait still needs, as it reads after "before" in the reason. */
-      what: string;
-      /** Whether the condition holds now; `last` describes the read that found it unmet. */
-      check: (j: Job & { stage: Stage; run: Run }) => Promise<{ ok: true } | { ok: false; last: string }>;
-    };
-  },
-): Promise<Job & { stage: Stage; run: Run }> {
+  o: StageJobOptions,
+): Promise<StageJob | { missed: string }> {
+  const w = waitStageJob(k, n, stage, o);
+  try {
+    return await w.wait;
+  } catch (e) {
+    const exit = w.exit();
+    if (exit === 'missed' || exit === 'followed') return { missed: message(e) };
+    throw e;
+  }
+}
+
+type StageJob = Job & { stage: Stage; run: Run };
+
+interface StageJobOptions {
+  desc: string;
+  deadlineMs: number;
+  show?: (s: Snapshot) => Promise<string>;
+  /** The Issue's name in the reason (default `P`). */ who?: string;
+  /** Only the stage's jobs created at or after this epoch ms count for `stageGone`. */ since?: number;
+  whileRunning?: {
+    /** What the wait still needs, as it reads after "before" in the reason. */
+    what: string;
+    /** Whether the condition holds now; `last` describes the read that found it unmet. */
+    check: (j: StageJob) => Promise<{ ok: true } | { ok: false; last: string }>;
+  };
+}
+
+function waitStageJob(
+  k: Kit,
+  n: number,
+  stage: Stage,
+  o: StageJobOptions,
+): { wait: Promise<StageJob>; exit: () => JobWaitExit | undefined } {
   const pause = k.sleep ?? sleep;
   const iso = (t: number) => new Date(t).toISOString();
-  /** Runs that completed without running an agent job (cancelled or skipped). */
-  const finished = new Set<number>();
+  // A re-run keeps the run id, so a run and its attempt name one execution.
+  const key = (run: Run) => `${run.id}/${run.run_attempt ?? 1}`;
+  /** Run attempts that completed without running an agent job (cancelled or skipped). */
+  const finished = new Set<string>();
   /** The previous direct read of each job: when, and its status then. */
   const lastRead = new Map<number, { at: number; status: string }>();
   /** Jobs seen running while `whileRunning` did not hold, with the condition's last read. */
   const unmet = new Map<number, string>();
-  let missed: string | undefined;
-  const read = async (run: Run & { stage: Stage }): Promise<(Job & { stage: Stage; run: Run }) | undefined> => {
+  /** The last successful direct read of each run attempt, with the self-hosted job it found. */
+  const reads = new Map<string, { at: number; runId: number; attempt: number; job?: Job }>();
+  let readError: { at: number; runId: number; message: string } | undefined;
+  let missed: { reason: string; run: string } | undefined;
+  let exit: JobWaitExit | undefined;
+  const readOf = (r: { at: number; runId: number; attempt: number; job?: Job }) => {
+    const head = `run ${r.runId} (attempt ${r.attempt}) last read at ${iso(r.at)}`;
+    if (!r.job) return `${head}: no self-hosted job`;
+    const j = r.job;
+    const status = `${j.status}${j.status === 'completed' ? ` (${String(j.conclusion)})` : ''}`;
+    return `${head}: job ${j.id} ${status}, started ${j.started_at ?? 'none'}, completed ${j.completed_at ?? 'none'}`;
+  };
+  const errorSuffix = () =>
+    readError ? `; last direct read error at ${iso(readError.at)} (run ${readError.runId}): ${readError.message}` : '';
+  /** What the direct reads saw, for a reason that does not come from them. */
+  const summary = () => {
+    const runs = [...reads.values()].map(readOf).join(', ');
+    return `direct reads: ${runs || `none saw a ${stage} run of #${n}`}${errorSuffix()}`;
+  };
+  /** The missed reason, with the other runs read and the last read error when there are any. */
+  const missedReason = (m: { reason: string; run: string }) => {
+    const others = [...reads.entries()].filter(([id]) => id !== m.run).map(([, r]) => readOf(r));
+    return `${m.reason}${others.length ? `; other direct reads: ${others.join(', ')}` : ''}${errorSuffix()}`;
+  };
+  const list = async (run: Run) => {
     const at = k.now();
-    const jobs = await k.gh.list<Job>(`/repos/${k.exec}/actions/runs/${run.id}/jobs?filter=latest`, 'jobs');
+    try {
+      return { at, jobs: await k.gh.list<Job>(`/repos/${k.exec}/actions/runs/${run.id}/jobs?filter=latest`, 'jobs') };
+    } catch (e) {
+      // The observer logs the error and names it when the wait ends; it is kept here for the reason too.
+      if (!k.ctx.signal?.aborted) readError = { at, runId: run.id, message: message(e) };
+      throw e;
+    }
+  };
+  const read = async (run: Run & { stage: Stage }): Promise<StageJob | undefined> => {
+    const { at, jobs } = await list(run);
     const own = jobs.filter(selfHosted);
     const live = own.find((j) => j.status === 'in_progress');
+    const done = own.find(
+      (j) => j.status === 'completed' && j.conclusion !== 'cancelled' && j.conclusion !== 'skipped',
+    );
+    reads.set(key(run), { at, runId: run.id, attempt: run.run_attempt ?? 1, job: live ?? done ?? own[0] });
     if (live) {
       const j = { ...live, stage, run };
       if (!o.whileRunning) return j;
@@ -81,33 +156,30 @@ export async function stageJobRunning(
       unmet.set(live.id, r.last);
       return undefined;
     }
-    const done = own.find(
-      (j) => j.status === 'completed' && j.conclusion !== 'cancelled' && j.conclusion !== 'skipped',
-    );
     if (done) {
       const head = `${o.who ?? 'P'}'s ${stage} job ${done.id} (run ${run.id}) completed (${String(done.conclusion)})`;
       const times = `started ${String(done.started_at)}, completed ${String(done.completed_at)}`;
       const last = unmet.get(done.id);
       if (o.whileRunning && last !== undefined) {
-        missed = redact(`${head} after the wait saw it running, before ${o.whileRunning.what}: ${times}; ${last}`, k.ctx.secretValues());
+        missed = { reason: `${head} after the wait saw it running, before ${o.whileRunning.what}: ${times}; ${last}`, run: key(run) };
         return undefined;
       }
       const prev = lastRead.get(done.id);
       const seen = prev
         ? `the wait last read it at ${iso(prev.at)} (${prev.status})`
         : `on its first read at ${iso(at)}`;
-      missed = redact(`${head} before the wait saw it running: ${times}; ${seen}`, k.ctx.secretValues());
+      missed = { reason: `${head} before the wait saw it running: ${times}; ${seen}`, run: key(run) };
       return undefined;
     }
     for (const j of own) lastRead.set(j.id, { at, status: j.status });
-    if (run.status === 'completed' && jobs.every((j) => j.status === 'completed')) finished.add(run.id);
+    if (run.status === 'completed' && jobs.every((j) => j.status === 'completed')) finished.add(key(run));
     return undefined;
   };
   const fn = async (s: Snapshot) => {
     const until = k.now() + DIRECT_SPAN_MS;
     for (;;) {
       if (missed !== undefined) return undefined;
-      const runs = k.stages(s, k.exec, n, [stage]).filter((r) => !finished.has(r.id));
+      const runs = k.stages(s, k.exec, n, [stage]).filter((r) => !finished.has(key(r)));
       if (!runs.length) return undefined;
       for (const run of runs) {
         const j = await read(run);
@@ -117,9 +189,28 @@ export async function stageJobRunning(
       await untilAborted(pause(DIRECT_READ_MS), k.ctx.signal);
     }
   };
-  return k.obs.until(o.desc, fn, o.deadlineMs, o.show, {
-    gonePast: firstOf(async () => missed, k.stageGone(k.exec, n, stage, { since: o.since })),
-  });
+  // The closed and `pending` exits are judged apart from the job exit, so a caller can tell them apart.
+  const hard = k.stageGone(k.exec, n, stage, { since: o.since, jobs: false });
+  const followed = k.stageGone(k.exec, n, stage, { since: o.since });
+  const redacted = (reason: string) => redact(reason, k.ctx.secretValues());
+  const gonePast: Gone = async (s) => {
+    if (missed !== undefined) {
+      exit = 'missed';
+      return redacted(missedReason(missed));
+    }
+    for (const [kind, check] of [
+      ['hard', hard],
+      ['followed', followed],
+    ] as const) {
+      const reason = await check(s);
+      if (reason !== undefined) {
+        exit = kind;
+        return redacted(`${reason}; ${summary()}`);
+      }
+    }
+    return undefined;
+  };
+  return { wait: k.obs.until(o.desc, fn, o.deadlineMs, o.show, { gonePast }), exit: () => exit };
 }
 
 export interface Journey {
@@ -134,8 +225,12 @@ export interface Journey {
   /** After A's `opened` wake run completed (before `scope`): A's stage runs and comments. */
   aBeforeScope: { stageRuns: number; comments: number };
   aScopedAt: number;
-  /** The Deliver job of A during which `e2e-wake` was toggled twice. */
-  wakeToggles: { jobId: number; at: number[] };
+  /**
+   * The Deliver job of A during which `e2e-wake` was toggled twice, with when; or, when no
+   * read saw that job running (it completed first, or completed and a later agent stage
+   * followed), why no wakes were sent.
+   */
+  wakeToggles: { jobId: number; at: number[] } | { missed: string };
   aPr: Pull;
   mergeSha: string;
   /** A was open after CI attempt 1 completed while CD was held. */
@@ -228,17 +323,25 @@ async function driveJourney(k: Kit, filed: number[]): Promise<Journey> {
 
   // R4.35: two wakes while A's Deliver runs.
   // A's deliver jobs are read directly: a short Deliver can run between two snapshots (Issue #567).
-  const deliverJob = await stageJobRunning(k, a.number, 'deliver', {
+  // A job no read saw running leaves R4.35 unexercised; the journey's other checks still need the rest.
+  const deliverJob = await stageJobRunningOrMissed(k, a.number, 'deliver', {
     desc: "A's deliver job to run",
     deadlineMs: DEADLINE.delivery,
     show: k.show(exec, a.number),
     who: 'A',
   });
-  const toggles: number[] = [];
-  for (let i = 0; i < 2; i++) {
-    toggles.push(k.now());
-    await k.addLabels(exec, a.number, ['e2e-wake']);
-    await k.removeLabel(exec, a.number, 'e2e-wake');
+  let wakeToggles: Journey['wakeToggles'];
+  if ('missed' in deliverJob) {
+    k.ctx.log(`journey: no wakes sent during A's Deliver: ${deliverJob.missed}`);
+    wakeToggles = { missed: deliverJob.missed };
+  } else {
+    const toggles: number[] = [];
+    for (let i = 0; i < 2; i++) {
+      toggles.push(k.now());
+      await k.addLabels(exec, a.number, ['e2e-wake']);
+      await k.removeLabel(exec, a.number, 'e2e-wake');
+    }
+    wakeToggles = { jobId: deliverJob.id, at: toggles };
   }
 
   const branch = `nibfin/issue-${a.number}`;
@@ -334,7 +437,7 @@ async function driveJourney(k: Kit, filed: number[]): Promise<Journey> {
     endedAt: k.now(),
     aBeforeScope,
     aScopedAt,
-    wakeToggles: { jobId: deliverJob.id, at: toggles },
+    wakeToggles,
     aPr,
     mergeSha,
     openWhileCdHeld,
