@@ -39,7 +39,7 @@ import {
   statusJson,
 } from './support.ts';
 import type { AutoShown, Dashboard, Secrets, View } from './support.ts';
-import { READ_ONLY_REPO } from './operations.ts';
+import { READ_ONLY_REPO, REPO_OPERATION, repoOperation } from './operations.ts';
 
 const num = (i: Issue) => `#${i.number}`;
 const hasNumber = (text: string, i: Issue) => new RegExp(`#${i.number}\\b`).test(text);
@@ -666,18 +666,24 @@ async function repoView(page: Page, ctx: RunContext, f: Fixtures, notes: string[
     JSON.stringify({ zoomed, panned }),
   );
 
-  // R9.15: Init and Upgrade open with the repository filled in.
-  for (const op of [/^init\b/i, /^upgrade\b/i]) {
-    await (await mustButton(page, op, 'R9.15', 'the repo view')).click();
+  // R9.15: Init and Upgrade open with the repository filled in. Each is looked up where the
+  // Dashboard offers it: Upgrade on the execution sandbox, which uses Nibfin (opened first,
+  // while it is still selected), and Init on a repository not using Nibfin yet (R9.16).
+  const operations: [keyof typeof REPO_OPERATION, string][] = [
+    ['upgrade', exec],
+    ['init', READ_ONLY_REPO],
+  ];
+  for (const [op, repo] of operations) {
+    await (await repoOperation(page, repo, op, 'R9.15')).click();
     const d = await dialog(page);
     const values = await d
       .getByRole('textbox')
       .or(d.getByRole('combobox'))
       .evaluateAll((els) => els.map((e) => (e as unknown as { value?: string }).value ?? e.textContent ?? ''));
     check(
-      values.some((v) => v.includes(exec)),
+      values.some((v) => v.includes(repo)),
       'R9.15',
-      `${op} to open with ${exec} filled in`,
+      `${op} to open with ${repo} filled in`,
       values.join(', ') || 'no field',
     );
     await closeDialog(page);
