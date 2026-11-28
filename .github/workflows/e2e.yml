@@ -71,10 +71,16 @@ jobs:
     outputs:
       commit: ${{ steps.target.outputs.commit }}
       execute: ${{ steps.plan.outputs.execute }}
+      e2e: ${{ steps.e2e.outputs.sha }}
     steps:
+      # A retest may wait in line for hours. It tests the newest main when it starts,
+      # not the commit current when it was queued, so it never reports a stale failure.
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
+          ref: ${{ github.event_name == 'repository_dispatch' && 'main' || github.sha }}
           persist-credentials: false
+      - id: e2e
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: '24'
@@ -151,6 +157,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
+          ref: ${{ needs.select.outputs.e2e || github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
@@ -210,6 +217,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
+          ref: ${{ needs.select.outputs.e2e || github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
