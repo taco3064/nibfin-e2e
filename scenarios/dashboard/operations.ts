@@ -50,6 +50,8 @@ const CONFIRM = /^(confirm|apply|run|yes|proceed)\b/i;
 /** The Runner view's add and remove controls: the whole word anywhere in the name, as in the R9.17 check. */
 export const RUNNER_ADD = /\badd\b/i;
 export const RUNNER_REMOVE = /\bremove\b/i;
+/** The Runner view's login control: the whole word `login` or `log in` anywhere in the name, also used by the login relay. */
+export const RUNNER_LOGIN = /\blog ?in\b/i;
 
 /** Sets a dialog field by its label: a select, a combobox, a checkbox or a text field. */
 export async function setField(d: Locator, label: RegExp, value: string | boolean): Promise<void> {
@@ -142,7 +144,7 @@ async function commandDialogs(page: Page, ctx: RunContext, schema: Map<string, S
   };
   await open('runner', RUNNER_ADD, 'runner add');
   await open('runner', RUNNER_REMOVE, 'runner remove');
-  await open('runner', /^log ?in\b/i, 'login');
+  await open('runner', RUNNER_LOGIN, 'login');
   await open('repo', /^init\b/i, 'init');
   await open('repo', /^upgrade\b/i, 'upgrade');
   for (const c of ['pause', 'resume', 'status']) if (!schema.has(c)) problems.push(`${c}: not in /api/commands`);

@@ -1,7 +1,7 @@
 import { deepEqual, equal, ok } from 'node:assert/strict';
 import { test } from 'node:test';
 import { buttonNamesFromAriaSnapshot, missingButtonMessage } from '../../scenarios/dashboard/checks.ts';
-import { RUNNER_ADD, RUNNER_REMOVE } from '../../scenarios/dashboard/operations.ts';
+import { RUNNER_ADD, RUNNER_LOGIN, RUNNER_REMOVE } from '../../scenarios/dashboard/operations.ts';
 
 test('the Runner add matcher accepts add as a whole word anywhere in the name', () => {
   for (const name of ['Add', 'Runner add', 'Add runner', '+ Add runner', 'runner-add']) ok(RUNNER_ADD.test(name), name);
@@ -12,6 +12,11 @@ test('the Runner remove matcher accepts remove as a whole word anywhere in the n
   for (const name of ['Remove', 'Runner remove', 'Remove runner', '− Remove runner'])
     ok(RUNNER_REMOVE.test(name), name);
   for (const name of ['Removed', 'Removal', 'Unremovable']) ok(!RUNNER_REMOVE.test(name), name);
+});
+
+test('the Runner login matcher accepts login or log in as a whole word anywhere in the name', () => {
+  for (const name of ['Login', 'Log in', 'Claude login', 'Re-login']) ok(RUNNER_LOGIN.test(name), name);
+  for (const name of ['Logged in', 'Blogin', 'Catalogin']) ok(!RUNNER_LOGIN.test(name), name);
 });
 
 test('button names come from the button lines of an aria snapshot', () => {
