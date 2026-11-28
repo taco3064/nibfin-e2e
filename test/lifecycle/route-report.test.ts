@@ -2,7 +2,8 @@ import { deepEqual, doesNotMatch, equal, match, ok } from 'node:assert/strict';
 import { test } from 'node:test';
 import { createGitHub } from '../../src/host/github.ts';
 import { Kit } from '../../scenarios/lifecycle/kit.ts';
-import { BLOCKER_REPORT } from '../../scenarios/lifecycle/marks.ts';
+import { refersToIssue } from '../../scenarios/lifecycle/analysis.ts';
+import { BLOCKER_REPORT, NO_ASSIGNEE_REPORT } from '../../scenarios/lifecycle/marks.ts';
 import {
   EVIDENCE_TOTAL,
   reportFailure,
@@ -211,4 +212,57 @@ test('route report: an unreadable log is shown as unreadable in the evidence, an
     m,
     /route job logs unreadable: route job 11 \(run 1\): .*404.*; route jobs read: job 11 \(run 1, success, completed 2026-11-26T10:03:00Z\) log unreadable; route jobs skipped: none; marked comments by 2026-11-26T10:05:00\.000Z: read 1 comment: #1 marker route "Routed: no stage yet"$/,
   );
+});
+
+test("route report: Core's quoted route lines match their pattern and name their Issue", () => {
+  const repo = 'taco3064/nibfin-e2e-sandbox';
+  const lines: [string, number, RegExp][] = [
+    [`${repo}#490: nothing to run (ineligible (blocked))`, 490, BLOCKER_REPORT],
+    [`${repo}#492: nothing to run (ineligible (blocked))`, 492, BLOCKER_REPORT],
+    [`${repo}#494: nothing to run (ineligible (no-assignee))`, 494, NO_ASSIGNEE_REPORT],
+  ];
+  for (const [line, n, pattern] of lines) {
+    match(line, pattern);
+    equal(refersToIssue(line, repo, n), true, line);
+    equal(refersToIssue(line, repo, n + 1), false, line);
+    equal(refersToIssue(line, 'taco3064/nibfin-e2e', n), false, line);
+  }
+});
+
+test('route report: earlier wordings still match, and unrelated route lines match neither pattern', () => {
+  for (const t of ['blocked by #4', 'Waiting: blocker #4 is open', 'blocking dependency #4']) match(t, BLOCKER_REPORT);
+  for (const t of ['no assignee', 'no-assignees', 'without assignees', 'assignees: none']) match(t, NO_ASSIGNEE_REPORT);
+  for (const t of [
+    'o/exec#5: nothing to run (ineligible (paused))',
+    'o/exec#5: nothing to run',
+    'o/exec#5 is not blocked',
+    'o/exec#5 is unblocked',
+  ]) {
+    doesNotMatch(t, BLOCKER_REPORT);
+    doesNotMatch(t, NO_ASSIGNEE_REPORT);
+  }
+});
+
+test("route report: Core's ineligible route lines naming the Issue report", async () => {
+  const blocked = await setup([ran], '2026-11-26T10:02:30Z o/exec#5: nothing to run (ineligible (blocked))\n', []);
+  deepEqual(await routeReport(blocked.k, blocked.s, 5, BLOCKER_REPORT, cutoff), { reported: true, unreadable: [] });
+  const none = await setup([ran], '2026-11-26T10:02:30Z o/exec#5: nothing to run (ineligible (no-assignee))\n', []);
+  deepEqual(await routeReport(none.k, none.s, 5, NO_ASSIGNEE_REPORT), { reported: true, unreadable: [] });
+});
+
+test('route report: a paused or bare nothing-to-run line does not report with either pattern', async () => {
+  for (const log of ['o/exec#5: nothing to run (ineligible (paused))\n', 'o/exec#5: nothing to run\n']) {
+    for (const pattern of [BLOCKER_REPORT, NO_ASSIGNEE_REPORT]) {
+      const { k, s } = await setup([ran], log, []);
+      deepEqual(await routeReport(k, s, 5, pattern), { reported: false, unreadable: [] }, `${log} ${pattern}`);
+    }
+  }
+});
+
+test('route report: a matching line about another Issue does not count, while a marked comment on the Issue still does', async () => {
+  const log = '2026-11-26T10:02:30Z o/exec#4: nothing to run (ineligible (blocked))\no/exec#50: blocked by #3\n';
+  const other = await setup([ran], log, []);
+  deepEqual(await routeReport(other.k, other.s, 5, BLOCKER_REPORT, cutoff), { reported: false, unreadable: [] });
+  const marked = await setup([ran], log, [comment('<!-- nibfin:route --> Waiting: blocked by #4')]);
+  deepEqual(await routeReport(marked.k, marked.s, 5, BLOCKER_REPORT, cutoff), { reported: true, unreadable: [] });
 });
