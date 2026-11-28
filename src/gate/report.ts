@@ -175,10 +175,12 @@ export function readPlanView(text: string): PlanView | { error: string } {
         isObject(g) &&
         typeof g.id === 'string' &&
         RULE.test(g.id) &&
-        (g.missing === NOT_IN_MAP || platforms(g.missing)),
+        (g.missing === NOT_IN_MAP || platforms(g.missing)) &&
+        (g.selectedBy === undefined ||
+          (Array.isArray(g.selectedBy) && g.selectedBy.every((u) => typeof u === 'string'))),
     )
   ) {
-    return { error: 'gaps must be a list of {id, missing}' };
+    return { error: 'gaps must be a list of {id, missing, selectedBy?}' };
   }
   if (
     !Array.isArray(unselectedGaps) ||
@@ -430,7 +432,8 @@ export async function report(input: ReportInput): Promise<{ output: ReportOutput
     const title = `Coverage gap: ${gap.id}`;
     const missing =
       gap.missing === NOT_IN_MAP ? `${gap.id} is ${NOT_IN_MAP}` : `no scenario on ${gap.missing.join(', ')}`;
-    const from = plan?.source?.url ? ` It was selected by ${plan.source.url}.` : '';
+    const by = gap.selectedBy?.length ? gap.selectedBy : plan?.source?.url ? [plan.source.url] : [];
+    const from = by.length ? ` It was selected by ${by.join(', ')}.` : '';
     const body = [
       `Rule ${gap.id} was selected in the release gate run ${runLink}, but ${missing}.${from}`,
       '',

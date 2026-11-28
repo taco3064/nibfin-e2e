@@ -531,3 +531,31 @@ test('a leg without a usable result files "Job failed" for its own job once; a c
   deepEqual(lost.output.filed, []);
   match(lost.output.summary, /\| job on runner gone \| not found, left to the final report \|/);
 });
+
+test('a gap selected by several delivered Issues names each of them; a bad selectedBy makes no usable plan', async () => {
+  const gh = gate();
+  const urls = ['https://github.com/taco3064/nibfin-core/issues/1', 'https://github.com/taco3064/gh-nibfin/issues/4'];
+  const p = plan({
+    gaps: [{ id: 'R5.14', missing: ['macos'], selectedBy: urls }],
+    coverage: { passed: false, covered: 2, total: 3 },
+    sources: [],
+    since: '2026-11-27T00:00:00Z',
+  });
+  const { output, failed } = await report({ gh, env, plan: p, results: [], registry });
+  equal(failed, true);
+  deepEqual(
+    output.filed.map((f) => f.title),
+    ['Coverage gap: R5.14'],
+  );
+  match(gh.repo(E2E)[0]?.body ?? '', /no scenario on macos\. It was selected by https:\S+issues\/1, https:\S+issues\/4\./);
+
+  const bad = await report({
+    gh: gate(),
+    env,
+    plan: plan({ gaps: [{ id: 'R5.14', missing: ['macos'], selectedBy: [7] }] }),
+    results: [],
+    registry,
+  });
+  equal(bad.failed, true);
+  deepEqual(bad.output.filed, []);
+});

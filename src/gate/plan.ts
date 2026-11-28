@@ -8,11 +8,15 @@ import type { WaitingRule } from '../run.ts';
 import { authorityCitations } from './citations.ts';
 import { decisionTable } from './decisions.ts';
 import type { Decision } from './decisions.ts';
-import { readImpact } from './impact.ts';
+import { listDeliveredSince, readImpact } from './impact.ts';
 import type { ChangeContext, ImpactSource, IssueRef } from './impact.ts';
 
+/** `preface` holds decisions made before planning, such as how `since` was found; they lead the summary. */
 export type PlanRequest =
-  { mode: 'delivered'; ref: IssueRef } | { mode: 'select'; rules: string[]; sections: string[] } | { mode: 'all' };
+  | { mode: 'delivered'; ref: IssueRef; preface?: Decision[] }
+  | { mode: 'delivered-since'; since: string; preface?: Decision[] }
+  | { mode: 'select'; rules: string[]; sections: string[] }
+  | { mode: 'all' };
 
 export const NOT_IN_MAP = 'not in coverage-map.json';
 
@@ -20,11 +24,18 @@ export interface Gap {
   id: RuleId;
   /** The required platforms without a scenario, or why the rule has none. */
   missing: Platform[] | typeof NOT_IN_MAP;
+  /** In `delivered-since` mode, the URLs of the covered Issues whose rules include this one. */
+  selectedBy?: string[];
 }
 
 export interface Plan {
   mode: PlanRequest['mode'];
+  /** The one delivered Issue in `delivered` mode; null otherwise. */
   source: ImpactSource | null;
+  /** Every delivered Issue the selection covers: one in `delivered` mode, all found in `delivered-since`. */
+  sources: ImpactSource[];
+  /** In `delivered-since` mode, the time from which delivered Issues were collected. */
+  since?: string;
   /** What the harness runs (`npm run e2e -- --plan`). */
   selection: { all: true } | { all: false; rules: RuleId[] };
   waiting: WaitingRule[];
@@ -79,12 +90,38 @@ export async function makePlan(
 ): Promise<PlanOutcome> {
   const decisions: Decision[] = [];
   let source: ImpactSource | null = null;
+  const covered: ImpactSource[] = [];
+  /** Per rule, the URLs of the covered Issues that selected it (`delivered-since` only). */
+  const selectedBy = new Map<RuleId, string[]>();
   let ids: RuleId[];
+  if (request.mode === 'delivered' || request.mode === 'delivered-since') decisions.push(...(request.preface ?? []));
   if (request.mode === 'delivered') {
     const impact = await readImpact(gh, request.ref, entries, { scenarios, sources });
     source = impact.source;
+    covered.push(impact.source);
     ids = impact.ids;
     decisions.push(...impact.decisions);
+  } else if (request.mode === 'delivered-since') {
+    const refs = await listDeliveredSince(gh, request.since);
+    decisions.push({
+      subject: 'selection',
+      decision: refs.length ? 'every Issue delivered since' : 'no delivered Issue found',
+      reason: refs.length
+        ? `closed with \`delivered\` at or after ${request.since}: ${refs.map((r) => `${r.repo}#${r.number}`).join(', ')}`
+        : `no Issue was closed with \`delivered\` at or after ${request.since}`,
+    });
+    ids = [];
+    for (const ref of refs) {
+      const impact = await readImpact(gh, ref, entries, { scenarios, sources });
+      covered.push(impact.source);
+      decisions.push(...impact.decisions);
+      for (const id of impact.ids) {
+        if (!ids.includes(id)) ids.push(id);
+        const by = selectedBy.get(id) ?? [];
+        if (!by.includes(impact.source.url)) by.push(impact.source.url);
+        selectedBy.set(id, by);
+      }
+    }
   } else if (request.mode === 'select') {
     const { selected, errors } = select(entries, scenarios, {
       all: false,
@@ -134,16 +171,20 @@ export async function makePlan(
   }
 
   const all = request.mode === 'all';
+  const withSelectedBy = (gap: Gap): Gap => {
+    const by = selectedBy.get(gap.id);
+    return by ? { ...gap, selectedBy: by } : gap;
+  };
   const selectedIds = new Set(ids);
   const runnableCoverage = computeCoverage(runnable, scenarios);
   const gaps: Gap[] = [];
   if (!all) {
     for (const id of unknown) {
-      gaps.push({ id, missing: NOT_IN_MAP });
+      gaps.push(withSelectedBy({ id, missing: NOT_IN_MAP }));
       decisions.push({ subject: id, decision: 'coverage gap: request', reason: NOT_IN_MAP });
     }
     for (const u of runnableCoverage.uncovered) {
-      gaps.push({ id: u.id, missing: u.missingPlatforms });
+      gaps.push(withSelectedBy({ id: u.id, missing: u.missingPlatforms }));
       decisions.push({
         subject: u.id,
         decision: 'coverage gap: request',
@@ -186,6 +227,8 @@ export async function makePlan(
   const plan: Plan = {
     mode: request.mode,
     source,
+    sources: covered,
+    ...(request.mode === 'delivered-since' ? { since: request.since } : {}),
     selection,
     waiting,
     excluded,
