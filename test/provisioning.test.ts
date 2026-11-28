@@ -13,6 +13,7 @@ import type { HostServices } from '../src/host/services.ts';
 import { MAX_REASON } from '../src/gate/file.ts';
 import {
   OUTPUT_BUDGET,
+  RUNNER_COUNT,
   claudeRunnersLeft,
   createProvisioning,
   outputOf,
@@ -152,11 +153,13 @@ test('nibfin: runner add, init on execution then peer, digest read from the init
   equal(out.status, 'passed', out.reason);
   equal(out.facts?.imageDigest, DIGEST);
   deepEqual([out.facts?.executionPr, out.facts?.peerPr], [5, 3]);
+  equal(out.facts?.runnerCount, 4);
+  match(out.reason, /^4 Runners added;/);
   const gh = h.calls.filter((c) => c.argv[0] === 'gh');
   deepEqual(
     gh.map((c) => c.argv.slice(2)),
     [
-      ['runner', 'add', 'claude', '--count', '2', '--yes'],
+      ['runner', 'add', 'claude', '--count', '4', '--yes'],
       ['init', '--yes'],
       ['init', '-R', PEER, '--yes'],
     ],
@@ -179,6 +182,19 @@ test('nibfin: runner add, init on execution then peer, digest read from the init
 
   equal((await h.teardown('nibfin'))?.status, 'passed');
   deepEqual(h.calls.at(-1)?.argv, ['gh', 'nibfin', 'runner', 'remove', 'claude', '--yes']);
+});
+
+test('nibfin: the Linux leg adds four Runners and the Windows leg keeps two', () => {
+  deepEqual(RUNNER_COUNT, { linux: 4, macos: 2, windows: 2 });
+});
+
+test('nibfin: a failed runner add still records the Runner count it asked for', async () => {
+  const { exec } = fakeExec((argv) =>
+    argv[2] === 'runner' && argv[3] === 'add' ? { code: 1, stderr: 'no podman machine exists' } : undefined,
+  );
+  const out = await harness({ exec }).runStep('nibfin');
+  equal(out.status, 'failed');
+  equal(out.facts?.runnerCount, 4);
 });
 
 test('nibfin: more than one open PR after init fails', async () => {
@@ -210,7 +226,7 @@ test('nibfin: a failed runner add keeps its output in the facts, and teardown st
   const h = harness({ exec });
   const out = await h.runStep('nibfin');
   equal(out.status, 'failed');
-  match(out.reason, /gh nibfin runner add claude --count 2 --yes exited 1: no podman machine exists/);
+  match(out.reason, /gh nibfin runner add claude --count 4 --yes exited 1: no podman machine exists/);
   deepEqual(
     (out.facts?.commands as { code: number }[]).map((c) => c.code),
     [1],
@@ -233,7 +249,7 @@ test('nibfin: a failed runner add with progress on stderr and the error on stdou
   equal(out.status, 'failed');
   match(
     out.reason,
-    /runner add claude --count 2 --yes exited 1: stderr: pulling image\nstarting podman machine\nstdout: runner_install_failed: configure claude-1: config\.sh: registration token expired$/,
+    /runner add claude --count 4 --yes exited 1: stderr: pulling image\nstarting podman machine\nstdout: runner_install_failed: configure claude-1: config\.sh: registration token expired$/,
   );
 });
 

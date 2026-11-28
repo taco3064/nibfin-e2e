@@ -2,7 +2,7 @@ import { deepEqual, equal, match, ok, rejects } from 'node:assert/strict';
 import { test } from 'node:test';
 import { approvalRuleset, prepareFixture } from '../../scenarios/lib/fixture.ts';
 import type { FixtureState } from '../../scenarios/lib/fixture.ts';
-import { localRunners, runnerSlot } from '../../scenarios/lib/runners.ts';
+import { localRunners, runnerSlot, setSlotServices, slotsOf } from '../../scenarios/lib/runners.ts';
 import { DEADLINE } from '../../scenarios/lib/waits.ts';
 import { createGitHub } from '../../src/host/github.ts';
 import { EXEC, PEER, BASE_TREE, mainFiles, runner, setup } from './kit.ts';
@@ -15,10 +15,15 @@ test('runnerSlot reads the slot from the registration suffix only', () => {
   equal(runnerSlot('x-claude-0'), undefined);
 });
 
+test('slotsOf lists claude-1 to claude-<count>', () => {
+  deepEqual(slotsOf(2), ['claude-1', 'claude-2']);
+  deepEqual(slotsOf(4), ['claude-1', 'claude-2', 'claude-3', 'claude-4']);
+});
+
 test('localRunners resolves host-style names to both slots and fails on any other set, listing what it saw', async () => {
   const h = setup();
   deepEqual(
-    (await localRunners(h.kit.github, EXEC)).map((r) => [r.slot, r.name]),
+    (await localRunners(h.kit.github, EXEC, 2)).map((r) => [r.slot, r.name]),
     [
       ['claude-1', 'myhost-1a2b3c4d-claude-1'],
       ['claude-2', 'myhost-1a2b3c4d-claude-2'],
@@ -32,10 +37,97 @@ test('localRunners resolves host-style names to both slots and fails on any othe
   };
   for (const [what, list] of Object.entries(sets)) {
     h.repo(EXEC).runners = list;
-    const err = await localRunners(h.kit.github, EXEC).catch((e: Error) => e.message);
-    match(String(err), /expected exactly two runner registrations ending in -claude-1 and -claude-2; saw /, what);
+    const err = await localRunners(h.kit.github, EXEC, 2).catch((e: Error) => e.message);
+    match(String(err), /expected exactly 2 runner registrations ending in -claude-1, -claude-2; saw /, what);
     for (const r of list) ok(String(err).includes(r.name), `${what}: lists ${r.name}`);
   }
+});
+
+test('localRunners with a count of four expects claude-1 to claude-4, in slot order', async () => {
+  const h = setup({ runners: 4 });
+  h.repo(EXEC).runners.reverse();
+  deepEqual(
+    (await localRunners(h.kit.github, EXEC, 4)).map((r) => r.slot),
+    ['claude-1', 'claude-2', 'claude-3', 'claude-4'],
+  );
+  const err = await localRunners(h.kit.github, EXEC, 2).catch((e: Error) => e.message);
+  match(String(err), /expected exactly 2 runner registrations ending in -claude-1, -claude-2; saw .*claude-4/);
+  h.repo(EXEC).runners = [runner(1, 'claude-1'), runner(2, 'claude-2'), runner(3, 'claude-3')];
+  match(
+    String(await localRunners(h.kit.github, EXEC, 4).catch((e: Error) => e.message)),
+    /expected exactly 4 runner registrations ending in -claude-1, -claude-2, -claude-3, -claude-4; saw /,
+  );
+});
+
+test('prepareFixture waits for every Runner the nibfin step added, not only two', async () => {
+  const h = setup({ runners: 4 });
+  h.repo(EXEC).runners[3] = runner(4, 'claude-4', { busy: true });
+  const err = await prepareFixture(h.kit, EXEC, { files: [{ path: 'a.txt', content: 'a\n' }] }).catch(
+    (e: Error) => e.message,
+  );
+  match(String(err), /^Runners not online and idle: claude-4 \(registration myhost-1a2b3c4d-claude-4\) is online and busy/);
+  deepEqual(h.fake.writes, []);
+});
+
+test('prepareFixture fails naming the cause when the nibfin step recorded no Runner count', async () => {
+  const h = setup();
+  const kit = { ...h.kit, facts: (id: string) => (id === 'nibfin' ? { ...h.kit.facts(id), runnerCount: undefined } : undefined) };
+  await rejects(
+    prepareFixture(kit, EXEC, { files: [{ path: 'a.txt', content: 'a\n' }] }),
+    /the nibfin provisioning step recorded no Runner count/,
+  );
+  deepEqual(h.fake.writes, []);
+});
+
+function systemctlHost(states: Record<string, string>, fail?: string) {
+  const calls: { argv: string[]; env?: Record<string, string> }[] = [];
+  const exec = async (argv: string[], options?: { env?: Record<string, string> }) => {
+    calls.push({ argv, env: options?.env });
+    const unit = argv.at(-1) ?? '';
+    if (argv[2] === 'is-active') return { code: 0, stdout: `${states[unit] ?? 'active'}\n`, stderr: '' };
+    if (unit === fail) return { code: 5, stdout: '', stderr: 'Unit not loaded.' };
+    if (argv[2] === 'stop') states[unit] = 'inactive';
+    if (argv[2] === 'start') states[unit] = 'active';
+    return { code: 0, stdout: '', stderr: '' };
+  };
+  return { calls, exec, states };
+}
+
+test('setSlotServices stops and starts the named slots only, with the user runtime directory, and reads them back', async () => {
+  const host = systemctlHost({});
+  await setSlotServices(host.exec, { XDG_RUNTIME_DIR: '/run/user/1001' }, 'stop', ['claude-3', 'claude-4']);
+  deepEqual(
+    host.calls.map((c) => c.argv.join(' ')),
+    [
+      'systemctl --user stop nibfin-runner-claude-3.service',
+      'systemctl --user stop nibfin-runner-claude-4.service',
+      'systemctl --user is-active nibfin-runner-claude-3.service',
+      'systemctl --user is-active nibfin-runner-claude-4.service',
+    ],
+  );
+  ok(host.calls.every((c) => c.env?.XDG_RUNTIME_DIR === '/run/user/1001'));
+  await setSlotServices(host.exec, { XDG_RUNTIME_DIR: '/run/user/1001' }, 'start', ['claude-3', 'claude-4']);
+  deepEqual(host.states, {
+    'nibfin-runner-claude-3.service': 'active',
+    'nibfin-runner-claude-4.service': 'active',
+  });
+});
+
+test('setSlotServices fails naming a unit whose command failed or that reads back in the wrong state', async () => {
+  const failing = systemctlHost({}, 'nibfin-runner-claude-4.service');
+  await rejects(
+    setSlotServices(failing.exec, {}, 'stop', ['claude-3', 'claude-4']),
+    /^Error: systemctl --user stop nibfin-runner-claude-4\.service exited 5: Unit not loaded\.$/,
+  );
+  const stuck = systemctlHost({});
+  const exec = async (argv: string[], options?: { env?: Record<string, string> }) =>
+    argv[2] === 'is-active' && argv[3] === 'nibfin-runner-claude-3.service'
+      ? { code: 0, stdout: 'deactivating\n', stderr: '' }
+      : stuck.exec(argv, options);
+  await rejects(
+    setSlotServices(exec, {}, 'stop', ['claude-3', 'claude-4']),
+    /^Error: after systemctl --user stop: nibfin-runner-claude-3\.service is deactivating$/,
+  );
 });
 
 const runnerReads = (h: ReturnType<typeof setup>) =>
@@ -85,7 +177,7 @@ test('a wrong set of Runner registrations fails prepareFixture at once, without 
   h.repo(EXEC).runners = [runner(1, 'claude-1')];
   await rejects(
     prepareFixture(h.kit, EXEC, { files: [{ path: 'a.txt', content: 'a\n' }] }),
-    /expected exactly two runner registrations ending in -claude-1 and -claude-2/,
+    /expected exactly 2 runner registrations ending in -claude-1, -claude-2/,
   );
   equal(runnerReads(h), 1);
   equal(h.kit.now(), 0);

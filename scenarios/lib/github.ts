@@ -26,6 +26,20 @@ export interface NibfinFacts {
   peerPr: number;
   imageDigest: string;
   hostBefore: HostState;
+  /** How many Claude Runners the step added (`runner add claude --count <n>`). */
+  runnerCount: number;
+}
+
+/**
+ * The number of Claude Runners the `nibfin` step added, for callers that hold only the
+ * facts reader (a kit). A missing or malformed count fails naming that cause, so no scenario
+ * falls back to a guessed number.
+ */
+export function runnerCount(facts: RunContext['facts']): number {
+  const n = facts('nibfin')?.runnerCount;
+  if (typeof n !== 'number' || !Number.isInteger(n) || n < 1)
+    throw new Error('the nibfin provisioning step recorded no Runner count');
+  return n;
 }
 
 /** The facts of the `nibfin` provisioning step; it passed, so they are complete. */
@@ -41,6 +55,7 @@ export function nibfinFacts(ctx: RunContext): NibfinFacts {
   ) {
     throw new Error('the nibfin provisioning step left no complete facts');
   }
+  runnerCount(ctx.facts);
   return f as NibfinFacts;
 }
 

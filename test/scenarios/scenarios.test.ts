@@ -256,6 +256,9 @@ function modelSim(
   opts: {
     sameRunner?: boolean;
     failRestore?: boolean;
+    /** Runners on the host (two unless given); `failStart` makes starting a stopped slot fail. */
+    runners?: number;
+    failStart?: boolean;
     peerLabels?: string[];
     execComments?: string[];
     later?: (repo: string) => void;
@@ -266,6 +269,7 @@ function modelSim(
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, '.env'), 'LANG=C.UTF-8\n');
   let restarts = 0;
+  const units = new Map<string, string>();
   const envAtStart: string[] = [];
   /** Each fixture's labels while its Shape Job runs, before it publishes. */
   const labelsDuringShape = new Map<string, string[]>();
@@ -287,8 +291,16 @@ function modelSim(
             during: during(repo),
           },
     {
+      runners: opts.runners,
       respond: (argv) => {
         if (argv[0] !== 'systemctl') return undefined;
+        const unit = argv.at(-1) ?? '';
+        if (argv[2] === 'stop' || argv[2] === 'start') {
+          if (argv[2] === 'start' && opts.failStart) return { code: 1, stderr: 'Unit failed to start' };
+          units.set(unit, argv[2] === 'stop' ? 'inactive' : 'active');
+          return {};
+        }
+        if (argv[2] === 'is-active') return { stdout: `${units.get(unit) ?? 'active'}\n` };
         envAtStart.push(readFileSync(join(dir, '.env'), 'utf8'));
         return ++restarts === 2 && opts.failRestore ? { code: 1, stderr: 'Unit not found' } : {};
       },
@@ -454,6 +466,44 @@ test('model-choice: a Shape that ends with pending fails at once naming it', asy
   match(out.reason, /the Shape of o\/peer#\d+ ended with pending; o\/peer#\d+ labels \[scope, pending\]/);
   equal(readFileSync(envFile, 'utf8'), 'LANG=C.UTF-8\n');
   for (const r of [EXEC, PEER]) equal(sim.repo(r).issues[0]?.state, 'closed');
+});
+
+test('model-choice: on a host with four Runners, slots 3 and 4 are stopped while it runs and started again', async () => {
+  const { sim } = modelSim({ runners: 4 });
+  const out = await modelChoice(() => sim.kit).run(ctxFor());
+  equal(out.status, 'passed', out.reason);
+  const systemctl = sim.calls.filter((c) => c.argv[0] === 'systemctl').map((c) => c.argv.slice(2).join(' '));
+  deepEqual(systemctl, [
+    'stop nibfin-runner-claude-3.service',
+    'stop nibfin-runner-claude-4.service',
+    'is-active nibfin-runner-claude-3.service',
+    'is-active nibfin-runner-claude-4.service',
+    'restart nibfin-runner-claude-1.service',
+    'restart nibfin-runner-claude-1.service',
+    'start nibfin-runner-claude-3.service',
+    'start nibfin-runner-claude-4.service',
+    'is-active nibfin-runner-claude-3.service',
+    'is-active nibfin-runner-claude-4.service',
+  ]);
+});
+
+test('model-choice: a stopped slot that does not start again fails the scenario naming the unit', async () => {
+  const { sim } = modelSim({ runners: 4, failStart: true });
+  const out = await modelChoice(() => sim.kit).run(ctxFor());
+  equal(out.status, 'failed');
+  match(
+    out.reason,
+    /starting Runners claude-3, claude-4 again failed: systemctl --user start nibfin-runner-claude-3\.service exited 1: Unit failed to start/,
+  );
+});
+
+test('model-choice: on a host with two Runners, no slot is stopped', async () => {
+  const { sim } = modelSim();
+  equal((await modelChoice(() => sim.kit).run(ctxFor())).status, 'passed');
+  equal(
+    sim.calls.some((c) => c.argv[0] === 'systemctl' && c.argv[2] !== 'restart'),
+    false,
+  );
 });
 
 test('model-choice: a failed restore fails the scenario', async () => {

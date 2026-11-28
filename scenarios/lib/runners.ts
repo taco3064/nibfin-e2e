@@ -1,4 +1,6 @@
+import type { Env, ExecResult } from '../../src/host/exec.ts';
 import type { GitHub } from '../../src/host/github.ts';
+import { userRuntimeDir } from '../../src/host/hoststate.ts';
 
 /**
  * The Runner slot (`claude-<n>`, its directory and service name) of a registration.
@@ -15,14 +17,18 @@ export interface LocalRunner {
   busy: boolean;
 }
 
-export const SLOTS = ['claude-1', 'claude-2'] as const;
+/** The slots `runner add claude --count <count>` creates: claude-1 … claude-<count>. */
+export function slotsOf(count: number): string[] {
+  return Array.from({ length: count }, (_, i) => `claude-${i + 1}`);
+}
 
 /**
- * This host's two Runners, read from the execution sandbox (Runners register only there).
+ * This host's Runners, read from the execution sandbox (Runners register only there).
  * The pre-run reset deleted every registration before `runner add`, so exactly the slots
- * claude-1 and claude-2 must be present; any other set fails and lists what was seen.
+ * claude-1 … claude-<count> must be present, where `count` is what the `nibfin` step
+ * added; any other set fails, naming the count and listing what was seen.
  */
-export async function localRunners(gh: GitHub, execution: string): Promise<LocalRunner[]> {
+export async function localRunners(gh: GitHub, execution: string, count: number): Promise<LocalRunner[]> {
   const all = await gh.list<{ name: string; status: string; busy?: boolean }>(
     `/repos/${execution}/actions/runners`,
     'runners',
@@ -34,13 +40,47 @@ export async function localRunners(gh: GitHub, execution: string): Promise<Local
     status: r.status,
     busy: r.busy === true,
   }));
+  const want = slotsOf(count);
   const slots = out.map((r) => r.slot).sort();
-  if (out.length !== SLOTS.length || slots.join(' ') !== [...SLOTS].join(' ')) {
+  if (out.length !== want.length || slots.join(' ') !== [...want].sort().join(' ')) {
     throw new Error(
-      `${execution}: expected exactly two runner registrations ending in -claude-1 and -claude-2; saw ${seen()}`,
+      `${execution}: expected exactly ${count} runner registrations ending in ${want.map((w) => `-${w}`).join(', ')}; saw ${seen()}`,
     );
   }
-  return out.sort((a, b) => (a.slot < b.slot ? -1 : 1));
+  return out.sort((a, b) => slotNumber(a.slot) - slotNumber(b.slot));
+}
+
+const slotNumber = (slot: string) => Number(slot.slice('claude-'.length));
+
+/**
+ * Stops or starts the systemd user services of the given Runner slots
+ * (`nibfin-runner-<slot>.service`) and reads each back with `is-active`, so a scenario can run
+ * with fewer active Runners than the host has. `systemctl --user` needs the user manager's
+ * runtime directory, which a hosted job's shell may not set, so it is passed explicitly.
+ * A failed command or a unit in the wrong state afterwards throws naming the unit.
+ */
+export async function setSlotServices(
+  exec: (argv: string[], options?: { env?: Record<string, string> }) => Promise<ExecResult>,
+  env: Env,
+  action: 'stop' | 'start',
+  slots: string[],
+): Promise<void> {
+  const runtime = userRuntimeDir(env);
+  const options = runtime === undefined ? {} : { env: { XDG_RUNTIME_DIR: runtime } };
+  const units = slots.map((slot) => `nibfin-runner-${slot}.service`);
+  for (const unit of units) {
+    const r = await exec(['systemctl', '--user', action, unit], options);
+    if (r.code !== 0)
+      throw new Error(`systemctl --user ${action} ${unit} exited ${r.code}: ${(r.stderr || r.stdout).trim().slice(-1000)}`);
+  }
+  const want = action === 'start' ? ['active'] : ['inactive', 'failed'];
+  const wrong: string[] = [];
+  for (const unit of units) {
+    const r = await exec(['systemctl', '--user', 'is-active', unit], options);
+    const state = r.stdout.trim() || `unknown (exit ${r.code})`;
+    if (!want.includes(state)) wrong.push(`${unit} is ${state}`);
+  }
+  if (wrong.length) throw new Error(`after systemctl --user ${action}: ${wrong.join('; ')}`);
 }
 
 /** The problem naming every Runner that is not online and idle, or undefined when all are. */
