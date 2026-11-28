@@ -18,6 +18,7 @@ import {
   createProvisioning,
   outputOf,
   readPeriodicBaseline,
+  recordStartTask,
 } from '../src/provisioning.ts';
 import type { Platform, RunContext, StepOutcome } from '../src/types.ts';
 import { FakeGitHub, cleanRepo, fakeExec, fakeStart } from './host/fakes.ts';
@@ -608,4 +609,48 @@ test('readPeriodicBaseline on Windows: start, read the VM, stop even when the re
     readPeriodicBaseline(run(noStop.exec), { env: {}, exec: noStop.exec }, win()),
     /podman machine stop after reading the VM baseline exited 125: cannot stop/,
   );
+});
+
+test('recordStartTask: records the new tasks and the one that runs podman machine start', async () => {
+  const details: Record<string, { execute: string; arguments: string }[]> = {
+    '\\other': [{ execute: 'cmd.exe', arguments: '/c echo' }],
+    '\\nibfin-podman': [{ execute: '"C:\\Podman\\podman.exe"', arguments: 'machine start' }],
+  };
+  const read: string[] = [];
+  const r = await recordStartTask(
+    () => Promise.resolve(['\\old', '\\other', '\\nibfin-podman']),
+    (t) => {
+      read.push(t);
+      return Promise.resolve({ actions: details[t] ?? [], triggers: ['MSFT_TaskLogonTrigger'], repetitions: [] });
+    },
+    ['\\old'],
+  );
+  deepEqual(read, ['\\other', '\\nibfin-podman']);
+  deepEqual(r.task, { name: '\\nibfin-podman', actions: details['\\nibfin-podman'], triggers: ['MSFT_TaskLogonTrigger'] });
+  deepEqual(
+    r.tasks.map((t) => t.name),
+    ['\\other', '\\nibfin-podman'],
+  );
+  equal(r.error, undefined);
+});
+
+test('recordStartTask: a failed list read is recorded and the helper resolves; a failed detail read stays on that task', async () => {
+  deepEqual(
+    await recordStartTask(
+      () => Promise.reject(new Error('powershell exited 1')),
+      () => Promise.reject(new Error('unused')),
+      [],
+    ),
+    { tasks: [], error: 'powershell exited 1' },
+  );
+  const r = await recordStartTask(
+    () => Promise.resolve(['\\a', '\\b']),
+    (t) =>
+      t === '\\a'
+        ? Promise.reject(new Error('access denied'))
+        : Promise.resolve({ actions: [{ execute: 'podman', arguments: 'machine start' }], triggers: [], repetitions: [] }),
+    [],
+  );
+  deepEqual(r.tasks[0], { name: '\\a', error: 'access denied' });
+  equal(r.task?.name, '\\b');
 });

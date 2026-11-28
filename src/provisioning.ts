@@ -11,11 +11,12 @@ import {
   hostPeriodicRun,
   readHostState,
   readPeriodic,
+  readTask,
   readVmPeriodic,
   seedWslconfig,
   userRuntimeDir,
 } from './host/hoststate.ts';
-import type { HostRun, HostState } from './host/hoststate.ts';
+import type { HostRun, HostState, TaskDetail } from './host/hoststate.ts';
 import type { GitHub } from './host/github.ts';
 import { writeClaudeLogin } from './host/login.ts';
 import { preparePeer, teardownPeer } from './host/peer.ts';
@@ -26,8 +27,43 @@ import type { HostServices } from './host/services.ts';
 import type { Platform, ProvisioningStep, RunContext, StepOutcome } from './types.ts';
 import { createKit } from '../scenarios/lib/kit.ts';
 import { runObservedJob } from '../scenarios/lib/observed.ts';
+import type { StartTaskRecord, TaskSeen } from '../scenarios/lib/github.ts';
+import { startTask } from '../scenarios/management/podman-machine-detached.ts';
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/**
+ * Records the scheduled tasks new against `before` and the one that runs `podman machine
+ * start` (Proposal R5.13), with the same match the R5.12 and R5.13 scenarios use. It never
+ * rejects: a failed list read is kept as the record's `error`, and a failed detail read is
+ * kept on that task while the others are still read, so this record never fails provisioning.
+ */
+export async function recordStartTask(
+  readTasks: () => Promise<string[]>,
+  readDetail: (task: string) => Promise<TaskDetail>,
+  before: string[],
+): Promise<StartTaskRecord> {
+  let names: string[];
+  try {
+    names = (await readTasks()).filter((t) => !before.includes(t));
+  } catch (error) {
+    return { tasks: [], error: message(error) };
+  }
+  const tasks: TaskSeen[] = [];
+  const read: { t: string; d: TaskDetail }[] = [];
+  for (const name of names) {
+    try {
+      const d = await readDetail(name);
+      tasks.push({ name, actions: d.actions, triggers: d.triggers });
+      read.push({ t: name, d });
+    } catch (error) {
+      tasks.push({ name, error: message(error) });
+    }
+  }
+  const start = startTask(read)?.t;
+  const task = tasks.find((t) => t.name === start);
+  return task ? { tasks, task } : { tasks };
+}
 
 /** Room the output leaves in a filed reason for the command and step prefixes, so `cap` never cuts its end. */
 export const OUTPUT_BUDGET = MAX_REASON - 500;
@@ -236,6 +272,16 @@ export function createProvisioning(host: HostServices): ProvisioningStep[] {
           facts.runnerCount = count;
           facts.runnerAdd = true;
           await nibfin(['runner', 'add', 'claude', '--count', String(count), '--yes']);
+          // What runner add left on Windows, so runner-remove can tell which start task it must see removed.
+          if (before.platform === 'windows')
+            facts.startTask = await recordStartTask(
+              async () => {
+                const s = await readHostState(run, 'windows');
+                return s.platform === 'windows' ? s.tasks : [];
+              },
+              (t) => readTask(run, t),
+              before.tasks,
+            );
           await nibfin(['init', '--yes']);
           await nibfin(['init', '-R', SANDBOX.peer, '--yes']);
           const execution = await readInitPr(host.github, SANDBOX.execution);
