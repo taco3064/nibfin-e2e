@@ -24,6 +24,8 @@ import {
   lightProblem,
   stateOf,
   statusValue,
+  manualPauseMissed,
+  pauseAfterManualRefresh,
   pauseAppeared,
   pauseMarkers,
   pausePreconditionProblem,
@@ -651,4 +653,101 @@ test('the no-relayed-URL reason quotes a line reporting an existing login and on
   const tail = /dialog text ends: "([^"]*)"$/.exec(m)?.[1] ?? '';
   equal(tail.length, 300);
   ok(tail.endsWith('Claude: already logged in (setup token) Close'), tail);
+});
+
+const D_BEFORE = { present: true, text: 'D Shape Deliver Done Pause', pauseControls: 1, resumeControls: 0 };
+const D_PAUSED = { present: true, text: 'D Shape Deliver Done Paused Resume', pauseControls: 0, resumeControls: 1 };
+
+/** A scripted manual refresh: a fake clock and sleep, refresh methods and read results in order. */
+function manualRun(reads: (typeof D_BEFORE)[], methods: ('Refresh control' | 'fresh view')[] = ['Refresh control']) {
+  let t = 1_000;
+  let r = 0;
+  let m = 0;
+  const calls = { reads: 0, refreshes: 0 };
+  const run = pauseAfterManualRefresh({
+    before: D_BEFORE,
+    refresh: async () => {
+      calls.refreshes++;
+      t += 3_000;
+      return methods[Math.min(m++, methods.length - 1)] as 'Refresh control' | 'fresh view';
+    },
+    read: async () => {
+      calls.reads++;
+      return reads[Math.min(r++, reads.length - 1)] as typeof D_BEFORE;
+    },
+    since: 0,
+    boundMs: 60_000,
+    everyMs: 2_000,
+    attempts: 2,
+    now: () => t,
+    sleep: async (ms) => {
+      t += ms;
+    },
+  });
+  return { run, calls };
+}
+
+test('a pause that shows only on a later read after the manual refresh is accepted', async () => {
+  const { run, calls } = manualRun([D_BEFORE, D_BEFORE, D_PAUSED]);
+  const o = await run;
+  equal(o.seen, true);
+  equal(calls.refreshes, 1);
+  equal(calls.reads, 3);
+  deepEqual(o.refreshes, [{ method: 'Refresh control', atMs: 4_000 }]);
+  equal(o.waitedMs, 4_000);
+});
+
+test('a pause that shows only after the second manual refresh is accepted', async () => {
+  // 31 reads cover the first refresh's 60 s bound at 2 s intervals.
+  const { run, calls } = manualRun([...Array<typeof D_BEFORE>(31).fill(D_BEFORE), D_PAUSED]);
+  const o = await run;
+  equal(o.seen, true);
+  equal(calls.refreshes, 2);
+  equal(o.refreshes.length, 2);
+  equal(o.refreshes[1]?.method, 'Refresh control');
+});
+
+test('a missing or empty element after the manual refresh never counts as a pause', async () => {
+  const { run } = manualRun([
+    { present: false, text: '', pauseControls: 0, resumeControls: 0 },
+    { present: true, text: '  ', pauseControls: 0, resumeControls: 3 },
+  ]);
+  const o = await run;
+  equal(o.seen, false);
+  equal(o.refreshes.length, 2);
+});
+
+test('a pause never shown after manual refreshes names the method, times, marker, header and wait', async () => {
+  const { run } = manualRun([D_BEFORE]);
+  const o = await run;
+  equal(o.seen, false);
+  equal(o.refreshes.length, 2);
+  ok(o.waitedMs >= 2 * 60_000, `waited ${o.waitedMs}`);
+  const msg = manualPauseMissed({
+    outcome: o,
+    before: D_BEFORE,
+    boundMs: 60_000,
+    marker: 'manual',
+    header: 'Repo   view\n Updates on Refresh  Snapshot 10:42 Refresh',
+  });
+  ok(msg.startsWith('not shown after 2 refresh(es): Refresh control at +4 s, Refresh control at +'), msg);
+  ok(msg.includes(' after the edit; waited '), msg);
+  ok(msg.includes('(bound 60 s after each refresh)'), msg);
+  ok(msg.includes('update marker after the last read: manual'), msg);
+  ok(msg.includes('header: "Repo view Updates on Refresh Snapshot 10:42 Refresh"'), msg);
+  ok(msg.includes(`before the edit: ${describePauseView(D_BEFORE)}`), msg);
+  ok(msg.includes(`after the last read: ${describePauseView(D_BEFORE)}`), msg);
+
+  const fresh = await manualRun([D_BEFORE], ['fresh view']).run;
+  const freshMsg = manualPauseMissed({
+    outcome: fresh,
+    before: D_BEFORE,
+    boundMs: 60_000,
+    marker: 'unreadable (R9.8: …)',
+    header: '',
+  });
+  ok(freshMsg.includes('fresh view at +4 s, fresh view at +'), freshMsg);
+  ok(freshMsg.includes('update marker after the last read: unreadable (R9.8: …)'), freshMsg);
+  ok(freshMsg.includes('header: (none)'), freshMsg);
+  ok(manualPauseMissed({ outcome: fresh, before: D_BEFORE, boundMs: 60_000, marker: 'manual', header: 'x'.repeat(250) }).includes(`"${'x'.repeat(200)}…"`));
 });
