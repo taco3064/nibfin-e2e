@@ -1,7 +1,7 @@
 // Phase 2 scenarios with their own fixtures: routing, the peer, protected paths and fix loops.
 import { planHasNoRulesets } from '../../src/host/sandbox.ts';
 import type { Scenario } from '../../src/types.ts';
-import { AGENT_STAGES, Checks, fixPushProblems, isIssueBranch, markerOf, ranOnRunner, reasonOf, selfHosted, time } from './analysis.ts';
+import { AGENT_STAGES, Checks, fixPushProblems, isIssueBranch, markerOf, parseWakeTitle, pushWakeSha, ranOnRunner, reasonOf, selfHosted, time } from './analysis.ts';
 import type { Issue, Job, Pull, Run, Stage } from './analysis.ts';
 import { DIRECT_READ_MS } from './journeys.ts';
 import { DEADLINE, changeRequest, lifecycle, redact } from './kit.ts';
@@ -270,6 +270,34 @@ export function peerIssueBody(wording: string): string {
   ].join(' ') + '\n\n_This Issue is an automated nibfin-e2e fixture._';
 }
 
+/** The single Nibfin entry a peer repository has (R4.31, R4.32). */
+export const ISSUE_ENTRY = '.github/workflows/nibfin-issue.yml';
+
+/** The run's workflow file without any `@<ref>` suffix, or undefined when the run has no `path`. */
+export function workflowFile(r: Run): string | undefined {
+  const file = r.path?.replace(/@.*$/, '');
+  return file ? file : undefined;
+}
+
+/**
+ * R4.32: one description per run in `peer` that is neither the single entry
+ * (`nibfin-issue.yml`, whatever its title) nor the peer's CI or CD, ordered by
+ * run id. A run without `path` is admitted only by the entry's own titles.
+ */
+export function peerForeignRuns(runs: Run[], peer: string): string[] {
+  const allowed = (r: Run): boolean => {
+    const file = workflowFile(r);
+    if (file === ISSUE_ENTRY) return true;
+    if (r.name === 'CI' || r.name === 'CD') return true;
+    if (file !== undefined) return false;
+    return r.name === 'Nibfin · Issue events' || parseWakeTitle(r.display_title)?.repo === peer || pushWakeSha(r.display_title) !== undefined;
+  };
+  return runs
+    .filter((r) => r.repo === peer && !allowed(r))
+    .sort((a, b) => a.id - b.id)
+    .map((r) => `${workflowFile(r) ?? r.name} "${r.display_title}" (run ${r.id})`);
+}
+
 export const peerDispatch: Scenario = lifecycle({
   id: 'peer-dispatch',
   concurrent: true,
@@ -319,9 +347,8 @@ export const peerDispatch: Scenario = lifecycle({
       // R4.31, R4.32: every stage ran in the execution repository; the peer only forwards events.
       const stageRuns = k.stages(s, peer, n);
       c.check('R4.31', stageRuns.length > 0 && stageRuns.every((r) => r.repo === exec), `Q's stage runs are not all in ${exec}`);
-      const peerRuns = s.runs.filter((r) => r.repo === peer);
-      const foreign = peerRuns.filter((r) => !['Nibfin · Issue events', 'CI', 'CD'].includes(r.name));
-      c.check('R4.32', foreign.length === 0, `${peer} ran other workflows: ${[...new Set(foreign.map((r) => r.name))].join(', ')}`);
+      const foreign = peerForeignRuns(s.runs, peer);
+      c.check('R4.32', foreign.length === 0, `${peer} ran other workflows: ${foreign.join(', ')}`);
       const jobs = await k.agentJobs(s, peer, n);
       c.check('R4.31', jobs.length > 0 && jobs.every((j) => j.labels.includes(label)), `Q's agent jobs ran with ${[...new Set(jobs.map((j) => j.labels.join('+')))].join(', ')}`);
 
