@@ -263,8 +263,8 @@ async function dispatched(
 /**
  * Waits for Issue `n`'s deliver job to be `in_progress` while `nibfin/issue-<n>` is at
  * least one commit ahead of `main`, and returns that job with the branch head read then.
- * The jobs are read directly, so a short deliver job is still seen, and the branch is
- * read again on each read while the job runs without a commit. The wait fails at once
+ * The wait watches I, so a short deliver job is still seen, and the branch is read
+ * directly again on each watched read while the job runs without a commit. The wait fails at once
  * when the job completed before a read saw it running, or completed after one did but
  * before a read saw a commit (Issue #581).
  */
@@ -435,6 +435,8 @@ export const interruptedDeliver: Scenario = lifecycle({
         {
           ...k.about(exec, n, n2),
           gonePast: async (s) => busyGone(await iDeliver(s), await i2Shape(s), runnerNames) ?? (await i2Gone(s)) ?? iGone(s),
+          // The overlap can be short, and I3 is filed as soon as it is seen.
+          watch: [k.watch(exec, n), k.watch(exec, n2)],
         },
       );
 
@@ -442,7 +444,7 @@ export const interruptedDeliver: Scenario = lifecycle({
       const n3 = await file('i3', 'Add sign', changeRequest(k.slug('i3'), 'sign', 'returns -1, 0 or 1 for the sign of its argument'));
 
       // 3: I's Deliver runs and has pushed to its branch. It runs after step 4: I2 was filed when I got shaped or its deliver run appeared.
-      // I's deliver jobs are read directly, so a short Deliver is still seen, and a job that ends before a read saw it running with a commit ends the wait at once (Issue #581).
+      // The wait watches I, so a short Deliver is still seen, and a job that ends before a read saw it running with a commit ends the wait at once (Issue #581).
       const { oldJob, h1 } = await deliverWithCommits(k, n, { since: iFiledAt - 60_000, show });
 
       // 5: I3 is dispatched while the member is online; its job queues (R4.23). I2 may be in Shape or already in Deliver.

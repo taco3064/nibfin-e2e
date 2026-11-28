@@ -15,14 +15,11 @@ import {
   time,
 } from './analysis.ts';
 import type { Issue, Job, Pull, Run, Stage } from './analysis.ts';
-import { DIRECT_READ_MS } from './journeys.ts';
 import { AFTER_DELIVERED, DEADLINE, changeRequest, lifecycle, redact } from './kit.ts';
 import type { Kit } from './kit.ts';
 import { PENDING_MARKER } from './marks.ts';
 import type { Snapshot } from './observe.ts';
 import { closingProblems } from './phase1.ts';
-import { sleep } from '../lib/wait.ts';
-import { untilAborted } from '../../src/abort.ts';
 
 /** Timeline and job timestamps have second precision; events this close count in the product's favor. */
 export const PAUSE_TOLERANCE_MS = 5_000;
@@ -79,9 +76,6 @@ export function pausedDeliverProblem(
   return `M2's deliver job started at ${iso(start)} after pause was removed by ${lastOff.actor} at ${iso(lastOff.at)}, not by the scenario (${saw})${tail}`;
 }
 
-/** How long `shapeLive` reads directly on one snapshot before it lets the observer read the next one (its default interval). */
-const SHAPE_SPAN_MS = 60_000;
-
 /**
  * What `shapeLive` saw of M2's Shape: a shape run, or its self-hosted shape job, queued
  * or in progress (`live`), or a shape job that had already completed before any read saw
@@ -93,9 +87,9 @@ export type ShapeSeen =
 
 /**
  * Waits for M2's shape run, or its self-hosted shape job, to be seen in any status but
- * `completed` (Proposal R4.24 covers queued and running runs). On each snapshot it reads
- * M2's unfinished shape runs and their jobs directly every `DIRECT_READ_MS`, not through
- * the observer's cached job reads, so a short job is still seen (Issue #596). A shape job
+ * `completed` (Proposal R4.24 covers queued and running runs). The wait watches M2, so
+ * the observer reads M2's runs and their jobs again every watch interval and a short job
+ * is still seen (Issue #596). A shape job
  * that completed before any read saw it is returned as `missed`, not thrown; M2 closed,
  * M2 with `pending`, the stall limit and the deadline still end the wait.
  */
@@ -104,56 +98,54 @@ export async function shapeLive(
   n: number,
   o: { deadlineMs: number; show?: (s: Snapshot) => Promise<string> },
 ): Promise<ShapeSeen> {
-  const pause = k.sleep ?? sleep;
   const iso = (t: number) => new Date(t).toISOString();
   /** Runs that completed without running an agent job (cancelled or skipped). */
   const finished = new Set<number>();
   /** The wait's previous look at M2's shape runs: when, and what it saw. */
   let last: { at: number; saw: string } | undefined;
   const fn = async (s: Snapshot): Promise<ShapeSeen | undefined> => {
-    const until = k.now() + SHAPE_SPAN_MS;
-    for (;;) {
-      const at = k.now();
-      const runs = k.stages(s, k.exec, n, ['shape']).filter((r) => !finished.has(r.id));
-      if (!runs.length) {
-        last = { at, saw: 'no unfinished shape run on its snapshot' };
-        return undefined;
-      }
-      let missed: Extract<ShapeSeen, { kind: 'missed' }> | undefined;
-      const saw: string[] = [];
-      for (const run of runs) {
-        const { data } = await k.gh.rest<Run>('GET', `/repos/${k.exec}/actions/runs/${run.id}`);
-        const jobs = await k.gh.list<Job>(`/repos/${k.exec}/actions/runs/${run.id}/jobs?filter=latest`, 'jobs');
-        const now = { ...run, status: data.status, conclusion: data.conclusion };
-        const own = jobs.filter(selfHosted);
-        const job = own.find((j) => j.status !== 'completed');
-        if (job) return { kind: 'live', run: now, job, at };
-        if (now.status !== 'completed') return { kind: 'live', run: now, at };
-        const done = own.find((j) => j.conclusion !== 'cancelled' && j.conclusion !== 'skipped');
-        saw.push(`run ${run.id} completed (${String(now.conclusion)})`);
-        if (!done) {
-          finished.add(run.id);
-          continue;
-        }
-        const before = last ? `its previous look was at ${iso(last.at)} (${last.saw})` : 'it had not looked before';
-        const why = `shape job ${done.id} (run ${run.id}) completed (${String(done.conclusion)}): started ${String(done.started_at)}, completed ${String(done.completed_at)}; the wait first read it at ${iso(at)}, already completed, and ${before}`;
-        missed ??= {
-          kind: 'missed',
-          run: now,
-          job: done,
-          why: redact(why, k.ctx.secretValues()),
-          deliver: k.stages(s, k.exec, n, ['deliver'])[0],
-        };
-      }
-      if (missed) return missed;
-      last = { at, saw: saw.join(', ') };
-      if (k.now() + DIRECT_READ_MS > until) return undefined;
-      await untilAborted(pause(DIRECT_READ_MS), k.ctx.signal);
+    const at = k.now();
+    const runs = k.stages(s, k.exec, n, ['shape']).filter((r) => !finished.has(r.id));
+    if (!runs.length) {
+      last = { at, saw: 'no unfinished shape run on its snapshot' };
+      return undefined;
     }
+    let missed: Extract<ShapeSeen, { kind: 'missed' }> | undefined;
+    const saw: string[] = [];
+    for (const run of runs) {
+      // The observer lists every attempt's jobs; only the run's current attempt counts.
+      const attempt = run.run_attempt ?? 1;
+      const jobs = (await k.obs.jobs(k.exec, run.id)).filter(
+        (j) => j.run_attempt === undefined || j.run_attempt === attempt,
+      );
+      const own = jobs.filter(selfHosted);
+      const job = own.find((j) => j.status !== 'completed');
+      if (job) return { kind: 'live', run, job, at };
+      if (run.status !== 'completed') return { kind: 'live', run, at };
+      const done = own.find((j) => j.conclusion !== 'cancelled' && j.conclusion !== 'skipped');
+      saw.push(`run ${run.id} completed (${String(run.conclusion)})`);
+      if (!done) {
+        finished.add(run.id);
+        continue;
+      }
+      const before = last ? `its previous look was at ${iso(last.at)} (${last.saw})` : 'it had not looked before';
+      const why = `shape job ${done.id} (run ${run.id}) completed (${String(done.conclusion)}): started ${String(done.started_at)}, completed ${String(done.completed_at)}; the wait first read it at ${iso(at)}, already completed, and ${before}`;
+      missed ??= {
+        kind: 'missed',
+        run,
+        job: done,
+        why: redact(why, k.ctx.secretValues()),
+        deliver: k.stages(s, k.exec, n, ['deliver'])[0],
+      };
+    }
+    if (missed) return missed;
+    last = { at, saw: saw.join(', ') };
+    return undefined;
   };
   return k.obs.until("M2's shape run or job to be queued or running", fn, o.deadlineMs, o.show, {
     ...k.about(k.exec, n),
     gonePast: k.stageGone(k.exec, n, 'shape', { jobs: false }),
+    watch: k.watch(k.exec, n),
   });
 }
 
