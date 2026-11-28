@@ -344,3 +344,48 @@ export function createStart(
     return running;
   };
 }
+
+/**
+ * A `Running` whose child is started only once `ready` settles, so a caller that needs a
+ * `Running` at once can still wait for something first. Until the start, `output()` is
+ * empty and `waitFor` waits for the start before its timeout begins. `stop()` before the
+ * start cancels it: the child is never started and the result is code 0 with no output.
+ * A throw from `start` surfaces from `waitFor` and `stop`. A rejected `ready` is ignored
+ * and the child still starts, since what it waits for is advisory.
+ */
+export function deferredRunning(ready: Promise<unknown>, start: () => Running): Running {
+  let state: 'waiting' | 'cancelled' | { child: Running } | { error: unknown } = 'waiting';
+  const started = ready
+    .catch(() => undefined)
+    .then(() => {
+      if (state === 'cancelled') return;
+      try {
+        state = { child: start() };
+      } catch (error) {
+        state = { error };
+      }
+    });
+  const child = async (): Promise<Running | undefined> => {
+    await started;
+    const s = state as typeof state;
+    if (s === 'cancelled' || s === 'waiting') return undefined;
+    if ('error' in s) throw s.error;
+    return s.child;
+  };
+  return {
+    output: () => (typeof state === 'object' && 'child' in state ? state.child.output() : ''),
+    async waitFor(pattern, timeoutMs) {
+      const c = await child();
+      if (!c) throw new Error('the child was stopped before it started');
+      return c.waitFor(pattern, timeoutMs);
+    },
+    async stop() {
+      if (state === 'waiting' || state === 'cancelled') {
+        state = 'cancelled';
+        return { code: 0, stdout: '', stderr: '' };
+      }
+      const c = await child();
+      return c ? c.stop() : { code: 0, stdout: '', stderr: '' };
+    },
+  };
+}
