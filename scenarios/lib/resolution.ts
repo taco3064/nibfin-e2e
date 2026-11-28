@@ -10,7 +10,7 @@ import { PENDING_MARKER } from '../lifecycle/marks.ts';
 import { redact } from './check.ts';
 
 /** The rule groups a resolution scenario can gate on. */
-export type ResolutionGroup = 'stage' | 'dashboard';
+export type ResolutionGroup = 'stage' | 'dashboard' | 'decision';
 
 const STAGE_ISSUES: [string, number][] = [
   ['taco3064/nibfin-core', 777],
@@ -21,28 +21,36 @@ const STAGE_ISSUES: [string, number][] = [
 
 /**
  * The product Issues that deliver each group: `stage` is R4.40–R4.52, `dashboard` is
- * R9.52–R9.56 (which shows the stage's records, so it needs the stage too).
+ * R9.52–R9.56 (which shows the stage's records, so it needs the stage too), and `decision`
+ * is the amended R4.51: the latest write-collaborator comment decides, a decision in a
+ * person's own words goes to Shape as written, and a part Shape cannot apply is named in a
+ * comment. nibfin-core#810 delivers that amendment; its request, nibfin-core#807, is closed
+ * without ever being delivered, so it is not listed.
  */
 export const RESOLUTION_ISSUES: Record<ResolutionGroup, [string, number][]> = {
   stage: STAGE_ISSUES,
   dashboard: [...STAGE_ISSUES, ['taco3064/gh-nibfin', 509]],
+  decision: [...STAGE_ISSUES, ['taco3064/nibfin-core', 810]],
 };
 
 const WHAT: Record<ResolutionGroup, string> = {
   stage: 'the pending resolution stage (R4.40–R4.52)',
   dashboard: 'the pending resolution Dashboard (R9.52–R9.56)',
+  decision:
+    'the amended decision reading of R4.51 (latest write-collaborator comment, own words, unapplied parts named)',
 };
 
 /**
  * `waiting` (Proposal R8.20) naming the group's delivering Issues not closed with
- * `delivered`, or undefined once all are. A read error propagates; it is never `waiting`.
+ * `delivered`, or undefined once all are. A group missing from `issues` lists no Issue.
+ * A read error propagates; it is never `waiting`.
  */
 export async function resolutionGate(
   gh: GitHub,
   group: ResolutionGroup,
-  issues: Record<ResolutionGroup, [string, number][]> = RESOLUTION_ISSUES,
+  issues: Partial<Record<ResolutionGroup, [string, number][]>> = RESOLUTION_ISSUES,
 ): Promise<Outcome | undefined> {
-  const list = issues[group];
+  const list = issues[group] ?? [];
   if (!list.length)
     return { status: 'waiting', reason: `${WHAT[group]} is not delivered yet: no delivering product Issue is listed` };
   const open: string[] = [];
@@ -71,6 +79,19 @@ export function labelAddedAt(events: IssueEvent[], label: string): number | unde
 export async function pendingAddedAt(gh: GitHub, repo: string, n: number): Promise<number> {
   const at = labelAddedAt(await gh.list<IssueEvent>(`/repos/${repo}/issues/${n}/events`), 'pending');
   if (at === undefined) throw new Error(`${repo}#${n} has no labeled event for pending`);
+  return at;
+}
+
+/** The time `label` was last removed, from an Issue's events, or undefined. */
+export function labelRemovedAt(events: IssueEvent[], label: string): number | undefined {
+  const ts = events.filter((e) => e.event === 'unlabeled' && e.label?.name === label).map((e) => time(e.created_at));
+  return ts.length ? Math.max(...ts) : undefined;
+}
+
+/** When `pending` was last removed from Issue `n` (its `unlabeled` events, GitHub's clock); throws when it never was. */
+export async function pendingRemovedAt(gh: GitHub, repo: string, n: number): Promise<number> {
+  const at = labelRemovedAt(await gh.list<IssueEvent>(`/repos/${repo}/issues/${n}/events`), 'pending');
+  if (at === undefined) throw new Error(`${repo}#${n} has no unlabeled event for pending`);
   return at;
 }
 
