@@ -50,7 +50,7 @@ it: the step or scenarios in progress fail with `harness budget of N min ran out
 during this step` (or `scenario`), get 2 minutes to unwind, and later ones are
 `failed` with `not run: …`. Teardown then runs until the budget ends; a teardown
 step it cuts off fails. The result is always written, so `report` can file
-requests with the rules. A lifecycle wait also fails as soon as the sandboxes
+requests with the rules. A wait of the issue-fixture kit also fails as soon as the sandboxes
 show its goal is out of reach (`gave up waiting for …`), and after 20 minutes
 without sandbox activity (`no sandbox activity for N min while waiting for …`).
 
@@ -134,7 +134,7 @@ through another step), in this order:
 | `claude-login` | Writes the Claude token into `env` of `settings.json` in the `nibfin-home-claude` volume, keeping every other key                                                                                                                                                                                                                                                                                                                |
 | `sandboxes`    | Refuses to start while a runner registration is online on the execution sandbox, then resets both sandboxes and reads them back                                                                                                                                                                                                                                                                                                  |
 | `nibfin`       | In a clone of the execution sandbox: records the host state (`hostBefore`; on Windows it first adds a `[wsl2]` section with the default `nestedVirtualization=true` when `.wslconfig` has none), then `gh nibfin runner add claude --count <n>` (4 on Linux, 2 on Windows, recorded as `runnerCount`), `init` on execution then peer; reads the image digest from the init PR, rebase-merges both init PRs and records each sandbox's `main` head and tree as its baseline               |
-| `observed-job` | Runs one agent fixture on the execution sandbox through Shape, Deliver and Review and records what its Jobs ran with (container projection, probe output, log facts, login volume facts, the pushed branch, how the PR ended) for the scenarios that read it                                                                                                                                                                     |
+| `observed-job` | Runs one agent fixture on the execution sandbox through Shape, Deliver and Review and records what its Jobs ran with (container projection, probe output, log facts, login volume facts, how the PR ended) for the scenarios that read it                                                                                                                                                                                        |
 | `collaborator` | Linux only. Checks that the second account is a write (not admin) collaborator on the execution sandbox; creates the OS user `e2epeer` (subordinate ids, linger and its user manager); installs the built gh-nibfin for it; clones the execution sandbox into its home; writes its `nibfin-home-claude` volume; generates an ed25519 key as `e2epeer` and adds the public half to the second account as `nibfin-e2e-peer-<time>` |
 
 Whatever the selection, the last collaborator scenario a run starts then retires
@@ -271,7 +271,7 @@ reused). A selected rule with no entry is a coverage gap that files a `request`
 2. Import it in `scenarios/index.ts` and add it to the list `createScenarios`
    returns (a scenario that needs the host's processes takes the `HostServices`),
    or list it directly in `src/registry.ts`, as the installation and management,
-   delivery-lifecycle, Dashboard and site scenarios are. Registry order is run
+   Dashboard and site scenarios are. Registry order is run
    order. Set `concurrent: true` to let a scenario overlap its neighbours: each
    run of consecutive concurrent scenarios starts together and is awaited
    together, and every other scenario runs alone.
@@ -306,16 +306,10 @@ Scenarios that run fixture Issues use the shared library in `scenarios/lib/`:
 
 `npm run verify` fails when the map and the registry disagree.
 
-### Host operations (Linux only)
+### Host operations
 
 The context also gives:
 
-- `claudeLogin('valid' | 'invalid')`: writes the real token, or a random
-  non-secret string, into the login volume on stdin and reads it back;
-- `runnerServices('stop' | 'start')`: stops or starts each
-  `nibfin-runner-claude-*` systemd user unit by name and reads it back;
-- `stopJobContainers(repo, issue)`: stops one Issue's Job containers by
-  Nibfin's Podman labels;
 - `secretValues()`: the secrets, for in-memory absence checks only (never print
   them);
 - `ownerLogin()` and `ownerId()`: the sandbox token's account.
@@ -323,21 +317,18 @@ The context also gives:
 `github.download(path)` downloads a job log; the redirect to the log storage is
 followed without the token.
 
-### Lifecycle fixtures (`scenarios/lifecycle/`)
+### Issue-fixture kit (`scenarios/lib/issue-kit.ts`)
 
-- Fixture Issues are small: a few lines in their own `src/<slug>.js` with a
-  `node:test` test. Titles start with `[e2e <scenario>]` and end with the run's
-  tag, so fixtures of one run never collide.
-- One shared observer reads the sandboxes at most once a minute. Every wait has
-  a deadline and fails naming the last observed labels, runs and comment.
-- Shared journeys (`journey()`, `holdJourney()`) drive one set of fixtures
-  for several scenarios; each scenario reports its own rules.
-- The template's CI and CD run `scripts/e2e-hook.js` with the rules in the
-  `E2E_CI_RULES` / `E2E_CD_RULES` variables (`kit.hookRules`). A rule
-  applies only when its `when` path is among the paths the triggering event
-  changed, so **a rule's `when` path must belong to exactly one fixture**. Rules
-  can require a file to mention a text, or hold the run until a tag exists
-  (failing after 25 minutes).
+`dashboard-resolution` files its fixture Issues and waits for Nibfin's stages
+on them through this kit:
+
+- Fixture titles start with `[e2e <scenario>]` and end with the run's tag, so
+  fixtures of one run never collide.
+- One shared observer (`observer.ts`) reads the sandboxes at most once per
+  interval. Every wait has a deadline and fails naming the last observed
+  labels, runs and comment; a wait on an Issue also ends once the Issue is
+  closed, has a `pending` the repair stage does not clear, or has a `pause` the
+  harness did not add.
 - A scenario pauses its open fixtures in `finally`, so a failure does not keep
   spending Runner time.
 - A rule whose triggering situation did not happen is reported `failed` as
@@ -346,12 +337,9 @@ followed without the token.
 ### Run order
 
 The installation and management scenarios (`scenarios/management/`) run
-first, on the fresh host and the init PRs; `upgrade` runs before the
-delivery-lifecycle scenarios so GHCR's main image has little time to move after
-`init`. `runner-always-on` follows `host-requirements`, `runner-location` and `runner-no-periodic` and adds a 5-minute idle
-wait with no command running (Proposal R5.11). Their fixture Issues are left paused or without `scope`, and the
-lifecycle scenarios judge only their own tagged fixtures and the runs created
-since they started. Then come the Issue #299 and site scenarios, then the
+first, on the fresh host and the init PRs; `upgrade` runs early so GHCR's main
+image has little time to move after `init`. `runner-always-on` follows `host-requirements`, `runner-location` and `runner-no-periodic` and adds a 5-minute idle
+wait with no command running (Proposal R5.11). Their fixture Issues are left paused or without `scope`. Then come the Issue #299 and site scenarios, then the
 Dashboard scenarios. `runner-add-login` runs alone after them: it starts a Codex
 login through `runner add codex`, abandons it at the guide (Proposal R5.30) and
 removes what the attempt created. `runner-remove` comes last because it removes every

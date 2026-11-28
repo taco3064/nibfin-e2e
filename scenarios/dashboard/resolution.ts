@@ -1,7 +1,7 @@
 // Proposal R9.52–R9.56: the Dashboard side of the pending resolution stage (R4.40–R4.52).
 // Three fixtures reach real resolution states through public triggers: two product-decision
 // fixtures (等你選擇; one decided by option, one in the person's own words, R4.51) and an Issue whose Job Core refuses for an invalid `.nibfin.json`
-// (需要你處理, as in failure-pending). 自動排除中 is watched for while each waits for its
+// (需要你處理). 自動排除中 is watched for while each waits for its
 // record. Reported `waiting` until the stage and its Dashboard are delivered (R8.20).
 import type { Locator, Page } from 'playwright-core';
 import type { RunContext } from '../../src/types.ts';
@@ -710,7 +710,7 @@ async function run(ctx: RunContext, secrets: Secrets): Promise<string> {
       await wW.stop();
     }
 
-    // 需要你處理: Core refuses the Job for an invalid .nibfin.json (R7.2), as in failure-pending.
+    // 需要你處理: Core refuses the Job for an invalid .nibfin.json (R7.2).
     await putFile(k.gh, exec, '.nibfin.json', '{"tools": 1}\n', `nibfin-e2e ${SCENARIO}: add an invalid .nibfin.json`);
     filePut = true;
     const issueC = await k.file(exec, {

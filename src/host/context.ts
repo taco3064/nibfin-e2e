@@ -11,10 +11,10 @@ import type { HostContext } from '../types.ts';
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** The host as scenarios see it. */
-export function createHostContext(host: HostServices, platform: string = process.platform): HostContext {
+export function createHostContext(host: HostServices): HostContext {
   const executionDir = join(host.repoRoot, '.e2e-work', 'sandbox');
   return {
-    ...createHostOperations(host, platform),
+    ...createHostOperations(host),
     sandbox: { ...SANDBOX },
     signal: NEVER,
     executionDir,

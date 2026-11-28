@@ -6,7 +6,6 @@ import {
   classIn,
   isFinishedRecord,
   labelAddedAt,
-  labelRemovedAt,
   RESOLUTION_ISSUES,
   resolutionGate,
   resolutionRecord,
@@ -69,17 +68,6 @@ test('the decision group waits on the amended R4.51 delivery and opens when all 
   table['GET /repos/taco3064/nibfin-core/issues/810'] = delivered;
   equal(await resolutionGate(routes(table).github, 'decision'), undefined);
   equal((await resolutionGate(routes({}).github, 'decision', { stage: [] }))?.status, 'waiting');
-});
-
-test('the time pending was removed is its latest unlabeled event', () => {
-  const events = [
-    { event: 'unlabeled', created_at: '2026-11-27T09:30:00Z', label: { name: 'pending' } },
-    { event: 'labeled', created_at: '2026-11-27T09:45:00Z', label: { name: 'pending' } },
-    { event: 'unlabeled', created_at: '2026-11-27T10:00:00Z', label: { name: 'pending' } },
-    { event: 'unlabeled', created_at: '2026-11-27T11:00:00Z', label: { name: 'scope' } },
-  ];
-  equal(labelRemovedAt(events, 'pending'), PENDING_AT);
-  equal(labelRemovedAt(events.slice(1, 2), 'pending'), undefined);
 });
 
 test('the time pending was added is its latest labeled event', () => {

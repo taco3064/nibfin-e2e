@@ -78,7 +78,7 @@ export type UntilOptions = CommonOptions
   );
 
 /** What a snapshot shows of the sandboxes' activity; two equal fingerprints mean nothing changed. */
-export function fingerprint(s: Pick<Snapshot, 'runs' | 'issues' | 'pulls'>): string {
+function fingerprint(s: Pick<Snapshot, 'runs' | 'issues' | 'pulls'>): string {
   const runs = s.runs
     .map((r) => [r.repo, r.id, r.status, r.conclusion, r.run_attempt, r.updated_at])
     .sort((a, b) => String(a[0]).localeCompare(String(b[0])) || Number(a[1]) - Number(b[1]));
