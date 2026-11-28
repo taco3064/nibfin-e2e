@@ -20,6 +20,7 @@ import {
   windowAt,
 } from './analysis.ts';
 import type { Issue, Job, Run, Stage, Window } from './analysis.ts';
+import { AUTO_CLEARED_CLASSES, briefRecord, pendingAddedAt, resolutionRecord } from '../lib/resolution.ts';
 import { Observer } from './observe.ts';
 import type { Snapshot } from './observe.ts';
 
@@ -46,13 +47,23 @@ const CLOSE_GRACE = 2 * MIN;
  * wait counts the stage as not published (a paused Issue is not published, Proposal R4.12).
  */
 export const PUBLISH_GRACE = DEADLINE.quiet;
+/**
+ * How long the repair stage (Proposal R4.40–R4.42) may take before a stage wait stops
+ * tolerating `pending`: to write its record after `pending` was added, and to remove
+ * `pending` after a record of a class it clears automatically was last written. It is
+ * below `STALL`, so on a quiet sandbox the named reason comes before the stall message.
+ */
+export const REPAIR_GRACE = 10 * MIN;
 /** The characters of a Nibfin comment one full quote keeps; longer text is cut at its end. */
 export const QUOTE_LIMIT = 1500;
 
 export interface GoneOptions {
   /** Only the stage's jobs created at or after this epoch ms count (default: when the check is made, minus one minute). */
   since?: number;
-  /** `pending` does not end the wait (the harness adds it itself). */
+  /**
+   * `pending` never ends the wait (the harness adds it itself). Without it, only a `pending`
+   * the repair stage is clearing automatically is tolerated, within `REPAIR_GRACE`.
+   */
   allowPending?: boolean;
   /** Whether a completed job of the stage followed by another agent stage ends the wait (default true). */
   jobs?: boolean;
@@ -458,10 +469,12 @@ export class Kit {
 
   /**
    * A `gonePast` check for a wait on one stage of an Issue: the first reason the wait
-   * can no longer succeed. The Issue is closed; it has `pending` (unless allowed); or a
-   * job of the stage completed and a run of another agent stage was created after it;
-   * or, with `publishes`, a job of the stage succeeded and the Issue still lacks that
-   * label `PUBLISH_GRACE` after the job completed.
+   * can no longer succeed. The Issue is closed; it has `pending` (unless allowed) that the
+   * repair stage is not clearing automatically (see `pendingReason`); or a job of the stage
+   * completed and a run of another agent stage was created after it; or, with `publishes`,
+   * a job of the stage succeeded and the Issue still lacks that label `PUBLISH_GRACE` after
+   * the job completed. While a tolerated `pending` is on, the job and `publishes` exits
+   * wait too, since the repair stage may be redoing the stage.
    */
   stageGone(
     repo: string,
@@ -480,7 +493,7 @@ export class Kit {
             return `${name} is closed (${i.state_reason ?? 'no reason'})${delivered ? ' with delivered' : ' without delivered'}`;
         }
         if (!opts.allowPending && i?.labels.some((l) => l.name === 'pending'))
-          return `${name} has pending${fullQuote(await this.lastComment(repo, n))}`;
+          return this.pendingReason(s, repo, n, name);
         if (opts.jobs === false) return undefined;
         const later = this.stages(s, repo, n, AGENT_STAGES).filter((r) => r.stage !== stage);
         for (const j of await this.agentJobs(s, repo, n, [stage])) {
@@ -505,7 +518,34 @@ export class Kit {
     };
   }
 
-  /** `stageGone` for a wait on the Issue's closure: only closed without `delivered` and `pending` end it. */
+  /**
+   * Why a `pending` on the Issue ends a stage wait, or undefined while the repair stage may
+   * still clear it (Proposal R4.42): its latest record after `pending` was last added names a
+   * class it clears automatically and gives no options or next steps, until `REPAIR_GRACE`
+   * after the record was last written or while a run of the Issue is queued or in progress;
+   * or no record exists yet, for a fixed `REPAIR_GRACE` after `pending` was added. Any other
+   * `pending` ends the wait with the record's class and why (R4.45–R4.47). A failed read
+   * throws, so the observer logs it and judges the next snapshot.
+   */
+  private async pendingReason(s: Snapshot, repo: string, n: number, name: string): Promise<string | undefined> {
+    const pendingAt = await pendingAddedAt(this.gh, repo, n);
+    const rec = resolutionRecord(await this.obs.comments(repo, n), pendingAt);
+    const min = (ms: number) => Math.floor(ms / MIN);
+    if (!rec) {
+      if (s.at - pendingAt < REPAIR_GRACE) return undefined;
+      return `${name} has pending; no repair record ${min(s.at - pendingAt)} min after pending was added at ${new Date(pendingAt).toISOString()}${fullQuote(await this.lastComment(repo, n))}`;
+    }
+    const quote = `; repair record ${rec.url || 'no URL'}: ${briefRecord(rec.body)}`;
+    if (!rec.class || !AUTO_CLEARED_CLASSES.has(rec.class))
+      return `${name} has pending; repair record class ${rec.class ?? 'not recognised'}, which Nibfin does not clear automatically${quote}`;
+    if (rec.options.length > 0 || rec.nextSteps)
+      return `${name} has pending; repair record class ${rec.class} gives options or next steps, so pending stays${quote}`;
+    const mine = this.runsOf(repo, n);
+    if (s.at - rec.at < REPAIR_GRACE || s.runs.some((r) => mine(r) && r.status !== 'completed')) return undefined;
+    return `${name} has pending ${min(s.at - rec.at)} min after its ${rec.class} repair record was last written at ${new Date(rec.at).toISOString()}, and no run of ${name} is queued or in progress${quote}`;
+  }
+
+  /** `stageGone` for a wait on the Issue's closure: only closed without `delivered`, or a `pending` the repair stage does not clear, end it. */
   closeGone(repo: string, n: number): (s: Snapshot) => Promise<string | undefined> {
     return this.stageGone(repo, n, 'review', { jobs: false });
   }

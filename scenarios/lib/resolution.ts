@@ -137,6 +137,13 @@ export const RESOLUTION_CLASSES: { id: ResolutionClassId; name: string; pattern:
   },
 ];
 
+/** The classes the repair stage clears itself, re-dispatching or rerunning once and removing `pending` (Proposal R4.42). */
+export const AUTO_CLEARED_CLASSES: ReadonlySet<ResolutionClassId> = new Set<ResolutionClassId>([
+  'external-temporary',
+  'unrelated-flaky-test',
+  'nibfin-flow-error',
+]);
+
 /** The class named earliest in `text`, or undefined. */
 export function classIn(text: string): ResolutionClassId | undefined {
   let best: { id: ResolutionClassId; at: number } | undefined;
