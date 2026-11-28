@@ -200,6 +200,15 @@ export function resolutionRecord(comments: Comment[], pendingAt: number): Resolu
   return c && parseRecord(c);
 }
 
+/**
+ * Whether a parsed record is finished: it names one of the six classes of Proposal R4.41
+ * once the repair stage has classified the stop. Before that it is the record shown as
+ * 自動排除中 (R9.52), which the stage later updates in place (R3.42).
+ */
+export function isFinishedRecord(r: ResolutionRecord): boolean {
+  return r.class !== undefined;
+}
+
 const CLASS_LABEL = /^(分類|類別|原因分類|category|class(ification)?)$/i;
 const CAUSE_LABEL = /^(一句話原因|原因|reason|cause)$/i;
 const NEXT_HEADING = /後續建議|下一步|建議步驟|後續步驟|next[\s-]*steps?|follow[\s-]*up|advice/i;
