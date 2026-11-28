@@ -82,19 +82,6 @@ export async function pendingAddedAt(gh: GitHub, repo: string, n: number): Promi
   return at;
 }
 
-/** The time `label` was last removed, from an Issue's events, or undefined. */
-export function labelRemovedAt(events: IssueEvent[], label: string): number | undefined {
-  const ts = events.filter((e) => e.event === 'unlabeled' && e.label?.name === label).map((e) => time(e.created_at));
-  return ts.length ? Math.max(...ts) : undefined;
-}
-
-/** When `pending` was last removed from Issue `n` (its `unlabeled` events, GitHub's clock); throws when it never was. */
-export async function pendingRemovedAt(gh: GitHub, repo: string, n: number): Promise<number> {
-  const at = labelRemovedAt(await gh.list<IssueEvent>(`/repos/${repo}/issues/${n}/events`), 'pending');
-  if (at === undefined) throw new Error(`${repo}#${n} has no unlabeled event for pending`);
-  return at;
-}
-
 export type ResolutionClassId =
   | 'external-temporary'
   | 'unrelated-flaky-test'

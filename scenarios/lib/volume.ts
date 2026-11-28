@@ -2,9 +2,6 @@ import { CLAUDE_VOLUME, HELPER_IMAGE } from '../../src/host/config.ts';
 import type { Exec } from '../../src/host/exec.ts';
 import { readClaudeSettings, updateClaudeSettings } from '../../src/host/login.ts';
 
-/** The tools volume the generated workflow mounts into every Job. */
-export const TOOLS_VOLUME = 'nibfin-tools';
-
 /** What scenarios learn from the login volume's settings.json: derived values only, never a token. */
 export interface LoginFacts {
   exists: boolean;

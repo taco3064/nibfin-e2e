@@ -1,89 +1,9 @@
 import { GitHubError } from '../../src/host/github.ts';
 import type { GitHub } from '../../src/host/github.ts';
-import { rulesets } from '../../src/host/sandbox.ts';
 import { deleteFile, putFile } from './github.ts';
 import { sleep, waitFor } from './wait.ts';
 
 export const HOLD_PATH = '.github/workflows/e2e-hold.yml';
-
-/**
- * The default-branch ruleset `Kit.baseline` (scenarios/lifecycle/kit.ts) creates on the
- * execution sandbox. It requires the `test` check, so it refuses the hold's direct writes
- * to main while it is active.
- */
-export const CI_RULESET = 'e2e-ci';
-
-interface RulesetDetail {
-  id: number;
-  name: string;
-  target?: string;
-  enforcement: string;
-  conditions?: unknown;
-  rules?: unknown[];
-  bypass_actors?: unknown[];
-}
-
-const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
-
-/**
- * Runs one write to main with the named ruleset's enforcement switched to `disabled`, then
- * restores the enforcement read before and confirms it by read-back. Without the ruleset,
- * or when it is not active, the write runs alone. Only that ruleset's `enforcement`
- * changes: every other writable field is sent back as read. A failed restore throws a
- * message naming the ruleset and the enforcement read back; a failed write is otherwise
- * rethrown unchanged after the restore.
- */
-export async function withRulesetLifted<T>(
-  gh: GitHub,
-  repo: string,
-  name: string,
-  write: () => Promise<T>,
-): Promise<T> {
-  const found = (await rulesets(gh, repo)).find((r) => r.name === name);
-  if (!found) return write();
-  const path = `/repos/${repo}/rulesets/${found.id}`;
-  const read = (await gh.rest<RulesetDetail>('GET', path)).data;
-  const original = read.enforcement;
-  if (original !== 'active') return write();
-  const body = (enforcement: string) => ({
-    name: read.name,
-    target: read.target,
-    conditions: read.conditions,
-    rules: read.rules,
-    ...(read.bypass_actors !== undefined ? { bypass_actors: read.bypass_actors } : {}),
-    enforcement,
-  });
-  await gh.rest('PUT', path, body('disabled'));
-  let failed = false;
-  let writeError: unknown;
-  try {
-    return await write();
-  } catch (error) {
-    failed = true;
-    writeError = error;
-    throw error;
-  } finally {
-    let problem: string | undefined;
-    try {
-      await gh.rest('PUT', path, body(original));
-    } catch (error) {
-      problem = `the restore failed (${errorMessage(error)})`;
-    }
-    let back: string;
-    try {
-      back = `enforcement ${(await gh.rest<RulesetDetail>('GET', path)).data.enforcement}`;
-    } catch (error) {
-      back = `an enforcement that could not be read (${errorMessage(error)})`;
-    }
-    if (problem !== undefined || back !== `enforcement ${original}`) {
-      let message = `${name} on ${repo} reads back ${back} after restore; expected ${original}`;
-      if (problem !== undefined) message += `; ${problem}`;
-      if (failed) message += `; the write had failed: ${errorMessage(writeError)}`;
-      // eslint-disable-next-line no-unsafe-finally
-      throw new Error(message, failed ? { cause: writeError } : undefined);
-    }
-  }
-}
 
 /**
  * A plain workflow that keeps one self-hosted Runner busy without an agent. Inputs reach
@@ -133,9 +53,7 @@ async function jobs(gh: GitHub, repo: string, runId: number): Promise<Job[]> {
 
 /** Commits the hold workflow to main (idempotent). */
 export async function installHold(gh: GitHub, repo: string): Promise<void> {
-  await withRulesetLifted(gh, repo, CI_RULESET, () =>
-    putFile(gh, repo, HOLD_PATH, HOLD_WORKFLOW, 'nibfin-e2e: add the hold fixture workflow'),
-  );
+  await putFile(gh, repo, HOLD_PATH, HOLD_WORKFLOW, 'nibfin-e2e: add the hold fixture workflow');
 }
 
 /** Dispatches a hold and waits until its job runs on a Runner. */
@@ -200,9 +118,7 @@ export async function finishHold(gh: GitHub, repo: string, hold: Hold): Promise<
 }
 
 export async function removeHold(gh: GitHub, repo: string): Promise<void> {
-  await withRulesetLifted(gh, repo, CI_RULESET, () =>
-    deleteFile(gh, repo, HOLD_PATH, 'nibfin-e2e: remove the hold fixture workflow'),
-  );
+  await deleteFile(gh, repo, HOLD_PATH, 'nibfin-e2e: remove the hold fixture workflow');
 }
 
 export { sleep };
