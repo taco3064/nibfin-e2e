@@ -603,9 +603,10 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
    * Waits, with `pending` on, for the Deliver whose `job` was running when it was added to
    * send the Shape back (only when `sendBackExpected`), open a PR, or complete without one
    * (held). A state it can no longer leave ends the wait at once through `gonePast`,
-   * because `until` takes an error thrown in `fn` for a failed read.
+   * because `until` takes an error thrown in `fn` for a failed read. Deliver jobs
+   * created before `since`, such as one that already sent the Shape back, are not judged.
    */
-  const pendingWait = async (job: Job & { run: Run }, sendBackExpected: boolean, desc: string) => {
+  const pendingWait = async (job: Job & { run: Run }, sendBackExpected: boolean, since: number, desc: string) => {
     let fault: string | undefined;
     return k.obs.until(
       desc,
@@ -631,7 +632,7 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
       {
         gonePast: firstOf(
           async () => fault,
-          k.stageGone(exec, n, 'deliver', { since: editedAt - 60_000, allowPending: true }),
+          k.stageGone(exec, n, 'deliver', { since, allowPending: true }),
         ),
       },
     );
@@ -644,7 +645,7 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
     await k.addLabels(exec, n, ['pending']);
     pendingAt = k.now();
     pendingJob = first.job;
-    const o = await pendingWait(first.job, true, 'Deliver to send the Shape back, open a PR or be held by pending');
+    const o = await pendingWait(first.job, true, editedAt - 60_000, 'Deliver to send the Shape back, open a PR or be held by pending');
     next = o.kind === 'held' ? o : o.kind;
   } else next = first;
   const sentBack = next === 'sent back';
@@ -671,7 +672,7 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
     await k.addLabels(exec, n, ['pending']);
     pendingAt = k.now();
     pendingJob = job2;
-    const o = await pendingWait(job2, false, "P's next Deliver to open a PR or be held by pending");
+    const o = await pendingWait(job2, false, reshapedAt - 60_000, "P's next Deliver to open a PR or be held by pending");
     next = o.kind === 'held' ? o : 'pr';
   } else if (pendingAt === undefined) {
     // The PR was already open when first seen; the late-pending check below reports it.
@@ -680,7 +681,7 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
   }
   const pendAt = pendingAt;
 
-  /** Waits for the `test` check of P's open PR to complete; `gone` is judged only while P has no open PR. */
+  /** Waits for the `test` check of P's open PR to complete, ending at once on `gone`. */
   const prTest = (gone: Gone) =>
     k.obs.until(
       "P's PR test check to complete",
@@ -692,8 +693,7 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
       },
       DEADLINE.stage,
       show,
-      // While P's PR is open, a review its own CI woke is no sign that the Deliver is gone.
-      { gonePast: async (s) => (prOf(s, true) ? undefined : gone(s)) },
+      { gonePast: gone },
     );
 
   let reviewWhilePending = 0;
@@ -710,7 +710,9 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
     dispatched = dispatchedWhilePending(k.stages(calm, exec, n, ['deliver', 'review']), pendAt, pendingJob.run.id);
     await k.removeLabel(exec, n, 'pending');
     unpendedAt = k.now();
-    const testDone = await prTest(k.stageGone(exec, n, 'deliver', { since: unpendedAt - 60_000 }));
+    // Judged only while P has no open PR: a review its own CI woke is no sign that the Deliver is gone.
+    const gone = k.stageGone(exec, n, 'deliver', { since: unpendedAt - 60_000 });
+    const testDone = await prTest(async (s) => (prOf(s, true) ? undefined : gone(s)));
     await k.settle("P's PR test", testDone, ofP);
   } else {
     const testDone = await prTest(async (s) => {
