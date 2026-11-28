@@ -6,8 +6,6 @@ import type { Issue, Job, Pull, Run, Stage } from './analysis.ts';
 import { DEADLINE, changeRequest, message, redact } from './kit.ts';
 import type { Kit } from './kit.ts';
 import type { Expects, Snapshot } from './observe.ts';
-import { sleep } from '../lib/wait.ts';
-import { untilAborted } from '../../src/abort.ts';
 
 type Gone = (s: Snapshot) => Promise<string | undefined>;
 
@@ -22,31 +20,24 @@ const firstOf =
       return undefined;
     };
 
-/** How often `stageJobRunning` reads a stage run's jobs directly. */
-export const DIRECT_READ_MS = 10_000;
-/** How long `stageJobRunning` reads directly on one snapshot before it lets the observer read the next one (its default interval). */
-const DIRECT_SPAN_MS = 60_000;
-
 /** How the shared wait of `stageJobRunning` ended through its `gonePast`, when it did. */
 type JobWaitExit = 'missed' | 'hard' | 'followed';
 
 /**
- * Waits for a self-hosted job of an Issue's `stage` to be `in_progress`, reading the
- * jobs of the Issue's unfinished runs of that stage directly every `DIRECT_READ_MS`
- * rather than through the observer's snapshot and its cached job reads, which may miss a
- * short job (Issue #544). The wait fails at once when such a job completed before any
- * read saw it running, and otherwise ends on a hold of the Issue (`Kit.heldReason`), on
- * `stageGone`, the stall limit or the deadline.
- * Every reason from those also names what the direct reads saw: each run read, the
- * stage's job in its last read (or that no read saw a run of the stage), and the last
- * direct read error, if any.
+ * Waits for a self-hosted job of an Issue's `stage` to be `in_progress`. The wait watches
+ * the Issue, so the observer reads its runs and their jobs again every watch interval and
+ * a job shorter than one full snapshot interval is still seen running (Issue #544). The
+ * wait fails at once when such a job completed before any read saw it running, and
+ * otherwise ends on a hold of the Issue (`Kit.heldReason`), on `stageGone`, the stall
+ * limit or the deadline. Every reason from those also names what the watched reads saw:
+ * each run read, the stage's job in its last read (or that no read saw a run of the
+ * stage), and the last read error, if any.
  *
  * `since` is passed to `stageGone` (its default applies when absent). `whileRunning` is a
- * further condition checked on each direct read that sees the job `in_progress`: the job
- * is returned only when the condition holds, and is read again with it every
- * `DIRECT_READ_MS` while it does not. If the job then completes before a read saw the
- * condition hold, the wait fails at once with the job's times and the condition's last
- * read (Issue #581).
+ * further condition checked on each read that sees the job `in_progress`: the job is
+ * returned only when the condition holds, and is read again with it on each watched read
+ * while it does not. If the job then completes before a read saw the condition hold, the
+ * wait fails at once with the job's times and the condition's last read (Issue #581).
  */
 export async function stageJobRunning(k: Kit, n: number, stage: Stage, o: StageJobOptions): Promise<StageJob> {
   return waitStageJob(k, n, stage, o).wait;
@@ -98,17 +89,16 @@ function waitStageJob(
   stage: Stage,
   o: StageJobOptions,
 ): { wait: Promise<StageJob>; exit: () => JobWaitExit | undefined } {
-  const pause = k.sleep ?? sleep;
   const iso = (t: number) => new Date(t).toISOString();
   // A re-run keeps the run id, so a run and its attempt name one execution.
   const key = (run: Run) => `${run.id}/${run.run_attempt ?? 1}`;
   /** Run attempts that completed without running an agent job (cancelled or skipped). */
   const finished = new Set<string>();
-  /** The previous direct read of each job: when, and its status then. */
+  /** The previous read of each job: when, and its status then. */
   const lastRead = new Map<number, { at: number; status: string }>();
   /** Jobs seen running while `whileRunning` did not hold, with the condition's last read. */
   const unmet = new Map<number, string>();
-  /** The last successful direct read of each run attempt, with the self-hosted job it found. */
+  /** The last successful read of each run attempt, with the self-hosted job it found. */
   const reads = new Map<string, { at: number; runId: number; attempt: number; job?: Job }>();
   let readError: { at: number; runId: number; message: string } | undefined;
   let missed: { reason: string; run: string } | undefined;
@@ -121,21 +111,24 @@ function waitStageJob(
     return `${head}: job ${j.id} ${status}, started ${j.started_at ?? 'none'}, completed ${j.completed_at ?? 'none'}`;
   };
   const errorSuffix = () =>
-    readError ? `; last direct read error at ${iso(readError.at)} (run ${readError.runId}): ${readError.message}` : '';
-  /** What the direct reads saw, for a reason that does not come from them. */
+    readError ? `; last watched read error at ${iso(readError.at)} (run ${readError.runId}): ${readError.message}` : '';
+  /** What the watched reads saw, for a reason that does not come from them. */
   const summary = () => {
     const runs = [...reads.values()].map(readOf).join(', ');
-    return `direct reads: ${runs || `none saw a ${stage} run of #${n}`}${errorSuffix()}`;
+    return `watched reads: ${runs || `none saw a ${stage} run of #${n}`}${errorSuffix()}`;
   };
   /** The missed reason, with the other runs read and the last read error when there are any. */
   const missedReason = (m: { reason: string; run: string }) => {
     const others = [...reads.entries()].filter(([id]) => id !== m.run).map(([, r]) => readOf(r));
-    return `${m.reason}${others.length ? `; other direct reads: ${others.join(', ')}` : ''}${errorSuffix()}`;
+    return `${m.reason}${others.length ? `; other watched reads: ${others.join(', ')}` : ''}${errorSuffix()}`;
   };
+  // The observer lists every attempt's jobs; only the run's current attempt counts.
   const list = async (run: Run) => {
     const at = k.now();
+    const attempt = run.run_attempt ?? 1;
     try {
-      return { at, jobs: await k.gh.list<Job>(`/repos/${k.exec}/actions/runs/${run.id}/jobs?filter=latest`, 'jobs') };
+      const jobs = await k.obs.jobs(k.exec, run.id);
+      return { at, jobs: jobs.filter((j) => j.run_attempt === undefined || j.run_attempt === attempt) };
     } catch (e) {
       // The observer logs the error and names it when the wait ends; it is kept here for the reason too.
       if (!k.ctx.signal?.aborted) readError = { at, runId: run.id, message: message(e) };
@@ -178,21 +171,15 @@ function waitStageJob(
     return undefined;
   };
   const fn = async (s: Snapshot) => {
-    const until = k.now() + DIRECT_SPAN_MS;
-    for (;;) {
-      if (missed !== undefined) return undefined;
-      const runs = k.stages(s, k.exec, n, [stage]).filter((r) => !finished.has(key(r)));
-      if (!runs.length) return undefined;
-      for (const run of runs) {
-        const j = await read(run);
-        if (j || missed !== undefined) return j;
-      }
-      if (k.now() + DIRECT_READ_MS > until) return undefined;
-      await untilAborted(pause(DIRECT_READ_MS), k.ctx.signal);
+    if (missed !== undefined) return undefined;
+    for (const run of k.stages(s, k.exec, n, [stage]).filter((r) => !finished.has(key(r)))) {
+      const j = await read(run);
+      if (j || missed !== undefined) return j;
     }
+    return undefined;
   };
   // The holds (closed, `pending`, `pause`) are judged apart from the job exit, so a caller can
-  // tell them apart, and here rather than by the observer, so their reason names what the direct reads saw.
+  // tell them apart, and here rather than by the observer, so their reason names what the watched reads saw.
   const hard: Gone = (s) => k.heldReason(s, k.exec, n, o.expects ?? {});
   const followed = k.stageGone(k.exec, n, stage, { since: o.since });
   const redacted = (reason: string) => redact(reason, k.ctx.secretValues());
@@ -218,6 +205,7 @@ function waitStageJob(
       gonePast,
       issues: [{ repo: k.exec, n }],
       expects: o.expects,
+      watch: k.watch(k.exec, n),
     }),
     exit: () => exit,
   };
@@ -729,6 +717,7 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
     {
       ...k.about(exec, n),
       gonePast: k.stageGone(exec, n, 'deliver', { since: editedAt - 60_000, allowPending: true }),
+      watch: k.watch(exec, n),
     },
   );
   const prOf = (s: Snapshot, open = false) => branchPr(s.pulls.get(exec), n, open);
@@ -808,7 +797,7 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
       running('deliver', reshapedAt),
       DEADLINE.stage,
       show,
-      { ...k.about(exec, n), gonePast: k.stageGone(exec, n, 'deliver', { since: reshapedAt - 60_000 }) },
+      { ...k.about(exec, n), gonePast: k.stageGone(exec, n, 'deliver', { since: reshapedAt - 60_000 }), watch: k.watch(exec, n) },
     );
     await k.addLabels(exec, n, ['pending']);
     pendingAt = k.now();

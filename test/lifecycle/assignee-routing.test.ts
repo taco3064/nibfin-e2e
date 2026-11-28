@@ -59,7 +59,7 @@ test("a removal in the own window does not count as the scenario's when pause wa
 });
 
 // assignee-routing (Issue #596): M2 is reassigned as soon as its shape run or job is seen
-// queued or running through direct reads (R4.24), and a Shape the scenario missed names the
+// queued or running through the observer's watched reads (R4.24), and a Shape the scenario missed names the
 // rules it could not exercise instead of ending the scenario (R4.20, R4.24, R4.26, R1.14).
 const T0 = Date.parse('2026-11-26T10:00:00Z');
 const iso = (ms: number) => new Date(T0 + ms).toISOString();
@@ -138,8 +138,8 @@ const shapeRoutes = (
       { event: 'labeled', created_at: iso(-3_600_000), label: { name: 'pending' } },
     ],
   });
-const direct = (calls: string[]) =>
-  calls.filter((x) => x.startsWith('GET /repos/o/exec/actions/runs/5/jobs?filter=latest'));
+const jobReads = (calls: string[]) =>
+  calls.filter((x) => x.startsWith('GET /repos/o/exec/actions/runs/5/jobs?filter=all'));
 
 test('a shape run seen only queued, before its job exists, triggers the reassignment', async () => {
   const c = clock(T0);
@@ -149,7 +149,7 @@ test('a shape run seen only queued, before its job exists, triggers the reassign
   equal(seen.kind, 'live');
   if (seen.kind !== 'live') return;
   deepEqual([seen.run.id, seen.run.status, seen.job], [5, 'queued', undefined]);
-  equal(direct(f.calls).length, 1, 'read directly');
+  equal(jobReads(f.calls).length, 1, 'its jobs were read');
 });
 
 test('a shape run with a queued self-hosted job triggers the reassignment with that job', async () => {
@@ -161,31 +161,28 @@ test('a shape run with a queued self-hosted job triggers the reassignment with t
   if (seen.kind === 'live') deepEqual([seen.job?.id, seen.job?.status], [11, 'queued']);
 });
 
-test('a shape job in progress for less than one snapshot interval triggers the reassignment through the direct reads', async () => {
+test('a shape job in progress for less than one snapshot interval triggers the reassignment through the watched reads', async () => {
   const c = clock(T0);
-  // The snapshot at 0 s has no shape run; the one at 60 s lists it while its 20 s job runs.
+  // The full snapshots at 0 s and 30 s have no shape run; the watched read at 50 s lists it while its 9 s job runs.
   const f = shapeRoutes(c, {
-    status: (t) => (t < 50_000 ? undefined : t < 80_000 ? 'in_progress' : 'completed'),
-    jobs: () => [timedJob(c.now, 55_000, 75_000)],
+    status: (t) => (t < 45_000 ? undefined : t < 58_000 ? 'in_progress' : 'completed'),
+    jobs: () => [timedJob(c.now, 46_000, 55_000)],
   });
   const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
   const seen = await shapeLive(k, 6, { deadlineMs: DEADLINE.stage });
   equal(seen.kind, 'live');
   if (seen.kind === 'live')
-    deepEqual([seen.job?.id, seen.job?.status, seen.at - T0 < 75_000], [11, 'in_progress', true]);
-  equal(direct(f.calls).length >= 1, true, 'read directly');
-  equal(
-    f.calls.some((x) => x.startsWith('GET /repos/o/exec/actions/runs/5/jobs?filter=all')),
-    false,
-    "not through the observer's cached job reads",
-  );
+    deepEqual([seen.job?.id, seen.job?.status, seen.at - T0 < 55_000], [11, 'in_progress', true]);
+  equal(jobReads(f.calls).length >= 1, true, 'its jobs were read');
+  equal(f.calls.filter((x) => x.startsWith('GET /repos/o/exec/issues?')).length, 2, 'Issues are listed on full snapshots only');
 });
 
 test('a shape job that completed between two looks, with no deliver run yet, is missed without throwing and named with its times', async () => {
   const c = clock(T0);
   const f = shapeRoutes(c, {
-    status: (t) => (t < 30_000 ? undefined : t < 52_000 ? 'in_progress' : 'completed'),
-    jobs: () => [timedJob(c.now, 40_000, 50_000)],
+    // Created after the watched read at 40 s and completed before the one at 50 s.
+    status: (t) => (t < 41_000 ? undefined : t < 49_000 ? 'in_progress' : 'completed'),
+    jobs: () => [timedJob(c.now, 42_000, 48_000)],
   });
   const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
   const seen = await shapeLive(k, 6, { deadlineMs: DEADLINE.stage, show: k.show('o/exec', 6) });
@@ -196,13 +193,13 @@ test('a shape job that completed between two looks, with no deliver run yet, is 
   match(
     note,
     new RegExp(
-      `^M2's shape job 11 \\(run 5\\) ran from ${iso(40_000)} to ${iso(50_000)} before the scenario saw its run or job queued or in progress: `,
+      `^M2's shape job 11 \\(run 5\\) ran from ${iso(42_000)} to ${iso(48_000)} before the scenario saw its run or job queued or in progress: `,
     ),
   );
   match(
     note,
     new RegExp(
-      `the wait first read it at ${iso(60_000)}, already completed, and its previous look was at ${iso(0)} \\(no unfinished shape run on its snapshot\\)`,
+      `the wait first read it at ${iso(50_000)}, already completed, and its previous look was at ${iso(40_000)} \\(no unfinished shape run on its snapshot\\)`,
     ),
   );
   const ch = new Checks();
@@ -213,9 +210,10 @@ test('a shape job that completed between two looks, with no deliver run yet, is 
 test('a shape job missed after Deliver ran leaves R4.20, R4.24 and R4.26 not exercised and judges R4.18', async () => {
   const c = clock(T0);
   const f = shapeRoutes(c, {
-    status: (t) => (t < 30_000 ? undefined : t < 52_000 ? 'in_progress' : 'completed'),
-    jobs: () => [timedJob(c.now, 40_000, 50_000)],
-    deliver: (t) => t >= 55_000,
+    // Created after the watched read at 40 s and completed before the one at 50 s.
+    status: (t) => (t < 41_000 ? undefined : t < 49_000 ? 'in_progress' : 'completed'),
+    jobs: () => [timedJob(c.now, 42_000, 48_000)],
+    deliver: (t) => t >= 49_000,
   });
   const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
   const seen = await shapeLive(k, 6, { deadlineMs: DEADLINE.stage });
@@ -235,7 +233,7 @@ test('a shape job missed after Deliver ran leaves R4.20, R4.24 and R4.26 not exe
       match(
         reason,
         new RegExp(
-          `${rule.replace('.', '\\.')}: not exercised: M2's Deliver had already run before the scenario could reassign it: shape job 11 \\(run 5\\) ran from ${iso(40_000)} to ${iso(50_000)}; deliver job 21 \\(run 7\\) started ${iso(58_000)}`,
+          `${rule.replace('.', '\\.')}: not exercised: M2's Deliver had already run before the scenario could reassign it: shape job 11 \\(run 5\\) ran from ${iso(42_000)} to ${iso(48_000)}; deliver job 21 \\(run 7\\) started ${iso(58_000)}`,
         ),
       );
     }
