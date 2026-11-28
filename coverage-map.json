@@ -273,6 +273,7 @@
   {"id": "R8.22", "notE2e": "agent 內部工作方式"},
   {"id": "R8.23", "notE2e": "Nibfin 自身設定"},
   {"id": "R8.24", "notE2e": "e2e 自身"},
+  {"id": "R8.25", "notE2e": "Nibfin 自身的開發方式"},
   {"id": "R9.12", "platforms": ["linux"], "scenarios": ["dashboard-operations"]},
   {"id": "R9.13", "platforms": ["linux"], "scenarios": ["dashboard-operations"]},
   {"id": "R9.14", "platforms": ["linux"], "scenarios": ["dashboard-views"]},
