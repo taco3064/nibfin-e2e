@@ -1,4 +1,5 @@
 import { deepEqual, equal, match, rejects } from 'node:assert/strict';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { requireEnv } from '../../src/host/config.ts';
 import { createExec } from '../../src/host/exec.ts';
@@ -67,6 +68,41 @@ test('the peer prelude exports GH_TOKEN from stdin, keeps the rest of stdin, and
   match(out.rt, /^\/run\/user\/\d+$/);
   const none = peerArgv([process.execPath, '-e', script], { cwd: '/tmp' });
   equal(JSON.parse((await exec(none.argv.slice(5), { input: none.input })).stdout).gh, undefined);
+});
+
+test('the peer prelude points the XDG folders at the peer home and unsets GH_CONFIG_DIR, whatever reached it', async () => {
+  const home = '/tmp/nibfin-peer-home';
+  const exec = createExec(
+    {
+      ...process.env,
+      HOME: home,
+      E2E_PEER_GITHUB_TOKEN: 'peer-secret',
+      XDG_CONFIG_HOME: '/home/runner/.config',
+      XDG_DATA_HOME: '/home/runner/.local/share',
+      XDG_CACHE_HOME: '/home/runner/.cache',
+      XDG_STATE_HOME: '/home/runner/.local/state',
+      GH_CONFIG_DIR: '/home/runner/.config/gh',
+    },
+    () => {},
+  );
+  const script =
+    'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const e=process.env;console.log(JSON.stringify({s,cwd:process.cwd(),gh:e.GH_TOKEN,e2e:Object.keys(e).filter(k=>/^E2E_/i.test(k)),rt:e.XDG_RUNTIME_DIR,home:e.HOME,config:e.XDG_CONFIG_HOME,data:e.XDG_DATA_HOME,cache:e.XDG_CACHE_HOME,state:e.XDG_STATE_HOME,ghConfig:e.GH_CONFIG_DIR}))})';
+  for (const token of ['peer-secret', undefined]) {
+    const p = peerArgv([process.execPath, '-e', script], { cwd: '/tmp', token, input: 'more input' });
+    // Without sudo: the same /bin/sh script and positional arguments.
+    const out = JSON.parse((await exec(p.argv.slice(5), { input: p.input })).stdout);
+    equal(out.home, home);
+    equal(out.config, join(home, '.config'));
+    equal(out.data, join(home, '.local', 'share'));
+    equal(out.cache, join(home, '.cache'));
+    equal(out.state, join(home, '.local', 'state'));
+    equal(out.ghConfig, undefined);
+    equal(out.s, 'more input');
+    equal(out.gh, token);
+    equal(out.cwd, '/tmp');
+    deepEqual(out.e2e, []);
+    match(out.rt, /^\/run\/user\/\d+$/);
+  }
 });
 
 test('freeRange starts after every used range and at least at 100000', () => {
