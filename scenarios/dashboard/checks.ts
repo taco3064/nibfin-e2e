@@ -709,15 +709,36 @@ export interface PauseView {
 const PAUSE_MARKER = /\bpaused?\b/gi;
 
 /**
+ * How many pause markers (R9.2) an Issue element shows, not counting Pause control labels. The
+ * element text includes its button labels, so each Pause control adds one "Pause" word that is
+ * not a marker; a "Resume" label never matches.
+ */
+export function pauseMarkers(v: PauseView): number {
+  return Math.max(0, (v.text.match(PAUSE_MARKER)?.length ?? 0) - v.pauseControls);
+}
+
+/**
+ * Why an Issue element is not ready for a pause to be added and detected, or undefined when it
+ * is: it must be listed, offer a Pause or Resume control (R9.19) and show no pause marker yet.
+ * A `pending` Issue may offer only Resume (R9.55, R5.51), which is accepted.
+ */
+export function pausePreconditionProblem(v: PauseView): string | undefined {
+  if (!v.present || !v.text.trim()) return 'not listed';
+  if (v.pauseControls + v.resumeControls === 0) return 'no Pause or Resume control';
+  if (pauseMarkers(v) > 0) return 'already shows a pause marker';
+  return undefined;
+}
+
+/**
  * Whether an Issue element shows a pause that was not there before (R9.2, R9.19, R5.51): a new
- * Resume control or a new pause marker. A missing or empty element, a Pause control that only
- * disappeared, or other new label names never count.
+ * Resume control or more pause markers than before. A Resume control the element already had
+ * before does not count, and Pause control labels are not markers. A missing or empty element,
+ * a Pause control that only disappeared, or other new label names never count.
  */
 export function pauseAppeared(before: PauseView, after: PauseView): boolean {
   if (!after.present || !after.text.trim()) return false;
   if (after.resumeControls > before.resumeControls) return true;
-  const markers = (t: string) => t.match(PAUSE_MARKER)?.length ?? 0;
-  return markers(after.text) > markers(before.text);
+  return pauseMarkers(after) > pauseMarkers(before);
 }
 
 /** A short, one-line description of a PauseView for a failure message. */

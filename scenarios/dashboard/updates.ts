@@ -9,6 +9,7 @@ import {
   fixtureTitle,
   intervalMatches,
   pauseAppeared,
+  pausePreconditionProblem,
   startsInWindow,
 } from './checks.ts';
 import type { PauseView } from './checks.ts';
@@ -133,19 +134,21 @@ async function remoteChange(ctx: RunContext, secrets: Secrets, markers: Record<s
       ['repo', repo],
     ] as const;
 
-    // D must show a Pause control and no Resume before the edit, so the edit can only show up
-    // as a new Resume control or a new pause marker.
+    // D must be listed with a Pause or Resume control and no pause marker before the edit. As a
+    // pending Issue it may offer only Resume (R9.55, R5.51), so the edit can only show up as a
+    // new pause marker or a Resume control it did not have before.
     const before: Record<string, PauseView> = {};
     for (const [name, page] of views) {
       const v = await until(
         () => pauseView(page, f.D.title),
-        (x) => x.present && x.pauseControls > 0 && x.resumeControls === 0,
+        (x) => pausePreconditionProblem(x) === undefined,
         POLL_MS + TOLERANCE_MS,
         2000,
       );
-      if (!(v.present && v.pauseControls > 0 && v.resumeControls === 0)) {
+      const problem = pausePreconditionProblem(v);
+      if (problem !== undefined) {
         throw new Error(
-          `precondition: fixture D is not listed with a Pause control and no Resume in the ${name} view before the edit (saw: ${describePauseView(v)}); nothing was edited and nothing is asserted about R9.24`,
+          `precondition: fixture D is not ready for the edit in the ${name} view (${problem}; saw: ${describePauseView(v)}); nothing was edited and nothing is asserted about R9.24`,
         );
       }
       before[name] = v;
@@ -550,22 +553,28 @@ async function failures(ctx: RunContext, secrets: Secrets, markers: Record<strin
       'the page to say its data may be outdated once updates stopped',
       after.slice(0, 300),
     );
-    const pause = issueElement(page, f.D.title)
-      .getByRole('button', { name: /^pause\b/i })
+    // D offers Pause or Resume (R9.19); as a pending Issue it offers Resume (R9.55). Either way
+    // the click goes to no server, so it must fail and leave D unchanged on GitHub.
+    const control = issueElement(page, f.D.title)
+      .getByRole('button', { name: /^(pause|resume)\b/i })
       .first();
-    check(await pause.count(), 'R9.34', 'a Pause control on D (no pause label) to try without a server', 'none');
-    if (await pause.isEnabled()) {
-      await pause.click();
+    check(await control.count(), 'R9.34', 'a Pause or Resume control on D to try without a server', 'none');
+    // The locator matched the accessible name; a text-less button carries it in aria-label.
+    const label =
+      (await control.innerText().catch(() => '')) || (await control.getAttribute('aria-label').catch(() => '')) || '';
+    const controlName = /^\s*resume/i.test(label) ? 'Resume' : 'Pause';
+    if (await control.isEnabled()) {
+      await control.click();
       await sleep(5000);
       const r = await bodyText(page);
       check(
         /fail|error|could not|unable|not sent/i.test(r),
         'R9.34',
-        'a pause click without a server shown as a failure',
+        `a ${controlName} click without a server shown as a failure`,
         r.slice(0, 300),
       );
       check(
-        !/\b(paused|success|succeeded|sent)\b/i.test(
+        !/\b(paused|resumed|success|succeeded|sent)\b/i.test(
           (await issueElement(page, f.D.title).innerText()).replace(/not sent/gi, ''),
         ),
         'R9.34',
@@ -573,7 +582,7 @@ async function failures(ctx: RunContext, secrets: Secrets, markers: Record<strin
         'D shows success',
       );
     } else {
-      notes.push('without a server, Pause on D is disabled (not success)');
+      notes.push(`without a server, ${controlName} on D is disabled (not success)`);
     }
     const D = await readIssue(gh, exec, f.D.number);
     check(
