@@ -1,13 +1,16 @@
 // Phase 2 scenarios with their own fixtures: routing, the peer, protected paths and fix loops.
 import { planHasNoRulesets } from '../../src/host/sandbox.ts';
 import type { Scenario } from '../../src/types.ts';
-import { AGENT_STAGES, Checks, fixPushProblems, isIssueBranch, markerOf, ranOnRunner, reasonOf, time } from './analysis.ts';
+import { AGENT_STAGES, Checks, fixPushProblems, isIssueBranch, markerOf, ranOnRunner, reasonOf, selfHosted, time } from './analysis.ts';
 import type { Issue, Job, Pull, Run, Stage } from './analysis.ts';
-import { DEADLINE, changeRequest, lifecycle } from './kit.ts';
+import { DIRECT_READ_MS } from './journeys.ts';
+import { DEADLINE, changeRequest, lifecycle, redact } from './kit.ts';
 import type { Kit } from './kit.ts';
 import { PENDING_MARKER } from './marks.ts';
 import type { Snapshot } from './observe.ts';
 import { closingProblems } from './phase1.ts';
+import { sleep } from '../lib/wait.ts';
+import { untilAborted } from '../../src/abort.ts';
 
 /** Timeline and job timestamps have second precision; events this close count in the product's favor. */
 export const PAUSE_TOLERANCE_MS = 5_000;
@@ -46,6 +49,98 @@ export function pausedDeliverProblem(start: number, events: PauseEvent[], own: O
   return `M2's deliver job started at ${iso(start)} after pause was removed by ${lastOff.actor} at ${iso(lastOff.at)}, not by the scenario (${saw})${tail}`;
 }
 
+/** How long `shapeLive` reads directly on one snapshot before it lets the observer read the next one (its default interval). */
+const SHAPE_SPAN_MS = 60_000;
+
+/**
+ * What `shapeLive` saw of M2's Shape: a shape run, or its self-hosted shape job, queued
+ * or in progress (`live`), or a shape job that had already completed before any read saw
+ * its run or job live (`missed`), with M2's first deliver run on that snapshot, if any.
+ */
+export type ShapeSeen =
+  | { kind: 'live'; run: Run & { stage: Stage }; job?: Job; at: number }
+  | { kind: 'missed'; run: Run; job: Job; why: string; deliver?: Run & { stage: Stage } };
+
+/**
+ * Waits for M2's shape run, or its self-hosted shape job, to be seen in any status but
+ * `completed` (Proposal R4.24 covers queued and running runs). On each snapshot it reads
+ * M2's unfinished shape runs and their jobs directly every `DIRECT_READ_MS`, not through
+ * the observer's cached job reads, so a short job is still seen (Issue #596). A shape job
+ * that completed before any read saw it is returned as `missed`, not thrown; M2 closed,
+ * M2 with `pending`, the stall limit and the deadline still end the wait.
+ */
+export async function shapeLive(k: Kit, n: number, o: { deadlineMs: number; show?: (s: Snapshot) => Promise<string> }): Promise<ShapeSeen> {
+  const pause = k.sleep ?? sleep;
+  const iso = (t: number) => new Date(t).toISOString();
+  /** Runs that completed without running an agent job (cancelled or skipped). */
+  const finished = new Set<number>();
+  /** The wait's previous look at M2's shape runs: when, and what it saw. */
+  let last: { at: number; saw: string } | undefined;
+  const fn = async (s: Snapshot): Promise<ShapeSeen | undefined> => {
+    const until = k.now() + SHAPE_SPAN_MS;
+    for (;;) {
+      const at = k.now();
+      const runs = k.stages(s, k.exec, n, ['shape']).filter((r) => !finished.has(r.id));
+      if (!runs.length) {
+        last = { at, saw: 'no unfinished shape run on its snapshot' };
+        return undefined;
+      }
+      let missed: Extract<ShapeSeen, { kind: 'missed' }> | undefined;
+      const saw: string[] = [];
+      for (const run of runs) {
+        const { data } = await k.gh.rest<Run>('GET', `/repos/${k.exec}/actions/runs/${run.id}`);
+        const jobs = await k.gh.list<Job>(`/repos/${k.exec}/actions/runs/${run.id}/jobs?filter=latest`, 'jobs');
+        const now = { ...run, status: data.status, conclusion: data.conclusion };
+        const own = jobs.filter(selfHosted);
+        const job = own.find((j) => j.status !== 'completed');
+        if (job) return { kind: 'live', run: now, job, at };
+        if (now.status !== 'completed') return { kind: 'live', run: now, at };
+        const done = own.find((j) => j.conclusion !== 'cancelled' && j.conclusion !== 'skipped');
+        saw.push(`run ${run.id} completed (${String(now.conclusion)})`);
+        if (!done) {
+          finished.add(run.id);
+          continue;
+        }
+        const before = last ? `its previous look was at ${iso(last.at)} (${last.saw})` : 'it had not looked before';
+        const why = `shape job ${done.id} (run ${run.id}) completed (${String(done.conclusion)}): started ${String(done.started_at)}, completed ${String(done.completed_at)}; the wait first read it at ${iso(at)}, already completed, and ${before}`;
+        missed ??= { kind: 'missed', run: now, job: done, why: redact(why, k.ctx.secretValues()), deliver: k.stages(s, k.exec, n, ['deliver'])[0] };
+      }
+      if (missed) return missed;
+      last = { at, saw: saw.join(', ') };
+      if (k.now() + DIRECT_READ_MS > until) return undefined;
+      await untilAborted(pause(DIRECT_READ_MS), k.ctx.signal);
+    }
+  };
+  return k.obs.until('M2\'s shape run or job to be queued or running', fn, o.deadlineMs, o.show, { gonePast: k.stageGone(k.exec, n, 'shape', { jobs: false }) });
+}
+
+/** The R4.24 not-exercised reason for a Shape that completed before the scenario saw it live. */
+export function shapeMissedNote(m: Extract<ShapeSeen, { kind: 'missed' }>): string {
+  return `M2's shape job ${m.job.id} (run ${m.run.id}) ran from ${String(m.job.started_at)} to ${String(m.job.completed_at)} before the scenario saw its run or job queued or in progress: ${m.why}`;
+}
+
+/**
+ * The checks when M2's Deliver had already run before the scenario could reassign it:
+ * R4.20, R4.24 and R4.26 are not exercised, naming the jobs; R4.18 is judged on the
+ * deliver job's labels.
+ */
+export function deliverRanChecks(c: Checks, m: Extract<ShapeSeen, { kind: 'missed' }>, deliver: Job & { run: Run }, label: string): void {
+  const jobs = `M2's Deliver had already run before the scenario could reassign it: shape job ${m.job.id} (run ${m.run.id}) ran from ${String(m.job.started_at)} to ${String(m.job.completed_at)}; deliver job ${deliver.id} (run ${deliver.run.id}) started ${String(deliver.started_at)}; ${m.why}`;
+  c.notExercised('R4.20', `${jobs}; so no dispatch used the reassigned list`);
+  c.notExercised('R4.24', `${jobs}; so no shape run was queued or running at a reassignment`);
+  c.notExercised('R4.26', `${jobs}; so M2 was never assigned to a member other than the Owner`);
+  c.check('R4.18', deliver.labels.includes(label), `routing used ${deliver.labels.join(', ')}, not the Assignee's label ${label}`);
+}
+
+/**
+ * Why M2's deliver run could not have used the reassigned list (its run was created
+ * before the reassignment), so R4.20 is not exercised; undefined otherwise.
+ */
+export function dispatchedBefore(deliver: Job & { run: Run }, reassignedAt: number): string | undefined {
+  if (!(time(deliver.run.created_at) < reassignedAt)) return undefined;
+  return `M2's deliver job ${deliver.id} (run ${deliver.run.id}, created ${deliver.run.created_at}, job started ${String(deliver.started_at)}) was dispatched before the reassignment at ${new Date(reassignedAt).toISOString()}, so it could not use the new list`;
+}
+
 export const assigneeRouting: Scenario = lifecycle({
   id: 'assignee-routing',
   concurrent: true,
@@ -72,14 +167,23 @@ export const assigneeRouting: Scenario = lifecycle({
       c.check('R4.22', (await k.obs.comments(exec, m1.number)).length === 0, 'Nibfin commented on M1');
       c.check('R4.22', !k.labels(s1, exec, m1.number).includes('pause'), 'M1 got pause');
 
-      // M2: reassigned during Shape to [collaborator, Owner].
+      // M2: reassigned to [collaborator, Owner] while its Shape is queued or running (R4.24).
       const m2 = await k.file(exec, { scenario: 'assignee-routing', title: 'Add square', body: changeRequest(k.slug('m2'), 'square', 'returns its argument squared'), labels: ['scope'], assignees: [owner.login] });
       filed.push(m2.number);
       const n = m2.number;
       const show = k.show(exec, n);
-      const shapeJob = await k.obs.until('M2\'s shape job to run', async (s) => (await k.agentJobs(s, exec, n, ['shape'])).find((j) => j.status === 'in_progress'), DEADLINE.stage, show, {
-        gonePast: k.stageGone(exec, n, 'shape'),
-      });
+      const seen = await shapeLive(k, n, { deadlineMs: DEADLINE.stage, show });
+      // Whenever a Runner ran it: before or after the removal, running or completed.
+      const deliverJob = () =>
+        k.obs.until('M2\'s deliver job to start', async (s) => (await k.agentJobs(s, exec, n, ['deliver'])).filter(ranOnRunner).sort((a, b) => time(a.started_at) - time(b.started_at))[0], DEADLINE.stage, show, {
+          gonePast: k.stageGone(exec, n, 'deliver', { jobs: false }),
+        });
+      if (seen.kind === 'missed' && seen.deliver) {
+        k.ctx.log(`assignee-routing: ${shapeMissedNote(seen)}; deliver run ${seen.deliver.id} already exists, so #${n} is not reassigned`);
+        deliverRanChecks(c, seen, await deliverJob(), label);
+        await k.addLabels(exec, n, ['pause']);
+        return c.outcome(`M1 (only ${other.login}) was left alone; M2 was delivered on ${label}`);
+      }
       await k.gh.rest('PATCH', `/repos/${exec}/issues/${n}`, { assignees: [other.login, owner.login] });
       const reassignedAt = k.now();
       const { data: back } = await k.gh.rest<Issue>('GET', `/repos/${exec}/issues/${n}`);
@@ -89,12 +193,25 @@ export const assigneeRouting: Scenario = lifecycle({
         if (!k.labels(s, exec, n).includes('pause')) return undefined;
         return (await k.obs.comments(exec, n)).find((x) => markerOf(x.body) && x.body?.includes(other.login) && time(x.created_at) >= reassignedAt - 60_000) ? s : undefined;
       }, DEADLINE.stage, show);
-      const shape = await k.obs.until('the running shape job to complete', async () => {
-        const j = await k.obs.job(exec, shapeJob.id);
-        return j.status === 'completed' ? j : undefined;
-      }, DEADLINE.stage, show);
-      if (time(shape.completed_at) <= reassignedAt) c.notExercised('R4.24', `shape job ${shape.id} completed before the reassignment`);
-      else c.check('R4.24', shape.conclusion === 'success', `the shape job running at the reassignment concluded ${String(shape.conclusion)}`);
+      if (seen.kind === 'missed') c.notExercised('R4.24', shapeMissedNote(seen));
+      else {
+        const live = seen;
+        const shape = await k.obs.until('the running shape job to complete', async (s): Promise<Job | { run: Run } | undefined> => {
+          if (live.job) {
+            const j = await k.obs.job(exec, live.job.id);
+            return j.status === 'completed' ? j : undefined;
+          }
+          const j = (await k.obs.jobs(exec, live.run.id)).find((x) => selfHosted(x) && x.status === 'completed');
+          if (j) return j;
+          const r = k.stages(s, exec, n, ['shape']).find((x) => x.id === live.run.id);
+          return r?.status === 'completed' ? { run: r } : undefined;
+        }, DEADLINE.stage, show);
+        if ('run' in shape) {
+          const statuses = (await k.obs.jobs(exec, shape.run.id)).map((j) => `${j.id} ${j.name} ${j.status}/${String(j.conclusion)}`).join(', ') || 'none';
+          c.fail('R4.24', `shape run ${shape.run.id}, queued or running at the reassignment, concluded ${String(shape.run.conclusion)} without a completed self-hosted job (jobs: ${statuses})`);
+        } else if (time(shape.completed_at) <= reassignedAt) c.notExercised('R4.24', `shape job ${shape.id} completed before the reassignment`);
+        else c.check('R4.24', shape.conclusion === 'success', `the shape job running at the reassignment concluded ${String(shape.conclusion)}`);
+      }
       await k.obs.until('`shaped`', (s) => (k.labels(s, exec, n).includes('shaped') ? true : undefined), DEADLINE.event, show);
       // removeLabel accepts a 404, so read whether pause was on just before the removal.
       const { data: beforeRemoval } = await k.gh.rest<Issue>('GET', `/repos/${exec}/issues/${n}`);
@@ -103,10 +220,7 @@ export const assigneeRouting: Scenario = lifecycle({
       await k.removeLabel(exec, n, 'pause');
       const removeEnd = k.now();
       k.ctx.log(`assignee-routing: pause was ${wasOn ? 'on' : 'already off'} on #${n} just before the scenario removed it`);
-      // Whenever a Runner ran it: before or after the removal, running or completed.
-      const deliver = await k.obs.until('M2\'s deliver job to start', async (s) => (await k.agentJobs(s, exec, n, ['deliver'])).filter(ranOnRunner).sort((a, b) => time(a.started_at) - time(b.started_at))[0], DEADLINE.stage, show, {
-        gonePast: k.stageGone(exec, n, 'deliver', { jobs: false }),
-      });
+      const deliver = await deliverJob();
       const timeline = (await k.obs.timeline(exec, n)) as { event: string; created_at: string; label?: { name: string }; actor?: { login: string } | null }[];
       const pauseEvents = timeline.flatMap((e): PauseEvent[] => ((e.event === 'labeled' || e.event === 'unlabeled') && e.label?.name === 'pause' ? [{ event: e.event, actor: e.actor?.login ?? 'unknown', at: time(e.created_at) }] : []));
       const url = (deliver as { html_url?: string | null }).html_url ?? `https://github.com/${exec}/actions/runs/${deliver.run_id}/job/${deliver.id}`;
@@ -114,7 +228,9 @@ export const assigneeRouting: Scenario = lifecycle({
       if (paused) c.fail('R4.26', `R4.12/R4.26: ${paused}; job ${url}`);
       else {
         const firstWithRunners = order.find((l) => l.toLowerCase() === owner.login.toLowerCase());
-        c.check('R4.20', !!firstWithRunners && deliver.labels.includes(label), `M2's deliver ran with ${deliver.labels.join(', ')}; the first Assignee with Runners in GitHub's order (${order.join(', ')}) is ${owner.login} (${label})`);
+        const early = dispatchedBefore(deliver, reassignedAt);
+        if (early) c.notExercised('R4.20', early);
+        else c.check('R4.20', !!firstWithRunners && deliver.labels.includes(label), `M2's deliver ran with ${deliver.labels.join(', ')}; the first Assignee with Runners in GitHub's order (${order.join(', ')}) is ${owner.login} (${label})`);
         c.check('R4.18', deliver.labels.includes(label), `routing used ${deliver.labels.join(', ')}, not the Assignee's label ${label}`);
       }
       const pauses = timeline.filter((e) => e.event === 'labeled' && e.label?.name === 'pause');
