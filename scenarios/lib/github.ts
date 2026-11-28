@@ -1,5 +1,5 @@
 import type { GitHub } from '../../src/host/github.ts';
-import type { HostState } from '../../src/host/hoststate.ts';
+import type { HostState, TaskDetail } from '../../src/host/hoststate.ts';
 import type { RunContext } from '../../src/types.ts';
 
 export interface Registration {
@@ -20,6 +20,25 @@ export interface Issue {
   labels: { name: string }[];
 }
 
+/** A scheduled task as one read saw it: its actions and trigger kinds, or why its detail could not be read. */
+export interface TaskSeen {
+  name: string;
+  actions?: TaskDetail['actions'];
+  triggers?: string[];
+  error?: string;
+}
+
+/**
+ * What the `nibfin` step saw on Windows right after `runner add`: the scheduled tasks new
+ * against the host before it, the one among them that runs `podman machine start`
+ * (Proposal R5.13), or why the task list could not be read.
+ */
+export interface StartTaskRecord {
+  tasks: TaskSeen[];
+  task?: TaskSeen;
+  error?: string;
+}
+
 export interface NibfinFacts {
   commands: { args: string[]; code: number; stdout: string; stderr: string }[];
   executionPr: number;
@@ -28,6 +47,8 @@ export interface NibfinFacts {
   hostBefore: HostState;
   /** How many Claude Runners the step added (`runner add claude --count <n>`). */
   runnerCount: number;
+  /** Windows only; absent on Linux, and never required. */
+  startTask?: StartTaskRecord;
 }
 
 /**
