@@ -133,7 +133,7 @@ through another step), in this order:
 | `podman`       | Linux: checks Podman. Windows: installs the pinned Podman MSI (sha256 checked) and runs `podman machine init`; `runner add` starts the machine                                                                                                                                                                                                                                                                                   |
 | `claude-login` | Writes the Claude token into `env` of `settings.json` in the `nibfin-home-claude` volume, keeping every other key                                                                                                                                                                                                                                                                                                                |
 | `sandboxes`    | Refuses to start while a runner registration is online on the execution sandbox, then resets both sandboxes and reads them back                                                                                                                                                                                                                                                                                                  |
-| `nibfin`       | In a clone of the execution sandbox: records the host state (`hostBefore`; on Windows it first adds a `[wsl2]` section with the default `nestedVirtualization=true` when `.wslconfig` has none), then `gh nibfin runner add claude --count 2`, `init` on execution then peer; reads the image digest from the init PR, rebase-merges both init PRs and records each sandbox's `main` head and tree as its baseline               |
+| `nibfin`       | In a clone of the execution sandbox: records the host state (`hostBefore`; on Windows it first adds a `[wsl2]` section with the default `nestedVirtualization=true` when `.wslconfig` has none), then `gh nibfin runner add claude --count <n>` (4 on Linux, 2 on Windows, recorded as `runnerCount`), `init` on execution then peer; reads the image digest from the init PR, rebase-merges both init PRs and records each sandbox's `main` head and tree as its baseline               |
 | `observed-job` | Runs one agent fixture on the execution sandbox through Shape, Deliver and Review and records what its Jobs ran with (container projection, probe output, log facts, login volume facts, the pushed branch, how the PR ended) for the scenarios that read it                                                                                                                                                                     |
 | `collaborator` | Linux only. Checks that the second account is a write (not admin) collaborator on the execution sandbox; creates the OS user `e2epeer` (subordinate ids, linger and its user manager); installs the built gh-nibfin for it; clones the execution sandbox into its home; writes its `nibfin-home-claude` volume; generates an ed25519 key as `e2epeer` and adds the public half to the second account as `nibfin-e2e-peer-<time>` |
 
@@ -275,13 +275,13 @@ Scenarios that run fixture Issues use the shared library in `scenarios/lib/`:
 
 - `prepareFixture(kit, repo, {files, variables, ruleset})` (`fixture.ts`) is the
   first call of every fixture. It closes open Issues, waits on `podman events`
-  for running Job containers to end, and requires both Runners online and idle;
+  for running Job containers to end, and requires every Runner the `nibfin` step added online and idle;
   then it sets the library variables (`NIBFIN_MODEL`, `NIBFIN_CONTAINER_LIMITS`,
   `NIBFIN_MEMORY`) and deletes every `e2e-` ruleset; then it makes `main`'s tree
   the recorded baseline plus exactly `files` (fast-forward only); only then does
   it create the fixture ruleset. A scenario's result so never depends on what ran
   before it. The private peer has no rulesets (Proposal R3.55).
-- Runners are identified by slot (`claude-1`, `claude-2`) with
+- Runners are identified by slot (`claude-1` … `claude-<n>`, `slotsOf(n)`) with
   `runnerSlot(registrationName)` (`runners.ts`), never by a literal registration
   name: gh-nibfin names registrations `<hostname>-<hostid>-<slot>`. Runner
   checks always read the execution sandbox, where the Runners register.

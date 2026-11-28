@@ -40,15 +40,18 @@ const services = createServices(fileURLToPath(new URL('..', import.meta.url)), (
 
 // Explicit lists, in run order (consecutive `concurrent` scenarios start together, see
 // `Scenario.concurrent`). Scenario modules live under `scenarios/`; `scenarios/index.ts`
-// imports and lists the Issue #299 ones, and the others are listed here. The installation and
+// imports and lists the Job, Agent setup, model, `.nibfin.json`, log, image and collaborator
+// ones (Issues #299 and #300), and the others are listed here. The installation and
 // management scenarios run first: they read the fresh host and the init PRs, and upgrade, which
 // changes main's workflow, runs before the long lifecycle scenarios so GHCR's main image has
 // little time to move after init. image-switch, which pins an earlier image on main and checks that a running
 // Job keeps it while the next Job runs the upgraded one, runs alone right after upgrade for the same reason and
 // restores main's pin before the lifecycle scenarios. They leave their fixture Issues paused or without `scope`, and the
 // delivery-lifecycle scenarios judge only their own tagged fixtures and runs created since they
-// started. Then Issue #299's, the site and the Dashboard scenarios, which need earlier work in
-// the sandboxes to have settled. runner-add-login (alone, with no fixture waiting for a Runner)
+// started. Then the scenarios of scenarios/index.ts, the site and the Dashboard scenarios, which need
+// earlier work in the sandboxes to have settled. Two short groups there are concurrent: the
+// scenarios that read only the observed-job facts, and the two site scenarios, which only read
+// gh-nibfin and the public Live page. The scenarios on either side of them are not concurrent. runner-add-login (alone, with no fixture waiting for a Runner)
 // starts a Codex login and abandons it at the guide. runner-remove, which removes every local Runner and the login
 // volume, runs last.
 export const scenarios: Scenario[] = [

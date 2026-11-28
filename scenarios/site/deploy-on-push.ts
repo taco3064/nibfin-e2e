@@ -6,6 +6,9 @@ const REPO = 'taco3064/gh-nibfin';
 
 export const siteDeployOnPush = defineScenario({
   id: 'site-deploy-on-push',
+  // Only reads taco3064/gh-nibfin's workflows, runs and jobs and the public Live page in its own browser
+  // profile; it writes no Issue, Runner, label, setting or branch, so it runs alongside the other site scenario.
+  concurrent: true,
   rules: ['R9.48'],
   async run(ctx) {
     const gh = ctx.github;

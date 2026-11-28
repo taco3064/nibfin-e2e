@@ -183,7 +183,7 @@ async function writeContent(kit: Kit, repo: string, files: FixtureFile[]): Promi
 /**
  * Puts the sandbox into a state that depends only on the arguments, in four phases that
  * each must succeed before the next: quiesce (no open Issue, no running Job container,
- * then a wait of up to DEADLINE.quiesce for both Runners to be online and idle), clear settings (library variables and `e2e-` rulesets),
+ * then a wait of up to DEADLINE.quiesce for every Runner the `nibfin` step added to be online and idle), clear settings (library variables and `e2e-` rulesets),
  * content (main = baseline + `files`), then the fixture ruleset. Every fixture runs it first.
  */
 export async function prepareFixture(kit: Kit, repo: string, state: FixtureState): Promise<{ tree: string }> {
