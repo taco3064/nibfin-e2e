@@ -23,6 +23,15 @@ export interface FakeRepo {
   protection?: Record<string, unknown> | 'upgrade';
   /** Paths present on main (for the init read-back). */
   mainFiles: Set<string>;
+  /** Workflow runs; `completed` runs answer a cancel with 409. */
+  runs: FakeRun[];
+}
+
+export interface FakeRun {
+  id: number;
+  name: string;
+  status: string;
+  jobs?: { name: string; status: string; runner_name: string | null; html_url: string }[];
 }
 
 /** A ruleset; an entry without `enforcement` behaves as it did before enforcement was modelled. */
@@ -63,6 +72,7 @@ export function cleanRepo(visibility: string, tree: string): FakeRepo {
     rulesets: [],
     tags: [],
     mainFiles: new Set(),
+    runs: [],
   };
 }
 
@@ -78,6 +88,8 @@ export class FakeGitHub {
   trees = new Map<string, Map<string, { mode: string; content: string }>>();
   /** Every GET path, decoded. */
   reads: string[] = [];
+  /** Called on each accepted cancel or force-cancel, for example to finish the run and free its runner. */
+  onCancel?: (repo: FakeRepo, runId: number, force: boolean) => void;
   private n = 0;
 
   fetch: typeof fetch = async (input, init) => {
@@ -246,7 +258,26 @@ export class FakeGitHub {
     if (rest === '/keys') return ok(repo.keys);
     if ((x = /^\/keys\/(\d+)$/.exec(rest))) return del(repo.keys, (k) => k.id === Number(x?.[1]));
     if (rest === '/actions/runners') return ok({ runners: repo.runners }, 'runners');
-    if ((x = /^\/actions\/runners\/(\d+)$/.exec(rest))) return del(repo.runners, (r) => r.id === Number(x?.[1]));
+    if ((x = /^\/actions\/runners\/(\d+)$/.exec(rest))) {
+      const runner = repo.runners.find((r) => r.id === Number(x?.[1]));
+      if (method === 'DELETE' && runner?.busy) return { status: 422, data: { message: `Bad request - Runner ${runner.name} is currently running a job and cannot be deleted.` } };
+      return del(repo.runners, (r) => r.id === Number(x?.[1]));
+    }
+    if (rest === '/actions/runs') {
+      const status = q.get('status');
+      return ok({ workflow_runs: repo.runs.filter((r) => !status || r.status === status).map(({ id, name, status: st }) => ({ id, name, status: st })) }, 'workflow_runs');
+    }
+    if ((x = /^\/actions\/runs\/(\d+)\/(cancel|force-cancel)$/.exec(rest)) && method === 'POST') {
+      const run = repo.runs.find((r) => r.id === Number(x?.[1]));
+      if (!run) return { status: 404, data: { message: 'Not Found' } };
+      if (run.status === 'completed') return { status: 409, data: { message: 'Cannot cancel a workflow run that is completed.' } };
+      this.onCancel?.(repo, run.id, x[2] === 'force-cancel');
+      return { status: 202, data: {} };
+    }
+    if ((x = /^\/actions\/runs\/(\d+)\/jobs$/.exec(rest))) {
+      const run = repo.runs.find((r) => r.id === Number(x?.[1]));
+      return run ? ok({ jobs: run.jobs ?? [] }, 'jobs') : { status: 404, data: { message: 'Not Found' } };
+    }
     if (rest === '/rulesets') {
       if (repo.rulesets === 'upgrade') return { status: 403, data: { message: 'Upgrade to GitHub Pro or make this repository public to enable this feature.' } };
       if (method === 'POST') {
