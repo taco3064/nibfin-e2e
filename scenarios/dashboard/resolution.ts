@@ -1,6 +1,6 @@
 // Proposal R9.52–R9.56: the Dashboard side of the pending resolution stage (R4.40–R4.52).
-// Two fixtures reach real resolution states through public triggers: the product-decision
-// fixture (等你選擇) and an Issue whose Job Core refuses for an invalid `.nibfin.json`
+// Three fixtures reach real resolution states through public triggers: two product-decision
+// fixtures (等你選擇; one decided by option, one in the person's own words, R4.51) and an Issue whose Job Core refuses for an invalid `.nibfin.json`
 // (需要你處理, as in failure-pending). 自動排除中 is watched for while each waits for its
 // record. Reported `waiting` until the stage and its Dashboard are delivered (R8.20).
 import type { Locator, Page } from 'playwright-core';
@@ -16,20 +16,22 @@ import {
 } from '../lib/resolution.ts';
 import type { ResolutionRecord } from '../lib/resolution.ts';
 import { waitFor } from '../lib/wait.ts';
-import { Checks, markerOf, time } from '../lifecycle/analysis.ts';
+import { Checks, describeComments, markerOf, time } from '../lifecycle/analysis.ts';
 import type { Comment } from '../lifecycle/analysis.ts';
 import { DEADLINE, kitFor, message } from '../lifecycle/kit.ts';
 import type { Kit } from '../lifecycle/kit.ts';
 import { PENDING_MARKER } from '../lifecycle/marks.ts';
-import { awaitDecisionStop, decisionFixture } from '../lifecycle/resolution-decision.ts';
+import { awaitDecisionStop, decisionBody, decisionFixture } from '../lifecycle/resolution-decision.ts';
 import {
   autoProblem,
   buttonNamesFromAriaSnapshot,
   causeShown,
+  chooseDialogProblems,
+  controlsFromAriaSnapshot,
   decisionOption,
   nextStepLines,
-  optionLabel,
-  optionOfChoice,
+  ownWordsComment,
+  ownWordsIndex,
   stateOfRecord,
 } from './checks.ts';
 import type { ResolutionState } from './checks.ts';
@@ -343,71 +345,100 @@ async function handleDialog(page: Page, k: Kit, c: Checks, f: Fixture, r: Resolu
   );
 }
 
-/** 等你選擇 (R9.53, R9.54): the record's options with the recommended one selected; submit writes a decision and removes `pending`. */
-async function chooseDialog(page: Page, k: Kit, c: Checks, f: Fixture, r: ResolutionRecord, me: string): Promise<void> {
+/** How `chooseDialog` decides: submit the preselected recommended option, or reply in the person's own words (R4.51). */
+type ChooseMode = { kind: 'option' } | { kind: 'words'; reply: string };
+
+/** A choice's accessible name: its aria-label, else its label's, parent's or own text. */
+const choiceName = (ch: Locator) =>
+  ch.evaluate((el) => {
+    const e = el as unknown as {
+      closest(s: string): { textContent: string | null } | null;
+      getAttribute(n: string): string | null;
+      textContent: string | null;
+      parentElement: { textContent: string | null } | null;
+    };
+    return (
+      e.getAttribute('aria-label') ??
+      e.closest('label')?.textContent ??
+      e.parentElement?.textContent ??
+      e.textContent ??
+      ''
+    );
+  });
+
+/** The dialog's controls for a failure message; an unreadable snapshot reads as no controls. */
+const dialogControls = async (d: Locator) => controlsFromAriaSnapshot(await d.ariaSnapshot().catch(() => ''));
+
+/**
+ * 等你選擇 (R9.53, R9.54): the record's options with the recommended one selected and a way
+ * to reply in the person's own words (R4.51). In `option` mode the preselected option is
+ * submitted; in `words` mode the own-words choice, when listed, is selected and the reply
+ * typed into an editable field. Either way the decision comment must appear and `pending` go.
+ */
+async function chooseDialog(
+  page: Page,
+  k: Kit,
+  c: Checks,
+  f: Fixture,
+  r: ResolutionRecord,
+  me: string,
+  mode: ChooseMode,
+): Promise<void> {
   const { d, text } = await openRepair(page, c, f, r);
-  const brief = briefRecord(r.body);
   const radios = d.getByRole('radio');
   const choices = (await radios.count()) ? radios : d.getByRole('option');
   const count = await choices.count();
-  c.check(
-    'R9.54',
-    count === r.options.length,
-    `the 「排除」 dialog of #${f.n} lists ${count} choices, not the record's ${r.options.length}; dialog: ${quote(text)}`,
-  );
-  for (const o of r.options)
-    c.check(
-      'R9.54',
-      causeShown(text, optionLabel(o.text)),
-      `the 「排除」 dialog of #${f.n} does not show option ${o.n} "${briefRecord(o.text, 80)}"; dialog: ${quote(text)}`,
-    );
-  const checked: number[] = [];
+  const shown: { name: string; checked: boolean }[] = [];
   for (let i = 0; i < count; i++) {
     const ch = choices.nth(i);
-    const on = (await ch.isChecked().catch(() => false)) || (await ch.getAttribute('aria-selected')) === 'true';
-    if (!on) continue;
-    const name = await ch.evaluate((el) => {
-      const e = el as unknown as {
-        closest(s: string): { textContent: string | null } | null;
-        getAttribute(n: string): string | null;
-        textContent: string | null;
-        parentElement: { textContent: string | null } | null;
-      };
-      return (
-        e.getAttribute('aria-label') ??
-        e.closest('label')?.textContent ??
-        e.parentElement?.textContent ??
-        e.textContent ??
-        ''
-      );
-    });
-    checked.push(optionOfChoice(name, r.options) ?? -(i + 1));
+    const checked = (await ch.isChecked().catch(() => false)) || (await ch.getAttribute('aria-selected')) === 'true';
+    shown.push({ name: await choiceName(ch), checked });
   }
-  if (r.recommended === undefined)
-    c.fail('R9.54', `the record ${r.url} of #${f.n} marks no option as recommended: ${brief}`);
-  else
-    c.check(
-      'R9.54',
-      checked.length === 1 && checked[0] === r.recommended,
-      `the 「排除」 dialog of #${f.n} preselects ${checked.length ? checked.map((x) => (x > 0 ? `option ${x}` : `choice ${-x} (no option matched)`)).join(', ') : 'nothing'}, not the recommended option ${r.recommended}`,
-    );
-  const boxes = await d.getByRole('textbox').count();
-  c.check('R9.54', boxes === 0, `the 「排除」 dialog of #${f.n} offers ${boxes} free-text field(s)`);
+  const view = { text, choices: shown, textboxes: await d.getByRole('textbox').count(), controls: await dialogControls(d) };
+  for (const p of chooseDialogProblems(view, r, f.n)) c.check(p.rule, p.ok, p.message);
   const bulk = [...(await bulkControls(d)), ...(await bulkControls(issueElement(page, f.title)))];
   c.check('R9.54', !bulk.length, `the Dashboard offers bulk handling beside 「排除」 on #${f.n}: ${bulk.join(', ')}`);
+
+  if (mode.kind === 'words') {
+    const own = ownWordsIndex(shown, r);
+    if (own !== undefined) {
+      const ch = choices.nth(own);
+      await ch.check({ timeout: 10_000 }).catch(() => ch.click({ timeout: 10_000 }));
+    }
+    const fields = d.getByRole('textbox');
+    const editable = async () => {
+      for (let i = 0; i < (await fields.count()); i++) if (await fields.nth(i).isEditable().catch(() => false)) return i;
+      return undefined;
+    };
+    const at = await until(editable, (i) => i !== undefined, 10_000, 500);
+    if (at === undefined) {
+      c.fail(
+        'R9.54',
+        `the 「排除」 dialog of #${f.n} shows no editable field for an own-words reply after choosing ${own === undefined ? 'nothing' : `"${briefRecord(shown[own]?.name ?? '', 60)}"`}; controls: ${(await dialogControls(d)).join(', ') || 'none'}; dialog: ${quote(await d.innerText().catch(() => text))}`,
+      );
+      await closeDialog(page);
+      return;
+    }
+    await fields.nth(at).fill(mode.reply);
+  }
 
   const submitAt = Date.now();
   await (await mustButton(d, SUBMIT, 'R9.54', `the 「排除」 dialog of #${f.n}`)).click();
   const isDecision = (x: Comment, records: Comment[]) =>
     x.user?.login === me &&
     time(x.created_at) >= submitAt - 10_000 &&
-    markerOf(x.body) !== undefined &&
-    !PENDING_MARKER.test(markerOf(x.body) ?? '') &&
-    !records.some((rc) => rc.id === x.id);
+    !records.some((rc) => rc.id === x.id) &&
+    (mode.kind === 'words'
+      ? ownWordsComment(x.body ?? '', mode.reply)
+      : markerOf(x.body) !== undefined && !PENDING_MARKER.test(markerOf(x.body) ?? ''));
   const read = async () => {
     const h = await issueHistory(k.gh, k.exec, f.n);
     const records = resolutionRecords(h.comments, 0);
-    return { labels: h.labels, decision: h.comments.find((x) => isDecision(x, records)) };
+    return {
+      labels: h.labels,
+      comments: h.comments,
+      decision: h.comments.find((x) => isDecision(x, records)),
+    };
   };
   const got = await until(read, (s) => s.decision !== undefined && !s.labels.includes('pending'), 120_000, 3000);
   // Paused once pending is gone, so the next Shape (R4.51) does not carry the fixture further.
@@ -415,9 +446,11 @@ async function chooseDialog(page: Page, k: Kit, c: Checks, f: Fixture, r: Resolu
   if (!got.decision)
     c.fail(
       'R9.54',
-      `no new marked decision comment by ${me} on #${f.n} within 120 s after submitting at ${iso(submitAt)}`,
+      mode.kind === 'words'
+        ? `no new comment by ${me} on #${f.n} holding the own-words reply verbatim within 120 s after submitting at ${iso(submitAt)}; comments since: ${describeComments(got.comments.filter((x) => time(x.created_at) >= submitAt - 10_000))}`
+        : `no new marked decision comment by ${me} on #${f.n} within 120 s after submitting at ${iso(submitAt)}`,
     );
-  else {
+  else if (mode.kind === 'option') {
     const n = decisionOption(got.decision.body ?? '');
     c.check(
       'R9.54',
@@ -437,7 +470,7 @@ async function chooseDialog(page: Page, k: Kit, c: Checks, f: Fixture, r: Resolu
     `the 「排除」 dialog of #${f.n} reports the decision unconfirmed: ${quote(final)}`,
   );
   await closeDialog(page);
-  const shown = await until(
+  const after = await until(
     () =>
       issueElement(page, f.title)
         .innerText()
@@ -448,8 +481,8 @@ async function chooseDialog(page: Page, k: Kit, c: Checks, f: Fixture, r: Resolu
   );
   c.check(
     'R9.54',
-    !/\bpending\b/i.test(shown),
-    `the Dashboard still shows #${f.n} with pending 90 s after the decision: ${quote(shown)}`,
+    !/\bpending\b/i.test(after),
+    `the Dashboard still shows #${f.n} with pending 90 s after the decision: ${quote(after)}`,
   );
 }
 
@@ -513,6 +546,7 @@ async function run(ctx: RunContext, secrets: Secrets): Promise<string> {
   const notes: string[] = [];
   const watchers: { f: Fixture; w: StateWatcher }[] = [];
   let decision: Fixture | undefined;
+  let words: Fixture | undefined;
   let config: Fixture | undefined;
   let filePut = false;
   const dash = await startDashboard(ctx, secrets);
@@ -528,6 +562,16 @@ async function run(ctx: RunContext, secrets: Secrets): Promise<string> {
     decision = { name: 'product-decision', n: issueD.number, title: issueD.title };
     const wD = new StateWatcher(page, k, c, decision);
     watchers.push({ f: decision, w: wD });
+    // 等你選擇 decided in the person's own words (R4.51): its own title and code file, so its
+    // Issue element and Shape are told apart from the first fixture's. Filed now so both Shapes run together.
+    const issueW = await k.file(exec, {
+      ...(await decisionFixture(k, SCENARIO)),
+      title: 'Add roundHalf in own words',
+      body: decisionBody(k.slug('round-words')),
+    });
+    words = { name: 'own-words decision', n: issueW.number, title: issueW.title };
+    const wW = new StateWatcher(page, k, c, words);
+    watchers.push({ f: words, w: wW });
     try {
       await awaitDecisionStop(k, decision.n, k.show(exec, decision.n));
       decision.pendingAt = await pendingAddedAt(k.gh, exec, decision.n);
@@ -537,6 +581,16 @@ async function run(ctx: RunContext, secrets: Secrets): Promise<string> {
       await k.pauseOpen(exec, [decision.n]);
     } finally {
       await wD.stop();
+    }
+    try {
+      await awaitDecisionStop(k, words.n, k.show(exec, words.n));
+      words.pendingAt = await pendingAddedAt(k.gh, exec, words.n);
+      words.record = await awaitRecord(k, words.n, words.pendingAt, DEADLINE.stage);
+    } catch (error) {
+      c.fail('R9.52', `the own-words decision fixture #${words.n} reached no 等你選擇 record: ${message(error)}`);
+      await k.pauseOpen(exec, [words.n]);
+    } finally {
+      await wW.stop();
     }
 
     // 需要你處理: Core refuses the Job for an invalid .nibfin.json (R7.2), as in failure-pending.
@@ -581,7 +635,7 @@ async function run(ctx: RunContext, secrets: Secrets): Promise<string> {
     }
 
     // R9.52: each fixture shows its record's state and cause; every Issue shown as 自動排除中 may be.
-    for (const f of [decision, config]) if (f.record) await checkShown(page, c, f, f.record);
+    for (const f of [decision, words, config]) if (f.record) await checkShown(page, c, f, f.record);
     autoSeen(c, watchers);
     const open = await k.gh.list<{ number: number; title: string; pull_request?: unknown }>(
       `/repos/${exec}/issues?state=open`,
@@ -613,7 +667,16 @@ async function run(ctx: RunContext, secrets: Secrets): Promise<string> {
     // R9.53, R9.54 on 等你選擇.
     if (decision.record) {
       try {
-        await chooseDialog(page, k, c, decision, decision.record, me);
+        await chooseDialog(page, k, c, decision, decision.record, me, { kind: 'option' });
+      } catch (error) {
+        c.fail('R9.54', message(error));
+      }
+    }
+    // R9.54 with R4.51: a unique reply with no option number (the tag is r plus hex) and no secret.
+    if (words.record) {
+      const reply = `nibfin-e2e ${k.tag}: decided in my own words, round exact halves to the nearest even integer.`;
+      try {
+        await chooseDialog(page, k, c, words, words.record, me, { kind: 'words', reply });
       } catch (error) {
         c.fail('R9.54', message(error));
       }
@@ -622,11 +685,11 @@ async function run(ctx: RunContext, secrets: Secrets): Promise<string> {
     // R9.56: the sandbox half ran in openRepair; the below-triage half here.
     await readOnlyRepair(page, ctx, c);
     notes.push(
-      `#${decision.n} ${decision.record ? 'reached 等你選擇' : 'reached no record'}, #${config.n} ${config.record ? 'reached 需要你處理' : 'reached no record'}; states seen: ${watchers.map(({ f, w }) => `#${f.n} ${w.transitions()}`).join('; ')}`,
+      `#${decision.n} ${decision.record ? 'reached 等你選擇' : 'reached no record'}, #${words.n} (own words) ${words.record ? 'reached 等你選擇' : 'reached no record'}, #${config.n} ${config.record ? 'reached 需要你處理' : 'reached no record'}; states seen: ${watchers.map(({ f, w }) => `#${f.n} ${w.transitions()}`).join('; ')}`,
     );
   } finally {
     for (const { w } of watchers) await w.stop();
-    await k.pauseOpen(exec, [decision?.n, config?.n]);
+    await k.pauseOpen(exec, [decision?.n, words?.n, config?.n]);
     if (filePut) {
       try {
         await deleteFile(k.gh, exec, '.nibfin.json', `nibfin-e2e ${SCENARIO}: remove the invalid .nibfin.json`);

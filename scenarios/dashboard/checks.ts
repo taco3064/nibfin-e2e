@@ -2,7 +2,7 @@
 import type { Comment } from '../lifecycle/analysis.ts';
 import { markerOf, time } from '../lifecycle/analysis.ts';
 import { PENDING_MARKER } from '../lifecycle/marks.ts';
-import { labelAddedAt, resolutionRecord } from '../lib/resolution.ts';
+import { briefRecord, labelAddedAt, resolutionRecord } from '../lib/resolution.ts';
 import type { ResolutionRecord } from '../lib/resolution.ts';
 
 /** The Nibfin image Job containers run (Proposal R5.7); only image and event data are used, never product label keys. */
@@ -1133,4 +1133,107 @@ export function decisionOption(body: string): number | undefined {
   const text = body.replace(/<!--[\s\S]*?-->/g, '').trim();
   const only = /^(?:option|選項)?\s*(\d+)$/i.exec(text);
   return only ? Number(only[1]) : undefined;
+}
+
+// ---- The 等你選擇 dialog (Proposal R9.54, R4.51) -----------------------------------
+
+/**
+ * The name of a dialog choice that lets the person reply in their own words instead of
+ * picking an option (R4.51). No rule fixes the wording, so it is loose.
+ */
+export const OWN_WORDS =
+  /自己的話|自行輸入|自訂|其他|\bown words\b|\bin your (own )?words\b|\bother\b|\bcustom\b|free[- ]?text|\bwrite (a|your own) (reply|answer)\b/i;
+
+const CONTROL_ROLES = ['button', 'textbox', 'searchbox', 'radio', 'option', 'checkbox', 'combobox', 'switch'];
+
+/**
+ * Every control line of a `Locator.ariaSnapshot()`, in order, as `role "name"`, or
+ * `role (unnamed)` when the control has no name. Failure messages name a dialog's controls with it.
+ */
+export function controlsFromAriaSnapshot(snapshot: string): string[] {
+  const out: string[] = [];
+  for (const line of snapshot.split('\n')) {
+    const m = /^\s*-\s+([a-z]+)(?:\s+"([^"]*)")?/.exec(line);
+    if (!m || !CONTROL_ROLES.includes(m[1] as string)) continue;
+    out.push(m[2] === undefined ? `${m[1]} (unnamed)` : `${m[1]} "${m[2]}"`);
+  }
+  return out;
+}
+
+/** The index of the single choice that is the own-words entry (named as `OWN_WORDS`, matching no option), else undefined. */
+export function ownWordsIndex(choices: { name: string }[], r: Pick<ResolutionRecord, 'options'>): number | undefined {
+  const found = choices
+    .map((ch, i) => ({ ch, i }))
+    .filter(({ ch }) => OWN_WORDS.test(ch.name) && optionOfChoice(ch.name, r.options) === undefined);
+  return found.length === 1 ? found[0]?.i : undefined;
+}
+
+/** What the 等你選擇 dialog shows, as `chooseDialogProblems` judges it. */
+export interface ChooseView {
+  /** The dialog's text. */
+  text: string;
+  /** Each radio (or option, when there is no radio) with its accessible name and whether it is selected. */
+  choices: { name: string; checked: boolean }[];
+  /** How many text fields the dialog shows. */
+  textboxes: number;
+  /** The dialog's controls, from `controlsFromAriaSnapshot`. */
+  controls: string[];
+}
+
+const quoteText = (t: string, max = 300) => `"${t.replace(/\s+/g, ' ').trim().slice(0, max)}"`;
+
+/**
+ * R9.54's checks on the 等你選擇 dialog of Issue `n`: it lists the record's options (one
+ * extra choice is allowed when it is the own-words entry), shows each option, preselects
+ * only the recommended one, and offers a way to reply in the person's own words (a text
+ * field or an own-words choice). One entry per check, passing or not.
+ */
+export function chooseDialogProblems(
+  view: ChooseView,
+  r: Pick<ResolutionRecord, 'options' | 'recommended' | 'url' | 'body'>,
+  n: number,
+): { rule: 'R9.54'; ok: boolean; message: string }[] {
+  const out: { rule: 'R9.54'; ok: boolean; message: string }[] = [];
+  const add = (ok: boolean, message: string) => out.push({ rule: 'R9.54', ok, message });
+  const dlg = quoteText(view.text);
+  const own = ownWordsIndex(view.choices, r);
+  const count = view.choices.length;
+  add(
+    count === r.options.length || (count === r.options.length + 1 && own !== undefined),
+    `the 「排除」 dialog of #${n} lists ${count} choices, not the record's ${r.options.length}; dialog: ${dlg}`,
+  );
+  for (const o of r.options)
+    add(
+      causeShown(view.text, optionLabel(o.text)),
+      `the 「排除」 dialog of #${n} does not show option ${o.n} "${briefRecord(o.text, 80)}"; dialog: ${dlg}`,
+    );
+  const checked = view.choices
+    .map((ch, i) => ({ ch, i }))
+    .filter(({ ch }) => ch.checked)
+    .map(({ ch, i }) => optionOfChoice(ch.name, r.options) ?? -(i + 1));
+  if (r.recommended === undefined)
+    add(false, `the record ${r.url} of #${n} marks no option as recommended: ${briefRecord(r.body)}`);
+  else
+    add(
+      checked.length === 1 && checked[0] === r.recommended,
+      `the 「排除」 dialog of #${n} preselects ${checked.length ? checked.map((x) => (x > 0 ? `option ${x}` : `choice ${-x} (no option matched)`)).join(', ') : 'nothing'}, not the recommended option ${r.recommended}`,
+    );
+  add(
+    view.textboxes > 0 || own !== undefined,
+    `the 「排除」 dialog of #${n} offers no way to reply in your own words (R4.51); controls: ${view.controls.join(', ') || 'none'}; dialog: ${dlg}`,
+  );
+  return out;
+}
+
+/**
+ * Whether a comment body holds an own-words reply verbatim (R9.54, R4.51): with Nibfin's
+ * hidden markers removed, CRLF read as LF and outer whitespace trimmed, it equals the
+ * trimmed reply. Any other added or changed text does not match.
+ */
+export function ownWordsComment(body: string, reply: string): boolean {
+  const text = body
+    .replace(/<!--\s*nibfin:[\s\S]*?-->/g, '')
+    .replace(/\r\n/g, '\n')
+    .trim();
+  return text === reply.replace(/\r\n/g, '\n').trim();
 }
