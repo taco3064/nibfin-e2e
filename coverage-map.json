@@ -135,6 +135,7 @@
   { "id": "R4.40", "platforms": ["linux"], "scenarios": ["failure-pending"] },
   { "id": "R4.41", "platforms": ["linux"], "scenarios": ["failure-pending"] },
   { "id": "R4.42", "notE2e": "沒有公開方式觸發這幾類失敗，由 core 單元測試確保" },
+  { "id": "R4.43", "notE2e": "沒有公開方式讓 Provider 額度用完，由 core 單元測試確保" },
   { "id": "R4.44", "platforms": ["linux"], "scenarios": ["resolution-spec-fix"] },
   { "id": "R4.45", "platforms": ["linux"], "scenarios": ["resolution-decision"] },
   { "id": "R4.46", "platforms": ["linux"], "scenarios": ["failure-pending"] },
