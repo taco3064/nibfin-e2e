@@ -51,15 +51,15 @@ function requestScenario(id: string, rules: string[], body: (k: Kit, filed: numb
   });
 }
 
+/** Why the waits for an infeasible request's stop do not end on `pending`: it is how the request stops (Proposal R3.9). */
+const INFEASIBLE_PENDING = 'an infeasible request stops with pending';
+
 /**
  * Waits for an infeasible request to stop (Proposal R3.9): first for `pending` on it,
  * with the stall check, as Scope should be active until then; then for a Nibfin-marked
  * comment, read directly from GitHub on each try and `quiet`, as after `pending` the
  * request waits for a person by design. Step B's failure names the comments it read.
  */
-/** Why the waits for an infeasible request's stop do not end on `pending`: it is how the request stops (Proposal R3.9). */
-const INFEASIBLE_PENDING = 'an infeasible request stops with pending';
-
 export async function awaitInfeasibleStop(
   k: Kit,
   repo: string,
