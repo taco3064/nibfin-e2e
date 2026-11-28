@@ -10,13 +10,17 @@ import type { Platform } from '../types.ts';
 /**
  * Runs as the peer user's login environment: \`$1\` is the working directory, then the
  * command. The user manager's runtime directory and bus make \`systemctl --user\` and
- * rootless Podman work through sudo. Nothing in it is built from data.
+ * rootless Podman work through sudo. It also sets the XDG config, data, cache and state
+ * folders from the peer's \`$HOME\` and unsets \`GH_CONFIG_DIR\`, so gh and Podman never read
+ * another user's folders, whatever sudo or PAM passed in. Nothing in it is built from data.
  */
 const PRELUDE = [
   'cd -- "${1:-$HOME}" || exit 125',
   'shift',
   'uid=$(id -u)',
   'export XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus"',
+  'export XDG_CONFIG_HOME="$HOME/.config" XDG_DATA_HOME="$HOME/.local/share" XDG_CACHE_HOME="$HOME/.cache" XDG_STATE_HOME="$HOME/.local/state"',
+  'unset GH_CONFIG_DIR',
 ];
 /** With a token: its first stdin line becomes GH_TOKEN, so it never appears in an argument. */
 const WITH_TOKEN = [...PRELUDE, 'IFS= read -r GH_TOKEN || exit 125', 'export GH_TOKEN', 'exec "$@"'].join('\n');
@@ -31,8 +35,10 @@ export interface PeerExecOptions {
 }
 
 /**
- * The argv and stdin for one command as the peer user. sudo's default \`env_reset\` passes
- * none of the harness's variables; the harness-side child also gets only \`childEnv\`.
+ * The argv and stdin for one command as the peer user. It does not rely on sudo's
+ * \`env_reset\` alone: the prelude also resets the XDG folders and \`GH_CONFIG_DIR\`, so the
+ * runner user's folders never reach the peer session even when sudo or PAM pass them. The
+ * harness-side child also gets only \`childEnv\`.
  */
 export function peerArgv(argv: string[], options: PeerExecOptions = {}): { argv: string[]; input: string } {
   const script = options.token === undefined ? WITHOUT_TOKEN : WITH_TOKEN;
@@ -73,7 +79,7 @@ export interface PeerHandle {
   home: string;
   /** The collaborator's clone of the execution sandbox. */
   dir: string;
-  /** `${XDG_DATA_HOME:-~/.local/share}` of the peer user. */
+  /** `~/.local/share` of the peer user, which the prelude sets as its `XDG_DATA_HOME`. */
   dataHome: string;
   /** `gh nibfin …` in the clone, logged in as the collaborator. */
   ghNibfin(args: string[]): Promise<ExecResult>;
