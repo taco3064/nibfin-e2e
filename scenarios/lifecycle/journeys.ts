@@ -6,7 +6,7 @@ import type { Issue, Job, Pull, Run, Stage } from './analysis.ts';
 import { DEADLINE, changeRequest, message, redact } from './kit.ts';
 import type { Kit } from './kit.ts';
 import type { Snapshot } from './observe.ts';
-import { sleep, waitFor } from '../lib/wait.ts';
+import { sleep } from '../lib/wait.ts';
 import { untilAborted } from '../../src/abort.ts';
 
 type Gone = (s: Snapshot) => Promise<string | undefined>;
@@ -453,16 +453,8 @@ export interface HoldJourney {
   pausedAt: number;
   /** Why the pause did not land while Shape ran, if so. */
   pauseLate?: string;
-  /** Deliver runs of P created while `pause` was on, once P's runs settled. */
+  /** Deliver runs of P created while `pause` was on, once P's runs settled after its Shape was published. */
   deliverWhilePaused: number;
-  /**
-   * How the Shape that was running when `pause` was added ended: `published` (`shaped`
-   * appeared while `pause` was on) or `held` (it completed without `shaped`; the Shape
-   * is redone once `pause` is removed).
-   */
-  pauseOutcome: 'published' | 'held';
-  /** When `pause` was removed to let the Shape be redone (`held` only). */
-  unpausedAt?: number;
   editedAt: number;
   /** Deliver removed `shaped` after the edit (sent the Shape back). */
   sentBack: boolean;
@@ -473,44 +465,49 @@ export interface HoldJourney {
   /** Why the pending hold could not be observed (it came after PR CI completed or a review started), if so. */
   pendingLate?: string;
   unpendedAt: number;
-  /**
-   * How the Deliver running when `pending` was added ended: `pr` (it opened P's PR) or
-   * `held` (it completed without a PR; the PR is expected once `pending` is removed).
-   * Proposal R4.13 does not say whether a running Deliver still opens its PR, so both are valid.
-   */
-  pendingOutcome: 'pr' | 'held';
-  /** The deliver job that completed without a PR while `pending` was on (`held` only). */
-  heldJob?: { id: number; runId: number; completedAt: number };
-  /** Deliver and review runs of P, other than the held one, created while `pending` was on (`held` only; empty for `pr`). */
-  dispatchedWhilePending: string[];
 }
 
 const hasLabel = (k: Kit, s: Snapshot, n: number, l: string) => k.labels(s, k.exec, n).includes(l);
 
-export type PauseOutcome = { kind: 'published' } | { kind: 'held' } | { kind: 'fault'; reason: string };
+export type PauseOutcome = { kind: 'published' } | { kind: 'fault'; reason: string };
 
 /**
  * How the Shape running when `pause` was added ended, from P's state once its runs
- * settled with `pause` still on. Proposal R4.12 does not say whether a running Shape
- * publishes before it stops, so both `published` and `held` are valid.
+ * settled with `pause` still on. Proposal R4.12 says `pause` is no immediate stop: the
+ * running Shape finishes, publishing included, and only then is P held. So `published`
+ * (`shaped` on while `pause` is on) is the only pass, and anything else is a fault. A
+ * Shape that ended unpublished is reported as stopped early, or as R4.12 not exercised
+ * when `late` says its job had already completed before `pause` was added.
  */
-export function pauseOutcome(i: { open: boolean; labels: string[]; shapedAddedWhilePaused: boolean }): PauseOutcome {
+export function pauseOutcome(i: {
+  open: boolean;
+  labels: string[];
+  shapedAddedWhilePaused: boolean;
+  /** The shape job that was running when `pause` was added, as it completed. */
+  shapeJob: Pick<Job, 'id' | 'conclusion' | 'started_at' | 'completed_at'>;
+  /** Why `pause` did not land while that job ran, if so. */
+  late?: string;
+}): PauseOutcome {
   if (!i.open) return { kind: 'fault', reason: 'P closed while pause was on' };
   if (i.labels.includes('pending')) return { kind: 'fault', reason: 'P got pending while pause was on' };
   if (i.labels.includes('shaped')) return { kind: 'published' };
   if (i.shapedAddedWhilePaused) return { kind: 'fault', reason: '`shaped` was added and removed while pause was on' };
-  return { kind: 'held' };
+  if (i.late !== undefined) return { kind: 'fault', reason: `R4.12: not exercised: ${i.late}, and its Shape was not published` };
+  const j = i.shapeJob;
+  return {
+    kind: 'fault',
+    reason: `R4.12: the running Shape stopped before publishing: P's shape job ${j.id} completed (${String(j.conclusion)}) without \`shaped\` while pause was on (started ${String(j.started_at)}, completed ${String(j.completed_at)})`,
+  };
 }
 
-export type PendingOutcome =
-  | { kind: 'sent back' }
-  | { kind: 'pr' }
-  | { kind: 'held'; completedAt: number }
-  | { kind: 'fault'; reason: string };
+export type PendingOutcome = { kind: 'sent back' } | { kind: 'pr' } | { kind: 'fault'; reason: string };
 
 /**
  * How the Deliver of P running when `pending` was added has ended, judged from one
- * snapshot, or `undefined` while it can still end either way. `held` needs the job's
+ * snapshot, or `undefined` while it can still end either way. Proposal R4.13 says the
+ * running Deliver finishes, opening its PR, before `pending` holds P, so a Deliver that
+ * succeeded without a PR is a fault: it stopped before opening its PR, or R4.13 was not
+ * exercised when the job completed at or before `pendingAt`. That fault needs the job's
  * whole run completed in the same snapshot: a snapshot lists pulls after runs, so a PR
  * that run opened would then be in `pr`. Faults are states the wait can no longer leave
  * while `pending` is on.
@@ -527,6 +524,8 @@ export function pendingOutcome(i: {
   job: Pick<Job, 'id' | 'status' | 'conclusion' | 'started_at' | 'completed_at'>;
   /** Whether the job's run is completed in the same snapshot. */
   runCompleted: boolean;
+  /** When `pending` was added (epoch ms). */
+  pendingAt: number;
 }): PendingOutcome | undefined {
   if (i.sendBackExpected && i.sentBack) return { kind: 'sent back' };
   if (i.pr) return { kind: 'pr' };
@@ -535,29 +534,22 @@ export function pendingOutcome(i: {
     return { kind: 'fault', reason: 'P lost shaped while pending was on, with no send-back expected' };
   const { job } = i;
   if (job.status !== 'completed') return undefined;
+  const times = `started ${String(job.started_at)}, completed ${String(job.completed_at)}`;
   if (job.conclusion !== 'success')
     return {
       kind: 'fault',
-      reason: `P's deliver job ${job.id} completed with ${String(job.conclusion)} while pending was on (started ${String(job.started_at)}, completed ${String(job.completed_at)})`,
+      reason: `P's deliver job ${job.id} completed with ${String(job.conclusion)} while pending was on (${times})`,
     };
-  if (i.runCompleted && i.shaped) return { kind: 'held', completedAt: time(job.completed_at) };
-  return undefined;
-}
-
-/**
- * The deliver and review runs among `runs` created at or after `pendingAt`, other than
- * the held run `heldRunId`, one line each: what Proposal R4.13 says `pending` must not dispatch.
- */
-export function dispatchedWhilePending(
-  runs: readonly (Pick<Run, 'id' | 'created_at'> & { stage: Stage })[],
-  pendingAt: number,
-  heldRunId: number,
-): string[] {
-  return runs
-    .filter(
-      (r) => (r.stage === 'deliver' || r.stage === 'review') && r.id !== heldRunId && time(r.created_at) >= pendingAt,
-    )
-    .map((r) => `${r.stage} run ${r.id} created ${r.created_at}`);
+  if (!i.runCompleted || !i.shaped) return undefined;
+  if (time(job.completed_at) <= i.pendingAt)
+    return {
+      kind: 'fault',
+      reason: `R4.13: not exercised: P's deliver job ${job.id} completed before pending was added, without a PR`,
+    };
+  return {
+    kind: 'fault',
+    reason: `R4.13: the running Deliver stopped before opening its PR: P's deliver job ${job.id} succeeded without a PR while pending was on (${times})`,
+  };
 }
 
 /** The first PR for P's branch `nibfin/issue-<n>` among `pulls`, only an open one when `open`. */
@@ -582,7 +574,7 @@ export function prTestFault(i: {
   pr: Pick<Pull, 'number' | 'state' | 'merged_at'> | undefined;
   /** Whether that PR's `test` check on its head is completed. */
   testCompleted: boolean;
-  /** P's deliver runs created since the wait began, other than an excluded (held) run. */
+  /** P's deliver runs created since the wait began. */
   deliverRuns: readonly { status: string }[];
   /** Whether P is open and has `pending` in this snapshot. */
   pendingOn: boolean;
@@ -665,9 +657,9 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
     time(shapeDone.completed_at) <= pausedAt
       ? `P's shape job ${shapeDone.id} completed before pause was added`
       : undefined;
-  // With `pause` on, the running Shape may be published and then held, or held before it
-  // is published (Proposal R4.12 allows both). Settle P's runs woken after `pause` (for
-  // example by `shaped` being added) and judge it from P's state while still paused.
+  // With `pause` on, the running Shape must still be published, and only then is P held
+  // (Proposal R4.12). Settle P's runs woken after `pause` (for example by `shaped` being
+  // added) and judge it from P's state while still paused.
   const ofP = k.runsOf(exec, n);
   const calm = await k.settle('P paused', pausedAt, ofP);
   const pi = k.issue(calm, exec, n);
@@ -675,6 +667,8 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
     open: pi?.state === 'open',
     labels: k.labels(calm, exec, n),
     shapedAddedWhilePaused: (await k.labeledAt(exec, n, 'shaped', time(shapeJob.started_at))) !== undefined,
+    shapeJob: shapeDone,
+    late: pauseLate,
   });
   if (decided.kind === 'fault') throw new Error(`${decided.reason}: ${await k.summary(calm, exec, n)}`);
   const deliverWhilePaused = k.stages(calm, exec, n, ['deliver']).length;
@@ -690,75 +684,10 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
     return k.now();
   };
 
-  let editedAt: number;
-  let unpausedAt: number | undefined;
-  if (decided.kind === 'published') {
-    editedAt = await edit();
-    await k.removeLabel(exec, n, 'pause');
-  } else {
-    // Held before publishing: removing `pause` is the event that lets the Shape be redone
-    // (Proposal R1.12, R3.41). The edit must land before any Deliver of P starts, so the
-    // labels are read directly at a short interval once the redone shape job has started.
-    await k.removeLabel(exec, n, 'pause');
-    unpausedAt = k.now();
-    const since = unpausedAt;
-    await k.obs.until(
-      "P's Shape to be redone after pause was removed",
-      async (s) => (await k.agentJobs(s, exec, n, ['shape'])).find((j) => time(j.started_at) >= since),
-      DEADLINE.stage,
-      show,
-      { gonePast: k.stageGone(exec, n, 'shape', { since: since - 60_000 }) },
-    );
-    const read = async () => (await k.gh.rest<Issue>('GET', `/repos/${exec}/issues/${n}`)).data;
-    const names = (i: Issue) => i.labels.map((l) => l.name);
-    const published = await waitFor(
-      read,
-      (i) => i.state !== 'open' || names(i).includes('shaped') || names(i).includes('pending'),
-      {
-        what: "P's Shape to be published after pause was removed",
-        deadlineMs: Math.max(0, DEADLINE.stage - (k.now() - since)),
-        intervalMs: 5_000,
-        now: () => k.now(),
-        sleep: k.sleep,
-        signal: k.ctx.signal,
-      },
-    );
-    // Closed or `pending` is a fault even when `shaped` is also on: no Deliver can start
-    // while `pending` is on, so the waits after the edit could only end at the stall limit.
-    if (published.state !== 'open' || names(published).includes('pending')) {
-      const state = published.state !== 'open' ? 'is closed' : 'has pending';
-      throw new Error(
-        `P ${state} while waiting for its Shape to be published after pause was removed: ${await k.summary(await k.obs.fresh(), exec, n)}`,
-      );
-    }
-    editedAt = await edit();
-  }
-  // Held case: a Deliver that started before the edit cannot meet the contradicted Shape.
-  const deliverBeforeEdit = async (s: Snapshot) => {
-    if (unpausedAt === undefined) return undefined;
-    const from = unpausedAt;
-    const j = (await k.agentJobs(s, exec, n, ['deliver'])).find(
-      (x) => time(x.started_at) >= from && time(x.started_at) < editedAt,
-    );
-    return j
-      ? `P's deliver job ${j.id} started at ${String(j.started_at)}, before the edit at ${new Date(editedAt).toISOString()} that followed the Shape redone after pause; the contradicted-Shape steps cannot be exercised`
-      : undefined;
-  };
-
-  // Held case: the first wait after the edit can start on a snapshot read before the
-  // redone Shape was published, which lacks `shaped` without any send-back. So a missing
-  // `shaped` counts as sent back only when P's timeline, read now, shows `shaped` removed
-  // after the edit. A timeline cached before the edit can only delay this to a later snapshot.
-  const removedAfterEdit = async () =>
-    (await k.obs.timeline(exec, n)).some(
-      (e) =>
-        e.event === 'unlabeled' &&
-        e.label?.name === 'shaped' &&
-        time(e.created_at) >= Math.floor(editedAt / 1000) * 1000,
-    );
-  const outcome = async (s: Snapshot) => {
-    if (!hasLabel(k, s, n, 'shaped') && (unpausedAt === undefined || (await removedAfterEdit())))
-      return 'sent back' as const;
+  const editedAt = await edit();
+  await k.removeLabel(exec, n, 'pause');
+  const outcome = (s: Snapshot) => {
+    if (!hasLabel(k, s, n, 'shaped')) return 'sent back' as const;
     if (s.pulls.get(exec)?.some((pr) => pr.head.ref === `nibfin/issue-${n}`)) return 'pr' as const;
     return undefined;
   };
@@ -767,32 +696,33 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
   // `pending` comes off for the re-Shape and goes on again during the next Deliver.
   const first = await k.obs.until(
     "P's first Deliver after the edit",
-    // A Deliver that started before the edit is left to `gonePast`, which names it.
     async (s) => {
-      if (await deliverBeforeEdit(s)) return undefined;
-      const o = await outcome(s);
+      const o = outcome(s);
       if (o) return o;
       const job = await running('deliver', editedAt)(s);
       return job ? { kind: 'running' as const, job } : undefined;
     },
     DEADLINE.stage,
     show,
-    {
-      gonePast: firstOf(
-        deliverBeforeEdit,
-        k.stageGone(exec, n, 'deliver', { since: editedAt - 60_000, allowPending: true }),
-      ),
-    },
+    { gonePast: k.stageGone(exec, n, 'deliver', { since: editedAt - 60_000, allowPending: true }) },
   );
   const prOf = (s: Snapshot, open = false) => branchPr(s.pulls.get(exec), n, open);
   /**
    * Waits, with `pending` on, for the Deliver whose `job` was running when it was added to
-   * send the Shape back (only when `sendBackExpected`), open a PR, or complete without one
-   * (held). A state it can no longer leave ends the wait at once through `gonePast`,
-   * because `until` takes an error thrown in `fn` for a failed read. Deliver jobs
-   * created before `since`, such as one that already sent the Shape back, are not judged.
+   * send the Shape back (only when `sendBackExpected`) or open a PR (Proposal R4.13: the
+   * running Deliver finishes before `pending` holds P). A state it can no longer leave,
+   * such as that Deliver completing without a PR, ends the wait at once through
+   * `gonePast` with `pendingOutcome`'s reason, because `until` takes an error thrown in
+   * `fn` for a failed read. Deliver jobs created before `since`, such as one that already
+   * sent the Shape back, are not judged.
    */
-  const pendingWait = async (job: Job & { run: Run }, sendBackExpected: boolean, since: number, desc: string) => {
+  const pendingWait = async (
+    job: Job & { run: Run },
+    sendBackExpected: boolean,
+    pendingAt: number,
+    since: number,
+    desc: string,
+  ) => {
     let fault: string | undefined;
     return k.obs.until(
       desc,
@@ -800,12 +730,13 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
         const shaped = hasLabel(k, s, n, 'shaped');
         const o = pendingOutcome({
           sendBackExpected,
-          sentBack: sendBackExpected && !shaped && (unpausedAt === undefined || (await removedAfterEdit())),
+          sentBack: sendBackExpected && !shaped,
           pr: prOf(s, true) !== undefined,
           open: isOpen(k, s, n),
           shaped,
           job: await k.obs.job(exec, job.id),
           runCompleted: s.runs.some((r) => r.repo === exec && r.id === job.run.id && r.status === 'completed'),
+          pendingAt,
         });
         if (o?.kind === 'fault') {
           fault = redact(`${o.reason}: ${await k.summary(s, exec, n)}`, k.ctx.secretValues());
@@ -824,19 +755,15 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
     );
   };
   let pendingAt: number | undefined;
-  /** The deliver job that was running when `pending` was added, if it was added during one. */
-  let pendingJob: (Job & { run: Run }) | undefined;
-  let next: 'sent back' | 'pr' | { kind: 'held'; completedAt: number };
+  let firstEnd: 'sent back' | 'pr';
   if (typeof first === 'object') {
     await k.addLabels(exec, n, ['pending']);
     pendingAt = k.now();
-    pendingJob = first.job;
-    const o = await pendingWait(first.job, true, editedAt - 60_000, 'Deliver to send the Shape back, open a PR or be held by pending');
-    next = o.kind === 'held' ? o : o.kind;
-  } else next = first;
-  const sentBack = next === 'sent back';
+    firstEnd = (await pendingWait(first.job, true, pendingAt, editedAt - 60_000, 'Deliver to send the Shape back or open a PR')).kind;
+  } else firstEnd = first;
+  const sentBack = firstEnd === 'sent back';
   let reshapedAt: number | undefined;
-  if (next === 'sent back') {
+  if (sentBack) {
     if (pendingAt !== undefined) await k.removeLabel(exec, n, 'pending');
     await k.obs.until(
       'P to be shaped again',
@@ -857,9 +784,8 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
     );
     await k.addLabels(exec, n, ['pending']);
     pendingAt = k.now();
-    pendingJob = job2;
-    const o = await pendingWait(job2, false, reshapedAt - 60_000, "P's next Deliver to open a PR or be held by pending");
-    next = o.kind === 'held' ? o : 'pr';
+    // No send-back is expected here, so the wait ends only on P's PR.
+    await pendingWait(job2, false, pendingAt, reshapedAt - 60_000, "P's next Deliver to open a PR");
   } else if (pendingAt === undefined) {
     // The PR was already open when first seen; the late-pending check below reports it.
     await k.addLabels(exec, n, ['pending']);
@@ -870,10 +796,10 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
   /**
    * Waits for the `test` check of P's open PR to complete. It ends at once on `gone`, then
    * when it can no longer succeed (`prTestFault`), judging only P's deliver runs created at
-   * or after `since` other than `excludeRun`. Every failure names the PR, its head and
+   * or after `since`. Every failure names the PR, its head and
    * `test` check, before P's summary.
    */
-  const prTest = (gone: Gone, since: number, excludeRun?: number) => {
+  const prTest = (gone: Gone, since: number) => {
     // The PR this wait saw open: once it is closed, a snapshot alone cannot tell it from an older closed PR.
     let seen: number | undefined;
     const judged = (s: Snapshot) => {
@@ -893,9 +819,7 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
         n,
         pr,
         testCompleted: test?.status === 'completed',
-        deliverRuns: k
-          .stages(s, exec, n, ['deliver'])
-          .filter((r) => time(r.created_at) >= since && r.id !== excludeRun),
+        deliverRuns: k.stages(s, exec, n, ['deliver']).filter((r) => time(r.created_at) >= since),
         pendingOn,
         pendingReason,
       });
@@ -927,47 +851,23 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
     );
   };
 
-  let reviewWhilePending = 0;
-  let pendingLate: string | undefined;
-  let heldJob: HoldJourney['heldJob'];
-  let dispatched: string[] = [];
-  let unpendedAt: number;
-  if (typeof next === 'object' && pendingJob) {
-    // Held: the Deliver completed without a PR while `pending` was on. Settle P's runs
-    // with `pending` still on and record what was dispatched meanwhile (Proposal R4.13),
-    // then remove `pending` and expect the PR once Nibfin judges P again.
-    heldJob = { id: pendingJob.id, runId: pendingJob.run.id, completedAt: next.completedAt };
-    const calm = await k.settle('P held by pending', pendAt, ofP);
-    dispatched = dispatchedWhilePending(k.stages(calm, exec, n, ['deliver', 'review']), pendAt, pendingJob.run.id);
-    await k.removeLabel(exec, n, 'pending');
-    unpendedAt = k.now();
-    // Judged only while P has no open PR: a review its own CI woke is no sign that the Deliver is gone.
-    const gone = k.stageGone(exec, n, 'deliver', { since: unpendedAt - 60_000 });
-    const testDone = await prTest(
-      async (s) => (prOf(s, true) ? undefined : gone(s)),
-      unpendedAt - 60_000,
-      pendingJob.run.id,
-    );
-    await k.settle("P's PR test", testDone, ofP);
-  } else {
-    const testDone = await prTest(async (s) => {
-      if (!isOpen(k, s, n)) return `P closed while waiting for its PR's test: ${await k.summary(s, exec, n)}`;
-      if (!hasLabel(k, s, n, 'shaped'))
-        return `P lost shaped while waiting for its PR's test: ${await k.summary(s, exec, n)}`;
-      return k.stageGone(exec, n, 'deliver', { since: pendAt - 60_000, allowPending: true })(s);
-    }, (reshapedAt ?? editedAt) - 60_000);
-    const quiet = await k.settle("P's PR test", testDone, ofP);
-    reviewWhilePending = k.stages(quiet, exec, n, ['review']).filter((r) => time(r.created_at) >= pendAt).length;
-    // The hold is only shown when PR CI completed, and so woke the review, after `pending` was on.
-    const reviewBefore = k.stages(quiet, exec, n, ['review']).filter((r) => time(r.created_at) < pendAt).length;
-    pendingLate = reviewBefore
-      ? `${reviewBefore} review run(s) started before pending was added`
-      : testDone < pendAt
-        ? `the PR's test completed before pending was added`
-        : undefined;
-    await k.removeLabel(exec, n, 'pending');
-    unpendedAt = k.now();
-  }
+  const testDone = await prTest(async (s) => {
+    if (!isOpen(k, s, n)) return `P closed while waiting for its PR's test: ${await k.summary(s, exec, n)}`;
+    if (!hasLabel(k, s, n, 'shaped'))
+      return `P lost shaped while waiting for its PR's test: ${await k.summary(s, exec, n)}`;
+    return k.stageGone(exec, n, 'deliver', { since: pendAt - 60_000, allowPending: true })(s);
+  }, (reshapedAt ?? editedAt) - 60_000);
+  const quiet = await k.settle("P's PR test", testDone, ofP);
+  const reviewWhilePending = k.stages(quiet, exec, n, ['review']).filter((r) => time(r.created_at) >= pendAt).length;
+  // The hold is only shown when PR CI completed, and so woke the review, after `pending` was on.
+  const reviewBefore = k.stages(quiet, exec, n, ['review']).filter((r) => time(r.created_at) < pendAt).length;
+  const pendingLate = reviewBefore
+    ? `${reviewBefore} review run(s) started before pending was added`
+    : testDone < pendAt
+      ? `the PR's test completed before pending was added`
+      : undefined;
+  await k.removeLabel(exec, n, 'pending');
+  const unpendedAt = k.now();
   await k.obs.until('P to close with delivered', (s) => k.delivered(s, exec, n), DEADLINE.delivery, show, {
     gonePast: k.closeGone(exec, n),
   });
@@ -976,8 +876,6 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
     pausedAt,
     pauseLate,
     deliverWhilePaused,
-    pauseOutcome: decided.kind,
-    unpausedAt,
     editedAt,
     sentBack,
     reshapedAt,
@@ -985,8 +883,5 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
     reviewWhilePending,
     pendingLate,
     unpendedAt,
-    pendingOutcome: typeof next === 'object' ? 'held' : 'pr',
-    heldJob,
-    dispatchedWhilePending: dispatched,
   };
 }

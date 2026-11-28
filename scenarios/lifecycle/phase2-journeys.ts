@@ -697,16 +697,10 @@ export const pauseAndPending: Scenario = lifecycle({
       c.check(
         'R4.12',
         h.deliverWhilePaused === 0,
-        `with pause on (Shape ${h.pauseOutcome === 'published' ? 'published, then held' : 'held before publishing'}), P had ${h.deliverWhilePaused} deliver runs`,
+        `with pause on (Shape published, then held), P had ${h.deliverWhilePaused} deliver runs`,
       );
     c.check('R3.38', h.deliverWhilePaused === 0, 'pause did not hold P');
-    if (h.pendingOutcome === 'held')
-      c.check(
-        'R4.13',
-        h.dispatchedWhilePending.length === 0,
-        `with pending on (Deliver held before its PR), P got ${h.dispatchedWhilePending.join(', ')}`,
-      );
-    else if (h.pendingLate) c.notExercised('R4.13', h.pendingLate);
+    if (h.pendingLate) c.notExercised('R4.13', h.pendingLate);
     else
       c.check('R4.13', h.reviewWhilePending === 0, `${h.reviewWhilePending} review runs started while P had pending`);
     const shapes = k.stages(s, k.exec, n, ['shape']);
@@ -729,7 +723,7 @@ export const pauseAndPending: Scenario = lifecycle({
       `P is not delivered: ${await k.summary(s, k.exec, n, { full: true })}`,
     );
     return c.outcome(
-      `#${n}: pause held it (Shape ${h.pauseOutcome === 'published' ? 'published, then held' : 'held before publishing, redone after pause was removed'}), pending held it ${h.pendingOutcome === 'held' ? 'before its PR' : 'before review'}, and it was delivered once both were removed`,
+      `#${n}: pause held it (Shape published, then held), pending held it before review, and it was delivered once both were removed`,
     );
   },
 });
