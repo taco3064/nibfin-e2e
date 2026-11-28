@@ -31,7 +31,7 @@ function installedBinaries(dir: string): string[] {
     .map((e) => join(e.parentPath, e.name));
 }
 
-/** Lines of gh-nibfin's CI that would publish a Release instead of only building. */
+/** Lines of gh-nibfin's CI that would publish a Release. */
 export function releaseSteps(text: string): string[] {
   return text
     .split(/\r?\n/)
@@ -81,6 +81,6 @@ export const extensionReleases: Scenario = {
       c.that(!hits.length, 'R8.9', `gh-nibfin CI ${f} publishes Releases: ${hits.slice(0, 3).join(' | ')}`);
     }
     const how = latest.status === 404 ? 'without a Release gh extension install fails and installs nothing' : 'install and upgrade use the latest Release';
-    return c.outcome(`${how}; gh-nibfin CI (${files.join(', ')}) only builds`);
+    return c.outcome(`${how}; gh-nibfin CI (${files.join(', ')}) does not publish Releases`);
   },
 };
