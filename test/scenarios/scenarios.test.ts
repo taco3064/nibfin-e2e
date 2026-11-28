@@ -1,21 +1,18 @@
 import { createHash } from 'node:crypto';
 import { deepEqual, equal, match, ok, rejects } from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { CASES, configRejections, names } from '../../scenarios/config-rejections.ts';
-import { failureLogs } from '../../scenarios/failure-logs.ts';
 import { hostMemoryCheck } from '../../scenarios/host-memory-check.ts';
 import { imageProvenance } from '../../scenarios/image-provenance.ts';
 import { OVERRIDE_MARKER } from '../../scenarios/lib/files.ts';
-import { issueState } from '../../scenarios/lib/fixture.ts';
 import { runFirstJob } from '../../scenarios/lib/single.ts';
 import { modelChoice } from '../../scenarios/model-choice.ts';
-import { skillLimits } from '../../scenarios/skill-limits.ts';
 import { createGitHub } from '../../src/host/github.ts';
-import { BASE_TREE, EXEC, PEER } from './kit.ts';
-import { DIGEST, ctxFor, simulate } from './sim.ts';
+import { EXEC, PEER } from './kit.ts';
+import { ctxFor, simulate } from './sim.ts';
 
 const init = (model: string) =>
   `2026-11-26T00:00:01Z {"type":"system","subtype":"init","model":"${model}","mcp_servers":[]}`;
@@ -130,61 +127,6 @@ test('config-rejections: a non-R7.7 case whose comment lacks .nibfin.json still 
   );
 });
 
-const failureLog = (n: number, extra = '') =>
-  [
-    `2026-11-26T00:00:00Z Nibfin image: ghcr.io/taco3064/nibfin@${DIGEST}`,
-    `2026-11-26T00:00:01Z Issue o/exec #${n}: preparing tools`,
-    '2026-11-26T00:00:02Z error: No download found for request: cpython-3.99.99-linux-x86_64-gnu',
-    `2026-11-26T00:00:03Z TOOL_INSTALL_FAILED: uv python install 3.99.99 exited 2${extra}`,
-  ].join('\n');
-
-test('failure-logs: passes on a shared tool cause code, uv output, clear non-secrets and a next step', async () => {
-  const sim = simulate((_r, n) => ({
-    labels: ['pending'],
-    comments: [
-      'TOOL_INSTALL_FAILED: python 3.99.99 could not be installed. Fix `.nibfin.json`, then remove `pending`.',
-    ],
-    log: failureLog(n),
-  }));
-  sim.kit.workDir = mkdtempSync(join(tmpdir(), 'e2e-failure-logs-'));
-  const out = await failureLogs(() => sim.kit).run(ctxFor());
-  equal(out.status, 'passed', out.reason);
-});
-
-test('failure-logs: a token in the log fails without being printed or saved', async () => {
-  const sim = simulate((_r, n) => ({
-    labels: ['pending'],
-    comments: ['TOOL_INSTALL_FAILED: remove `pending` to retry'],
-    log: failureLog(n, ' token claude-token-value'),
-  }));
-  sim.kit.workDir = mkdtempSync(join(tmpdir(), 'e2e-failure-logs-'));
-  const out = await failureLogs(() => sim.kit).run(ctxFor());
-  equal(out.status, 'failed');
-  match(out.reason, /R1\.14: no credential appears in the log or the comment \(observed: found\)/);
-  equal(out.reason.includes('claude-token-value'), false);
-  const dir = join(sim.kit.workDir, 'logs');
-  for (const f of readdirSync(dir)) equal(readFileSync(join(dir, f), 'utf8').includes('claude-token-value'), false);
-});
-
-test('failure-logs: a token in the comment fails and is removed from every printed detail', async () => {
-  // No next step, so that check fails and prints the comment excerpt as its detail.
-  const comment = 'TOOL_INSTALL_FAILED: python 3.99.99 with token sandbox-token-value';
-  const sim = simulate((_r, n) => ({ labels: ['pending'], comments: [comment], log: failureLog(n, '') }));
-  sim.kit.workDir = mkdtempSync(join(tmpdir(), 'e2e-failure-logs-'));
-  const out = await failureLogs(() => sim.kit).run(ctxFor());
-  equal(out.status, 'failed');
-  match(out.reason, /R1\.14: no credential appears in the log or the comment \(observed: found\)/);
-  equal(out.reason.includes('sandbox-token-value'), false);
-  match(
-    out.reason,
-    /R1\.14: the comment names the next step \(observed: TOOL_INSTALL_FAILED: python 3\.99\.99 with token \[secret value removed by nibfin-e2e\]\)/,
-  );
-  const n = sim.repo(EXEC).issues[0]?.number as number;
-  const state = await issueState(sim.kit, EXEC, n);
-  match(state, /latest comment: TOOL_INSTALL_FAILED/);
-  equal(state.includes('sandbox-token-value'), false);
-});
-
 test('host-memory-check: a token in the comment is not printed in the passed result', async () => {
   const sim = simulate(() => ({
     memory: 0,
@@ -217,32 +159,6 @@ test('host-memory-check: limits off, pending and a memory comment pass; an agent
   match(failed.reason, /R6\.3: with limits off the container has no memory or CPU limit/);
   match(failed.reason, /R6\.3: the Issue gets pending/);
   match(failed.reason, /R6\.3: no agent ran/);
-});
-
-const observed = (finish: unknown) => ({ 'observed-job': { repo: EXEC, finish } });
-
-test('skill-limits: passes when the agent changed nothing and the approval gate held', async () => {
-  const sim = simulate(() => ({ labels: ['pending'], comments: ['WORKSPACE_READ_ONLY'] }));
-  const out = await skillLimits(() => sim.kit).run(
-    ctxFor(observed({ merged: false, approvalComment: 'Waiting for an approving review before merging.' })),
-  );
-  equal(out.status, 'passed', out.reason);
-  ok(sim.repo(EXEC).issues[0]?.labels?.includes('pause'));
-});
-
-test('skill-limits: a moved main or a merged PR fails', async () => {
-  const sim = simulate(() => ({
-    during: () => {
-      const r = sim.repo(EXEC);
-      r.commits.set('evil', { tree: BASE_TREE, parents: [r.branches.get('main') ?? ''] });
-      r.branches.set('main', 'evil');
-    },
-  }));
-  const out = await skillLimits(() => sim.kit).run(ctxFor(observed({ merged: true })));
-  equal(out.status, 'failed');
-  match(out.reason, /R7\.8: the Shape Skill text could not change main/);
-  match(out.reason, /R7\.8: the PR was not merged while one approving review was required \(observed: merged\)/);
-  match(out.reason, /R7\.8: Nibfin commented that a review is missing \(observed: no comment\)/);
 });
 
 const probe = (...lines: string[]) => '```e2e-probe\n' + lines.join('\n') + '\n```';

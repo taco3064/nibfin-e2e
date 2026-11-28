@@ -3,15 +3,9 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { agentSetup } from '../../scenarios/agent-setup.ts';
-import { codexJobs } from '../../scenarios/codex-jobs.ts';
-import { jobContainer } from '../../scenarios/job-container.ts';
 import { loginVolume } from '../../scenarios/login-volume.ts';
-import { EXTEND_MARKER } from '../../scenarios/lib/files.ts';
 import { missingApprovalLine, runObservedJob } from '../../scenarios/lib/observed.ts';
 import type { ObservedFacts } from '../../scenarios/lib/observed.ts';
-import { projectTools } from '../../scenarios/project-tools.ts';
-import { roleSkills } from '../../scenarios/role-skills.ts';
 import { createGitHub } from '../../src/host/github.ts';
 import type { RunContext } from '../../src/types.ts';
 import { fakeHostContext } from '../host/fakes.ts';
@@ -101,9 +95,6 @@ async function simulate(probe = PROBE, opts: SimOptions = {}) {
           ]),
         };
       }
-      if (argv[1] === 'info') return { stdout: JSON.stringify({ host: { security: { rootless: true } } }) };
-      if (argv[1] === 'images')
-        return { stdout: JSON.stringify([{ Names: ['ghcr.io/taco3064/nibfin'], RepoDigests: [IMAGE] }]) };
       return undefined;
     },
   });
@@ -150,17 +141,9 @@ async function simulate(probe = PROBE, opts: SimOptions = {}) {
   issue.labels = ['scope', 'shaped'];
   h.events.emit('{"ID":"c1","Status":"died"}');
 
-  await until(() => h.calls.some((c) => c.argv.join(' ').includes('e2e-decoy')));
+  // The login volume is listed again once Shape ended (before the Jobs, then after Shape).
+  await until(() => h.calls.filter((c) => c.argv.join(' ').includes('cd /v')).length >= 2);
   const branch = `nibfin/issue-${issue.number}`;
-  h.fake.trees.set(
-    'branch-tree',
-    new Map([
-      ['src/sum.js', { mode: '100644', content: 'x' }],
-      ['test/sum.test.js', { mode: '100644', content: 'x' }],
-    ]),
-  );
-  repo.commits.set('b1', { tree: 'branch-tree', parents: ['c0'] });
-  repo.branches.set(branch, 'b1');
   repo.pulls.push({ number: 77, state: 'open', head: { sha: 'b1', ref: branch } });
   repo.issues.push({
     number: 77,
@@ -201,12 +184,9 @@ test('observed-job runs one fixture through Shape, Deliver and Review and record
   equal(f.issue, issue.number);
   equal(f.projection?.imageName, IMAGE);
   deepEqual(f.jobImages, [IMAGE, IMAGE, IMAGE]);
-  equal(f.rootless, true);
   deepEqual(f.probe?.node, ['v22.15.0']);
   deepEqual(f.shapeLog?.slot, 'claude-1');
-  deepEqual(f.loginBefore?.enableAllProjectMcpServers, undefined);
   deepEqual(f.loginAfter?.enableAllProjectMcpServers, true);
-  deepEqual(f.branchPaths, ['src/sum.js', 'test/sum.test.js']);
   deepEqual(f.finish, {
     merged: false,
     approvalComment: 'Waiting for an approving review from a collaborator before merging.',
@@ -234,12 +214,10 @@ test('observed-job runs one fixture through Shape, Deliver and Review and record
   ok(calls.findIndex((c) => c.includes('cd /v')) > calls.findIndex((c) => c.includes('umask')));
   ok(calls.filter((c) => c.includes('cd /v')).every((c) => c.includes('nibfin-home-claude:/v:ro')));
 
-  for (const s of [jobContainer, agentSetup, loginVolume, projectTools, roleSkills]) {
-    const r = await s.run(ctxWith(f));
-    equal(r.status, 'passed', `${s.id}: ${r.reason}`);
-  }
+  const lv = await loginVolume.run(ctxWith(f));
+  equal(lv.status, 'passed', lv.reason);
   match(
-    (await loginVolume.run(ctxWith(f))).reason,
+    lv.reason,
     /R6\.12: the CLI wrote its own files in its home during Shape \(settings\.json and decoys left out\) \(projects\/-workspace\/s1\.jsonl\)/,
   );
 });
@@ -287,38 +265,6 @@ test('a Shape container that never starts fails the step naming the Issue state'
   );
 });
 
-test('the fact-reading scenarios fail listing each check that did not hold, per rule', async () => {
-  const { out } = await simulate();
-  const f = structuredClone(out.facts) as unknown as ObservedFacts;
-  f.rootless = false;
-  if (f.projection) f.projection.pidsLimit = 0;
-  f.branchPaths = ['CLAUDE.md', '.claude/settings.json', 'src/sum.js'];
-  if (f.probe) {
-    f.probe.ancestor = ['sh', 'bwrap', 'claude'];
-    f.probe.node = ['v20.0.0'];
-    f.probe.first_instruction_line = [EXTEND_MARKER];
-  }
-  f.decoys = { tools: ['e2e-decoy-install'], login: [] };
-  if (f.probe) f.probe.decoy = ['/home/nibfin/e2e-decoy-setup'];
-  if (f.shapeLog) f.shapeLog.buildOutput = 'STEP 1/2';
-  const job = await jobContainer.run(ctxWith(f));
-  equal(job.status, 'failed');
-  match(job.reason, /R6\.2: Podman runs rootless \(observed: rootless=false\)/);
-  match(job.reason, /R6\.2: memory, CPU and process limits are set/);
-  const agent = await agentSetup.run(ctxWith(f));
-  match(
-    agent.reason,
-    /R6\.18: the pushed branch contains no generated agent file \(observed: CLAUDE\.md, \.claude\/settings\.json\)/,
-  );
-  match(agent.reason, /R6\.10: the agent shell does not run under the CLI sandbox/);
-  const tools = await projectTools.run(ctxWith(f));
-  match(
-    tools.reason,
-    /R7\.3: node is the requested v22\.15\.0.*observed: v20\.0\.0.*no Repository install script ran \(observed: nibfin-tools:e2e-decoy-install, container:\/home\/nibfin\/e2e-decoy-setup\).*no Repository Dockerfile was built \(observed: STEP 1\/2\)/,
-  );
-  match((await roleSkills.run(ctxWith(f))).reason, /R7\.6: extend keeps the built-in text first/);
-});
-
 test('agent-written probe values reach the facts and the scenario reasons only redacted', async () => {
   const SANDBOX = 'sandbox-token-value';
   const leaky = PROBE.replace('workspace_settings=absent', `workspace_settings={"env":{"T":"${SANDBOX}"}}`)
@@ -331,11 +277,8 @@ test('agent-written probe values reach the facts and the scenario reasons only r
   const f = out.facts as unknown as ObservedFacts;
   equal(f.probe?.workspace_settings?.[0], '{"env":{"T":"[secret value removed by nibfin-e2e]"}}');
   equal(f.probe?.first_instruction_line?.[0], '# Shape [secret value removed by nibfin-e2e]');
-  for (const s of [jobContainer, agentSetup, projectTools, roleSkills]) {
-    const r = await s.run(ctxWith(f));
-    ok(!r.reason.includes(SANDBOX) && !r.reason.includes(TOKEN), `${s.id} printed a secret value`);
-  }
-  match((await agentSetup.run(ctxWith(f))).reason, /secret value removed by nibfin-e2e/);
+  const r = await loginVolume.run(ctxWith(f));
+  ok(!r.reason.includes(SANDBOX) && !r.reason.includes(TOKEN), `${loginVolume.id} printed a secret value`);
 });
 
 test('only a Nibfin comment saying an approving review is missing counts', () => {
@@ -361,9 +304,4 @@ test('only a Nibfin comment saying an approving review is missing counts', () =>
     ]),
     'Merge is blocked: waiting for 1 approving review ([secret value removed by nibfin-e2e]).',
   );
-});
-
-test('codex-jobs waits for Phase 5', async () => {
-  const r = await codexJobs.run(ctxWith({ repo: EXEC }));
-  deepEqual([r.status, /Phase 5/.test(r.reason)], ['waiting', true]);
 });

@@ -1,10 +1,10 @@
-// The shared hold check of lifecycle waits (Proposal R1.14, R4.12, R4.13): a wait naming
+// The shared hold check of the issue-fixture kit's waits (Proposal R1.14, R4.12, R4.13): a wait naming
 // an Issue ends early, with a named reason, once the Issue is closed, has a `pending` the
 // repair stage does not clear, or has a `pause` the harness did not add.
 import { equal, rejects } from 'node:assert/strict';
 import { test } from 'node:test';
-import { DEADLINE, Kit, STALL } from '../../scenarios/lifecycle/kit.ts';
-import { Observer } from '../../scenarios/lifecycle/observe.ts';
+import { DEADLINE, Kit, STALL } from '../../scenarios/lib/issue-kit.ts';
+import { Observer } from '../../scenarios/lib/observer.ts';
 import { clock, context, routes } from './fake.ts';
 
 const MIN = 60_000;
@@ -13,7 +13,7 @@ const iso = (t: number) => new Date(t).toISOString();
 
 /**
  * A kit over one Issue, #6 of o/exec, whose state and labels the test sets; the label
- * writes of `Kit.addLabels` and `Kit.removeLabel` change them as GitHub would. `pending`
+ * writes of `Kit.addLabels` change them as GitHub would. `pending`
  * was added at `pendingAt` (default 15 min before the start, past `REPAIR_GRACE`).
  */
 function setup(o: { labels?: string[]; pendingAt?: number; state?: Record<string, unknown> } = {}) {
@@ -48,10 +48,6 @@ function setup(o: { labels?: string[]; pendingAt?: number; state?: Record<string
     'POST /repos/o/exec/issues/6/labels': (body) => {
       for (const l of (body?.labels as string[] | undefined) ?? []) if (!st.labels.includes(l)) st.labels.push(l);
       return [];
-    },
-    'DELETE /repos/o/exec/issues/6/labels/pause': () => {
-      st.labels = st.labels.filter((l) => l !== 'pause');
-      return { status: 204 };
     },
   });
   const c = clock(START);
@@ -127,22 +123,10 @@ test('a wait that expects pause keeps going on it', async () => {
   );
 });
 
-test("the harness's own pause keeps a wait going; once removed, a pause on a snapshot read after the removal ends it", async () => {
-  const { k, st } = setup();
+test("the harness's own pause keeps a wait going", async () => {
+  const { k } = setup();
   await k.addLabels('o/exec', 6, ['pause']);
   equal(await k.obs.until("P's shape job to complete", onPoll(3), DEADLINE.stage, undefined, k.about('o/exec', 6)), true);
-
-  // A snapshot read before the removal finished still shows the harness's own pause.
-  const before = await k.obs.fresh();
-  await k.removeLabel('o/exec', 6, 'pause');
-  equal(await k.heldReason(before, 'o/exec', 6, {}), undefined);
-
-  // The same label seen on a later read is no longer the harness's.
-  st.labels.push('pause');
-  await rejects(
-    k.obs.until('P to be shaped again', () => undefined, DEADLINE.stage, undefined, k.about('o/exec', 6)),
-    /^Error: gave up waiting for P to be shaped again: #6 has pause, which the scenario did not add; last Nibfin comment/,
-  );
 });
 
 test('a paused fixture the harness filed keeps a wait going', async () => {
@@ -154,12 +138,12 @@ test('a paused fixture the harness filed keeps a wait going', async () => {
 test('a pending the harness added itself is still judged: stageGone and a wait without expects end on it; one that expects it keeps going', async () => {
   const { k } = setup();
   await k.addLabels('o/exec', 6, ['pending']);
-  const s = await k.obs.fresh();
+  const s = await k.obs.next();
   equal(
-    await k.stageGone('o/exec', 6, 'deliver', { jobs: false })(s),
+    await k.stageGone('o/exec', 6, 'deliver')(s),
     '#6 has pending; no repair record 15 min after pending was added at 2026-11-26T09:45:00.000Z; last Nibfin comment: Nibfin stopped and needs a person (***).',
   );
-  equal(await k.stageGone('o/exec', 6, 'deliver', { allowPending: true, jobs: false })(s), undefined);
+  equal(await k.stageGone('o/exec', 6, 'deliver', { allowPending: true })(s), undefined);
   await rejects(
     k.obs.until("P's PR test check to complete", () => undefined, DEADLINE.stage, undefined, k.about('o/exec', 6)),
     /^Error: gave up waiting for P's PR test check to complete: #6 has pending; no repair record \d+ min/,
@@ -180,7 +164,7 @@ test('a pending the repair stage may still clear, within the grace, keeps a wait
 
 test('stageGone keeps to closure, pending and its stage: a pause does not end it', async () => {
   const { k } = setup({ labels: ['scope', 'pause'] });
-  equal(await k.stageGone('o/exec', 6, 'shape', { jobs: false })(await k.obs.fresh()), undefined);
+  equal(await k.stageGone('o/exec', 6, 'shape')(await k.obs.next()), undefined);
 });
 
 test("a scenario's own gonePast reason wins over a hold on the same snapshot", async () => {

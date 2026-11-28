@@ -1,6 +1,6 @@
 import { deepEqual, equal, match, rejects } from 'node:assert/strict';
 import { test } from 'node:test';
-import type { Comment } from '../../scenarios/lifecycle/analysis.ts';
+import type { Comment } from '../../scenarios/lib/analysis.ts';
 import {
   briefRecord,
   classIn,
@@ -12,7 +12,7 @@ import {
   resolutionRecord,
   resolutionRecords,
 } from '../../scenarios/lib/resolution.ts';
-import { routes } from '../lifecycle/fake.ts';
+import { routes } from './fake.ts';
 
 const PENDING_AT = Date.parse('2026-11-27T10:00:00Z');
 let nextId = 1;

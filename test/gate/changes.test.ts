@@ -263,5 +263,5 @@ test('every registry scenario id is defined in exactly one file under scenarios/
   const wrong = registered.map((s) => [s.id, files.get(s.id) ?? []] as const).filter(([, paths]) => paths.length !== 1);
   deepEqual(wrong, []);
   // A shared helper reaches the scenarios that use it.
-  equal(affectedScenarios(index, 'scenarios/lifecycle/kit.ts').includes('delivery-lifecycle'), true);
+  equal(affectedScenarios(index, 'scenarios/lib/analysis.ts').includes('dashboard-resolution'), true);
 });

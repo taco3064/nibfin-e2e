@@ -18,12 +18,12 @@ import {
 import type { ResolutionRecord } from '../lib/resolution.ts';
 import { waitFor } from '../lib/wait.ts';
 import type { WaitOptions } from '../lib/wait.ts';
-import { Checks, describeComments, markerOf, time } from '../lifecycle/analysis.ts';
-import type { Comment } from '../lifecycle/analysis.ts';
-import { DEADLINE, kitFor, message } from '../lifecycle/kit.ts';
-import type { Kit } from '../lifecycle/kit.ts';
-import { PENDING_MARKER } from '../lifecycle/marks.ts';
-import { awaitDecisionStop, decisionBody, decisionFixture } from '../lifecycle/resolution-decision.ts';
+import { Checks, describeComments, markerOf, time } from '../lib/analysis.ts';
+import type { Comment } from '../lib/analysis.ts';
+import { DEADLINE, kitFor, message } from '../lib/issue-kit.ts';
+import type { Kit } from '../lib/issue-kit.ts';
+import { PENDING_MARKER } from '../lib/marks.ts';
+import { awaitDecisionStop, decisionBody, decisionFixture } from './decision.ts';
 import {
   autoProblem,
   buttonNamesFromAriaSnapshot,

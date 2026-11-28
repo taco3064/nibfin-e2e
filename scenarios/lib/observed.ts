@@ -3,7 +3,6 @@ import { watchJobContainers } from './containers.ts';
 import type { Projection, Watch } from './containers.ts';
 import {
   DECOY_FILES,
-  DECOY_PATTERN,
   EXTEND_TEXT,
   PROBE_FILE,
   RULESYNC_FILES,
@@ -28,15 +27,7 @@ import type { InitEvent } from './joblog.ts';
 import { message } from './kit.ts';
 import type { Kit } from './kit.ts';
 import { parseProbe } from './probe.ts';
-import {
-  CLAUDE_VOLUME,
-  TOOLS_VOLUME,
-  inspectVolume,
-  listVolume,
-  readLoginFacts,
-  removeLoginKey,
-  statVolume,
-} from './volume.ts';
+import { CLAUDE_VOLUME, inspectVolume, readLoginFacts, removeLoginKey, statVolume } from './volume.ts';
 import type { LoginFacts, VolumeFile, VolumeInfo } from './volume.ts';
 import { DEADLINE, remoteWait } from './waits.ts';
 
@@ -48,19 +39,10 @@ export interface ObservedFacts {
   projection?: Projection;
   /** The image of every fixture Job container the watch inspected, in start order (Proposal R5.9). */
   jobImages?: string[];
-  rootless?: boolean;
-  /** Local images named ghcr.io/taco3064/nibfin, with their repo digests. */
-  localImages?: { names: string[]; repoDigests: string[] }[];
   /** The probe block of the published Shape, as key → values. */
   probe?: Record<string, string[]>;
   shapeLog?: { imageRef?: string; buildOutput?: string; init: InitEvent[]; slot: string };
-  loginBefore?: LoginFacts;
   loginAfter?: LoginFacts;
-  /** Auto-memory entries (`projects/*\/memory`) in the login volume. */
-  memoryEntries?: string[];
-  decoys?: { tools: string[]; login: string[] };
-  /** Every path of the pushed `nibfin/issue-<n>` tree. */
-  branchPaths?: string[];
   pr?: number;
   /** How the PR ended while the approval ruleset was in force. */
   finish?: { merged: boolean; approvalComment?: string };
@@ -111,14 +93,6 @@ export async function observedJobs(watch: Watch): Promise<ObservedJob[]> {
   );
 }
 
-const pathsOf = async (kit: Kit, repo: string, ref: string) => {
-  const { data } = await kit.github.rest<{ tree: { path: string }[]; truncated?: boolean }>(
-    'GET',
-    `/repos/${repo}/git/trees/${ref.split('/').map(encodeURIComponent).join('/')}?recursive=1`,
-  );
-  return data.tree.map((t) => t.path).sort();
-};
-
 /** A local image named ghcr.io/taco3064/nibfin: its image id, names and repo digests. */
 export interface LocalImage {
   id: string;
@@ -132,12 +106,6 @@ export async function imagesNamed(kit: Pick<Kit, 'exec'>): Promise<LocalImage[]>
   if (r.code !== 0) throw new Error(`podman images exited ${r.code}: ${r.stderr.trim().slice(-2000)}`);
   const list = JSON.parse(r.stdout || '[]') as { Id?: string; Names?: string[]; RepoDigests?: string[] }[];
   return list.map((i) => ({ id: i.Id ?? '', names: i.Names ?? [], repoDigests: i.RepoDigests ?? [] }));
-}
-
-async function rootless(kit: Kit): Promise<boolean | undefined> {
-  const r = await kit.exec(['podman', 'info', '--format', 'json']);
-  if (r.code !== 0) return undefined;
-  return (JSON.parse(r.stdout) as { host?: { security?: { rootless?: boolean } } }).host?.security?.rootless;
 }
 
 /** Fails when the Issue went `pending` (no further stage will come), naming its state. */
@@ -214,17 +182,13 @@ export async function runObservedJob(kit: Kit): Promise<StepOutcome> {
       variables: { NIBFIN_MODEL: 'haiku' },
       ruleset: approvalRuleset(),
     });
-    facts.loginBefore = await removeLoginKey(kit.exec, 'enableAllProjectMcpServers');
+    await removeLoginKey(kit.exec, 'enableAllProjectMcpServers');
     facts.loginVolume = await attempt(() => inspectVolume(kit.exec, CLAUDE_VOLUME));
     facts.volumeFiles = { beforeJobs: await attempt(() => statVolume(kit.exec, CLAUDE_VOLUME)) };
 
     const n = await openFixture(kit, repo, 'e2e observed job: add double(n)', TASK_BODY);
     facts.issue = n;
-    watch = watchJobContainers(kit, repo, n, async (_e, index) => {
-      if (index !== 0) return;
-      facts.rootless = await rootless(kit);
-      facts.localImages = await imagesNamed(kit);
-    });
+    watch = watchJobContainers(kit, repo, n);
 
     // Shape.
     const shapeStart = await watch.started(1, DEADLINE.shape, `the Shape Job container of ${repo}#${n} to start`);
@@ -245,18 +209,12 @@ export async function runObservedJob(kit: Kit): Promise<StepOutcome> {
     }
     facts.loginAfter = await readLoginFacts(kit.exec);
     facts.volumeFiles.afterShape = await attempt(() => statVolume(kit.exec, CLAUDE_VOLUME));
-    facts.memoryEntries = await listVolume(kit.exec, CLAUDE_VOLUME, '.', 'memory');
-    facts.decoys = {
-      tools: await listVolume(kit.exec, TOOLS_VOLUME, '.', DECOY_PATTERN),
-      login: await listVolume(kit.exec, CLAUDE_VOLUME, '.', DECOY_PATTERN),
-    };
     await notPending(kit, repo, n, 'Shape');
 
     // Deliver.
     await stageDied(kit, watch, repo, n, 2, 'Deliver', DEADLINE.deliver);
     await notPending(kit, repo, n, 'Deliver');
     const branch = `nibfin/issue-${n}`;
-    facts.branchPaths = await pathsOf(kit, repo, branch);
     const owner = repo.split('/')[0] as string;
     const pulls = await kit.github.list<{ number: number }>(
       `/repos/${repo}/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}`,

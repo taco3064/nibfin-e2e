@@ -27,7 +27,7 @@ import type { LabelEvent } from '../../scenarios/dashboard/checks.ts';
 import { awaitRecord } from '../../scenarios/dashboard/resolution.ts';
 import type { IssueRead } from '../../scenarios/dashboard/resolution.ts';
 import { defineScenario } from '../../scenarios/dashboard/support.ts';
-import type { Comment } from '../../scenarios/lifecycle/analysis.ts';
+import type { Comment } from '../../scenarios/lib/analysis.ts';
 import { parseRecord, resolutionRecord } from '../../scenarios/lib/resolution.ts';
 import type { RunContext } from '../../src/types.ts';
 

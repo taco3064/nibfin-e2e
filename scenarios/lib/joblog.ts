@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseStageTitle } from '../lifecycle/analysis.ts';
+import { parseStageTitle } from './analysis.ts';
 import { freeOfSecrets, redact } from './checks.ts';
 import type { Kit } from './kit.ts';
 import { runnerSlot } from './runners.ts';
