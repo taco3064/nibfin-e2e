@@ -45,7 +45,7 @@ export const upgrade: Scenario = {
     const c = new Check();
     const gh = ctx.github;
     const repo = ctx.sandbox.execution;
-    const { imageDigest } = nibfinFacts(ctx);
+    const { imageDigest, runnerCount } = nibfinFacts(ctx);
     const me = await whoami(gh);
 
     const help = parseHelp((await ctx.ghNibfin(['upgrade', '--help'])).stdout);
@@ -63,10 +63,10 @@ export const upgrade: Scenario = {
 
     const settingsBefore = await ctx.claudeSettings();
     const envs = runnerEnvFiles();
-    if (envs.length !== 2)
+    if (envs.length !== runnerCount)
       return {
         status: 'failed',
-        reason: `precondition not reached: found ${envs.length} claude Runner .env files, expected 2`,
+        reason: `precondition not reached: found ${envs.length} claude Runner .env files, expected ${runnerCount}`,
       };
     const originals = new Map(envs.map((f) => [f, readFileSync(f, 'utf8')]));
     for (const [f, text] of originals) writeFileSync(f, withoutProvider(text));
@@ -100,10 +100,10 @@ export const upgrade: Scenario = {
         await waitFor(
           () => registrations(gh, repo),
           (rs) =>
-            rs.length === 2 &&
+            rs.length === runnerCount &&
             rs.every((r) => r.status === 'online' && r.labels.some((l) => l.name === `nibfin-${me.id}`)),
           {
-            what: `both Runners online with nibfin-${me.id} after upgrade`,
+            what: `all ${runnerCount} Runners online with nibfin-${me.id} after upgrade`,
             deadlineMs: 2 * 60_000,
             signal: ctx.signal,
             intervalMs: 10_000,

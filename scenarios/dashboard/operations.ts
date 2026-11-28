@@ -1,6 +1,7 @@
 // Proposal R9.12, R9.13, R9.18, R9.20–R9.22 and R9.6: operations through the Dashboard.
 import type { Locator, Page } from 'playwright-core';
 import type { RunContext } from '../../src/types.ts';
+import { nibfinFacts } from '../lib/github.ts';
 import {
   check,
   commandSchemaFrom,
@@ -301,14 +302,16 @@ async function failedPlan(page: Page, ctx: RunContext, notes: string[]) {
 async function runnerCycle(ctx: RunContext, secrets: Secrets, notes: string[]) {
   const regs = () =>
     ctx.github.list<{ name: string; status: string }>(`/repos/${ctx.sandbox.execution}/actions/runners`, 'runners');
+  // As many Runners as the nibfin step added; the cycle removes them and adds the same number back.
+  const count = nibfinFacts(ctx).runnerCount;
   try {
-    await runnerCycleSteps(ctx, secrets, regs, notes);
+    await runnerCycleSteps(ctx, secrets, regs, notes, count);
   } finally {
-    // Keep the run's end state (two online claude Runners) for later scenarios even when a step failed.
+    // Keep the run's end state (the provisioned number of online claude Runners) for later scenarios even when a step failed.
     const online = (await regs()).filter((r) => r.status === 'online').length;
-    if (online < 2) {
-      ctx.log(`restoring claude Runners through the CLI (${online} online)`);
-      await ctx.ghNibfin(['runner', 'add', 'claude', '--count', String(2 - online), '--yes']);
+    if (online < count) {
+      ctx.log(`restoring claude Runners through the CLI (${online} of ${count} online)`);
+      await ctx.ghNibfin(['runner', 'add', 'claude', '--count', String(count - online), '--yes']);
     }
   }
 }
@@ -318,6 +321,7 @@ async function runnerCycleSteps(
   secrets: Secrets,
   regs: () => Promise<{ name: string; status: string }[]>,
   notes: string[],
+  count: number,
 ) {
   const before = await regs();
   let dash = await startDashboard(ctx, secrets);
@@ -357,13 +361,13 @@ async function runnerCycleSteps(
     await (await mustButton(page, RUNNER_ADD, 'R9.21', 'the Runner view')).click();
     const d = await dialog(page);
     await setField(d, /provider/i, 'claude');
-    await setField(d, /count/i, '2');
+    await setField(d, /count/i, String(count));
     await confirmedRun(page, d, 'R9.21', 'runner add');
-    const online = await until(regs, (x) => x.filter((r) => r.status === 'online').length >= 2, 180_000);
+    const online = await until(regs, (x) => x.filter((r) => r.status === 'online').length >= count, 180_000);
     check(
-      online.filter((r) => r.status === 'online').length === 2,
+      online.filter((r) => r.status === 'online').length === count,
       'R9.22',
-      'two online Runner registrations after runner add',
+      `${count} online Runner registrations after runner add`,
       online.map((r) => `${r.name} ${r.status}`).join(', '),
     );
   } finally {

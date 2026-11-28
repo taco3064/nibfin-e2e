@@ -53,6 +53,8 @@ export const runnerAddSetup: Scenario = {
   async run(ctx) {
     const c = new Check();
     const facts = nibfinFacts(ctx);
+    // How many Runners the nibfin step asked for; the --help check below still reads the default of 2 (R5.26).
+    const n = facts.runnerCount;
     const { execution, peer } = ctx.sandbox;
 
     const order = facts.commands.map((x) => x.args.slice(0, 2).join(' '));
@@ -69,9 +71,9 @@ export const runnerAddSetup: Scenario = {
     const label = `nibfin-${me.id}`;
     const regs = await registrations(ctx.github, execution);
     c.that(
-      regs.length === 2,
+      regs.length === n,
       'R5.26',
-      `${execution} lists ${regs.length} runner registrations after runner add claude --count 2, expected 2`,
+      `${execution} lists ${regs.length} runner registrations after runner add claude --count ${n}, expected ${n}`,
     );
     for (const r of regs) {
       c.that(r.status === 'online', 'R5.26', `registration ${r.name} is ${r.status}, expected online`);
@@ -104,9 +106,9 @@ export const runnerAddSetup: Scenario = {
       const before = facts.hostBefore;
       const units = newEnabledUnits(before, now);
       c.that(
-        units.length >= 2,
+        units.length >= n,
         'R5.15',
-        `expected at least 2 new enabled systemd user units after runner add, found ${units.length} (${units.join(', ') || 'none'})`,
+        `expected at least ${n} new enabled systemd user units after runner add, found ${units.length} (${units.join(', ') || 'none'})`,
       );
       for (const u of units) {
         const runtime = userRuntimeDir();
@@ -144,9 +146,9 @@ export const runnerAddSetup: Scenario = {
         );
         const after = await registrations(ctx.github, execution);
         c.that(
-          after.length === 2,
+          after.length === n,
           'R5.27',
-          `runner add without Podman changed the registrations to ${after.length}, expected 2`,
+          `runner add without Podman changed the registrations to ${after.length}, expected ${n}`,
         );
       });
     }
@@ -199,7 +201,7 @@ export const runnerAddSetup: Scenario = {
       }
     }
     return c.outcome(
-      `2 Runners online on ${execution} with ${label}; always-on setup applied on ${ctx.target.platform}`,
+      `${n} Runners online on ${execution} with ${label}; always-on setup applied on ${ctx.target.platform}`,
     );
   },
 };
