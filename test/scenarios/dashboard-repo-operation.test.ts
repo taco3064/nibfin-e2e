@@ -62,9 +62,16 @@ after(async () => {
  * A repo view modelled on the Dashboard's picker: collapsed to `Repository <name>` with a
  * Change button; expanded, a search filter first and then the hand-entry OWNER/REPO form.
  * The view offers Upgrade on `o/sandbox` and Init on any other; with `initNowhere`, Upgrade on every one.
+ * With `issueFilter`, a "Search Issues" box like the dependency graph's sits outside the picker;
+ * with `listOnly`, the expanded picker shows only its list, with no box at all.
  */
-function repoView(open: string, initNowhere = false): string {
+function repoView(
+  open: string,
+  initNowhere = false,
+  { issueFilter = false, listOnly = false }: { issueFilter?: boolean; listOnly?: boolean } = {},
+): string {
   return `<main>
+  ${issueFilter ? '<section id="graph"><input type="search" aria-label="Search Issues"></section>' : ''}
   <section id="picker"></section>
   <section id="ops"></section>
   <script>
@@ -81,6 +88,10 @@ function repoView(open: string, initNowhere = false): string {
         (adopted ? '<button type="button">Upgrade</button>' : '<button type="button">Init</button>');
     }
     function expand() {
+      if (${listOnly}) {
+        picker.innerHTML = '<ul><li><button type="button">o/sandbox</button></li></ul>';
+        return;
+      }
       picker.innerHTML =
         '<input type="search" aria-label="Search repositories">' +
         '<ul><li><button type="button">o/sandbox</button></li></ul>' +
@@ -151,4 +162,63 @@ test('selectRepo still opens a typed repository in a picker that is only the han
   if (!p) return;
   await selectRepo(p, 'o/typed');
   equal(await p.locator('#open').innerText(), 'o/typed');
+});
+
+test('selectRepo expands the collapsed picker and leaves an Issue filter outside it empty', async (t) => {
+  const p = await render(t, repoView('o/sandbox', false, { issueFilter: true }));
+  if (!p) return;
+  const filter = p.getByRole('searchbox', { name: 'Search Issues' });
+  equal(await (await repoOperation(p, 'o/new', 'init', 'R9.12')).innerText(), 'Init');
+  ok((await p.locator('#picker').innerText()).includes('o/new'), 'the typed repository is open');
+  equal(await filter.inputValue(), '');
+  equal(await (await repoOperation(p, 'o/sandbox', 'upgrade', 'R9.12')).innerText(), 'Upgrade');
+  equal(await filter.inputValue(), '');
+});
+
+test('selectRepo fails naming the repository when the expanded picker shows no repository box', async (t) => {
+  const p = await render(t, repoView('o/sandbox', false, { issueFilter: true, listOnly: true }));
+  if (!p) return;
+  await rejects(selectRepo(p, 'o/new'), (error: Error) => {
+    ok(error.message.includes('o/new'), error.message);
+    match(error.message, /no repository box/);
+    return true;
+  });
+  equal(await p.getByRole('searchbox', { name: 'Search Issues' }).inputValue(), '');
+});
+
+test('selectRepo skips an unnamed combobox outside the picker and uses the hand-entry box', async (t) => {
+  const p = await render(
+    t,
+    `<select><option>Stage</option><option>Shape</option></select>
+     <form><input type="text" aria-label="Repository" placeholder="OWNER/REPO"><button type="submit">Open</button></form>
+     <p id="open"></p>
+     <script>
+       document.querySelector('form').onsubmit = (e) => {
+         e.preventDefault();
+         document.getElementById('open').textContent = document.querySelector('input').value;
+       };
+     </script>`,
+  );
+  if (!p) return;
+  await selectRepo(p, 'o/typed');
+  equal(await p.locator('#open').innerText(), 'o/typed');
+  equal(await p.locator('select').inputValue(), 'Stage');
+});
+
+test('selectRepo clicks the matching option of a combobox inside a repository-named group', async (t) => {
+  const p = await render(
+    t,
+    `<div role="group" aria-label="Repository picker">
+       <input role="combobox" aria-expanded="false" aria-controls="lb">
+       <ul role="listbox" id="lb"><li role="option">o/a</li><li role="option">o/b</li></ul>
+     </div>
+     <p id="open"></p>
+     <script>
+       for (const o of document.querySelectorAll('[role=option]'))
+         o.onclick = () => { document.getElementById('open').textContent = o.textContent; };
+     </script>`,
+  );
+  if (!p) return;
+  await selectRepo(p, 'o/b');
+  equal(await p.locator('#open').innerText(), 'o/b');
 });

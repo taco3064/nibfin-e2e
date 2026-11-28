@@ -586,17 +586,33 @@ export async function mustButton(scope: Page | Locator, name: RegExp, rule: stri
 /** Wait for the repository box after expanding a collapsed picker. */
 const PICKER_OPEN_MS = 5_000;
 
-/** The kinds of repository box, in the order they are preferred. */
-const repoBoxes = (page: Page): Locator[] => [
-  page.getByRole('combobox'),
-  page.getByRole('textbox', { name: /repo|owner/i }),
-  page.getByRole('searchbox'),
-];
+/**
+ * A name for repositories: "Repository", "Open another repository", "Search repositories" or the
+ * OWNER/REPO placeholder. Whole words, so "Report…" or "Search Issues" does not match.
+ */
+const REPO_NAME = /\b(repo|repos|repository|repositories|owner)\b/i;
 
 /**
- * The repository picker's box: a list or combobox first, then a textbox named for the
- * repository (the hand-entry OWNER/REPO box), then a searchbox. The order matters when a
- * search filter and the hand-entry box are both shown: typing into the filter opens nothing.
+ * The kinds of repository box, in the order they are preferred, each scoped to the picker: a box
+ * named for repositories, or any box inside a form, region or group named for repositories. An
+ * unrelated filter elsewhere in the repo view, such as the dependency graph's "Search Issues"
+ * box, must never receive the repository: typing into it opens nothing.
+ */
+const repoBoxes = (page: Page): Locator[] => {
+  const scope = page
+    .getByRole('form', { name: REPO_NAME })
+    .or(page.getByRole('region', { name: REPO_NAME }))
+    .or(page.getByRole('group', { name: REPO_NAME }));
+  return (['combobox', 'textbox', 'searchbox'] as const).map((kind) =>
+    page.getByRole(kind, { name: REPO_NAME }).or(scope.getByRole(kind)),
+  );
+};
+
+/**
+ * The repository picker's box: a list or combobox first, then a textbox (the hand-entry
+ * OWNER/REPO box), then a searchbox, all scoped to the picker as `repoBoxes` describes. The
+ * order matters when the picker's search filter and the hand-entry box are both shown: typing
+ * into the filter opens nothing.
  */
 async function repoBox(page: Page): Promise<Locator | undefined> {
   for (const box of repoBoxes(page)) if (await box.count()) return box.first();
@@ -605,25 +621,27 @@ async function repoBox(page: Page): Promise<Locator | undefined> {
 
 /**
  * Selects or types a repository in the repo view. A picker collapsed to the open repository
- * is expanded through its Change button first, so another repository, or one not using
- * Nibfin yet (R9.16), can be typed as OWNER/REPO.
+ * is expanded through its Change button first, before any box is taken, so another
+ * repository, or one not using Nibfin yet (R9.16), can be typed as OWNER/REPO. When the
+ * expanded picker shows no repository box, this fails naming the repository rather than
+ * typing it anywhere else, so the caller reports that cause and not a later missing button.
  */
 export async function selectRepo(page: Page, repo: string): Promise<void> {
-  let b = await repoBox(page);
-  if (!b) {
-    const change = page.getByRole('button', { name: /^change\b/i });
-    if (await change.count()) {
-      await change.first().click();
-      const [list, entry, search] = repoBoxes(page) as [Locator, Locator, Locator];
-      await list
-        .or(entry)
-        .or(search)
-        .first()
-        .waitFor({ state: 'visible', timeout: PICKER_OPEN_MS })
-        .catch(() => {});
-      b = await repoBox(page);
-    }
+  const change = page.getByRole('button', { name: /^change\b/i });
+  const expanded = (await change.count()) > 0;
+  if (expanded) {
+    await change.first().click();
+    const [list, entry, search] = repoBoxes(page) as [Locator, Locator, Locator];
+    await list
+      .or(entry)
+      .or(search)
+      .first()
+      .waitFor({ state: 'visible', timeout: PICKER_OPEN_MS })
+      .catch(() => {});
   }
+  const b = await repoBox(page);
+  if (!b && expanded)
+    throw new Error(`no repository box found for ${repo} in the repo view after expanding the repository picker`);
   if (b) {
     const tag = await b.evaluate((el) => el.tagName.toLowerCase());
     if (tag === 'select') {
