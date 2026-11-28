@@ -553,7 +553,7 @@ test('a failed read during a wait is logged and the wait goes on; the deadline n
   });
   const started = c.now();
   equal(await obs.until('anything', () => true, 10 * 60_000, undefined, NO_ISSUE), true);
-  equal(c.now() - started >= 2 * 60_000, true, 'each retry of the read waits one interval');
+  equal(c.now() - started >= 2 * 30_000, true, 'each retry of the read waits one interval (30 s by default)');
   equal(logs.filter((l) => /a read while waiting for anything failed: .*502/.test(l)).length, 2);
   const broken = routes({ ...empty, 'GET /repos/o/exec/issues': { status: 502, data: { message: 'Bad Gateway' } } });
   const obs2 = new Observer(broken.github, ['o/exec'], { since: c.now(), now: c.now, sleep: c.sleep });

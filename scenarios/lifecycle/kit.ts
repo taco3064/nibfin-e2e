@@ -22,7 +22,7 @@ import {
 import type { Issue, Job, Run, Stage, Window } from './analysis.ts';
 import { AUTO_CLEARED_CLASSES, briefRecord, pendingAddedAt, resolutionRecord } from '../lib/resolution.ts';
 import { Observer } from './observe.ts';
-import type { Expects, IssueRef, Snapshot } from './observe.ts';
+import type { Expects, IssueRef, Snapshot, WatchTarget } from './observe.ts';
 
 const MIN = 60_000;
 
@@ -154,6 +154,8 @@ export interface KitOptions {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   intervalMs?: number;
+  /** How often a watched Issue's runs and jobs are read (the observer's default when absent). */
+  watchMs?: number;
   tag?: string;
   /** The stall limit of the observer's waits (default `STALL`). */
   stallMs?: number;
@@ -195,6 +197,7 @@ export class Kit {
       now,
       sleep: opts.sleep,
       intervalMs: opts.intervalMs,
+      watchMs: opts.watchMs,
       log: ctx.log,
       signal: ctx.signal,
       stallMs: opts.stallMs ?? STALL,
@@ -204,6 +207,11 @@ export class Kit {
 
   now(): number {
     return this.obs.now();
+  }
+
+  /** The `watch` option of a wait that must see the Issue's short stage runs (see `UntilOptions.watch`). */
+  watch(repo: string, n: number): WatchTarget {
+    return { issueRepo: repo, issue: n };
   }
 
   /** Runs `fn` once per kit; later callers share its promise. */
