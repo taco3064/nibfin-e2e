@@ -11,6 +11,7 @@ import { select } from '../select.ts';
 import type { MapEntry, ProvisioningStep, Scenario } from '../types.ts';
 import type { SourceFile } from './changes.ts';
 import { parseIssueRef } from './impact.ts';
+import { lastRetestStart } from './retest.ts';
 import { makePlan } from './plan.ts';
 import type { PlanRequest } from './plan.ts';
 import { parseProposalEvent, proposalUpdated } from './proposal.ts';
@@ -19,8 +20,12 @@ import type { ResultFile, RunEnv } from './report.ts';
 
 export interface GateDeps {
   env: Env;
-  /** The client for the Owner's `NIBFIN_GITHUB_TOKEN`; created only after the input is valid. */
-  github(token: () => string): GitHub;
+  /**
+   * The client for the Owner's `NIBFIN_GITHUB_TOKEN`; created only after the input is valid.
+   * With `reads`, rate-limited reads wait (at most `SELECT_MAX_WAIT_MS`) and reads that get no
+   * response are retried, each logged through `reads.log`; only `select` asks for this.
+   */
+  github(token: () => string, reads?: { log(line: string): void }): GitHub;
   loadMap(): { entries: MapEntry[]; errors: string[] };
   scenarios: Scenario[];
   steps: ProvisioningStep[];
@@ -33,8 +38,15 @@ export interface GateDeps {
   stderr(text: string): void;
 }
 
+/** How long one `select` read may wait for the rate limit: below the 10-minute select job timeout. */
+export const SELECT_MAX_WAIT_MS = 5 * 60_000;
+
+/** An ISO 8601 UTC time, as `--delivered-since` accepts it. */
+const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
+
 export const USAGE = `usage: npm run gate -- <subcommand>
-  select (--delivered <owner/repo>#<n> | --rule R<s>.<n> ... --section <n> ... | --all)
+  select (--delivered <owner/repo>#<n> [--since-last-retest] | --delivered-since <YYYY-MM-DDTHH:MM:SSZ>
+          | --rule R<s>.<n> ... --section <n> ... | --all)
   report [--plan <path>] --results <dir>
   report --leg --results <dir>
   proposal-updated`;
@@ -56,6 +68,8 @@ export async function main(argv: string[], deps: GateDeps): Promise<number> {
   const options = {
     select: {
       delivered: { type: 'string' },
+      'delivered-since': { type: 'string' },
+      'since-last-retest': { type: 'boolean' },
       rule: { type: 'string', multiple: true },
       section: { type: 'string', multiple: true },
       all: { type: 'boolean' },
@@ -90,20 +104,33 @@ export async function main(argv: string[], deps: GateDeps): Promise<number> {
     usage.push((error as Error).message);
   }
   const gh = () => deps.github(() => requireEnv(deps.env, 'NIBFIN_GITHUB_TOKEN'));
+  const selectGh = () =>
+    deps.github(() => requireEnv(deps.env, 'NIBFIN_GITHUB_TOKEN'), { log: (line) => deps.stderr(line + '\n') });
 
   if (sub === 'select') {
     const rules = (values.rule as string[] | undefined) ?? [];
     const sections = (values.section as string[] | undefined) ?? [];
     const delivered = values.delivered as string | undefined;
-    const modes = [delivered !== undefined, values.all === true, rules.length + sections.length > 0].filter(
-      Boolean,
-    ).length;
+    const since = values['delivered-since'] as string | undefined;
+    const sinceLast = values['since-last-retest'] === true;
+    const modes = [
+      delivered !== undefined,
+      since !== undefined,
+      values.all === true,
+      rules.length + sections.length > 0,
+    ].filter(Boolean).length;
     let request: PlanRequest | undefined;
-    if (modes !== 1) usage.push('select needs exactly one of --delivered, --all or a --rule/--section selection');
+    if (sinceLast && delivered === undefined) usage.push('--since-last-retest needs --delivered <owner/repo>#<n>');
+    if (modes !== 1)
+      usage.push('select needs exactly one of --delivered, --delivered-since, --all or a --rule/--section selection');
     else if (delivered !== undefined) {
       const ref = parseIssueRef(delivered);
       if ('error' in ref) usage.push(ref.error);
       else request = { mode: 'delivered', ref };
+    } else if (since !== undefined) {
+      if (!ISO_UTC.test(since) || Number.isNaN(Date.parse(since)))
+        usage.push(`--delivered-since ${since}: expected an ISO 8601 UTC time such as 2026-11-28T00:00:00Z`);
+      else request = { mode: 'delivered-since', since };
     } else if (values.all) request = { mode: 'all' };
     else {
       request = { mode: 'select', rules, sections };
@@ -111,7 +138,34 @@ export async function main(argv: string[], deps: GateDeps): Promise<number> {
     }
     if (usage.length || !request || token === undefined) return fail('usage', usage);
     try {
-      const out = await makePlan(gh(), map.entries, deps.scenarios, request, () => deps.sources());
+      const client = selectGh();
+      if (sinceLast && request.mode === 'delivered') {
+        const start = await lastRetestStart(client, deps.env.GITHUB_RUN_ID);
+        const ref = `${request.ref.repo}#${request.ref.number}`;
+        request = start
+          ? {
+              mode: 'delivered-since',
+              since: start,
+              preface: [
+                {
+                  subject: 'since',
+                  decision: start,
+                  reason: `--since-last-retest: the newest completed, non-cancelled retest run was queued then; it covers ${ref}`,
+                },
+              ],
+            }
+          : {
+              ...request,
+              preface: [
+                {
+                  subject: 'since',
+                  decision: `only ${ref}`,
+                  reason: '--since-last-retest: no completed, non-cancelled retest run was found',
+                },
+              ],
+            };
+      }
+      const out = await makePlan(client, map.entries, deps.scenarios, request, () => deps.sources());
       if ('usage' in out) return fail('usage', out.usage);
       print(out.plan);
       return 0;
@@ -225,7 +279,10 @@ if (import.meta.main) {
   const { scenarios, provisioning } = await import('../registry.ts');
   process.exitCode = await main(process.argv.slice(2), {
     env: process.env,
-    github: (token) => createGitHub(token),
+    github: (token, reads) =>
+      reads
+        ? createGitHub(token, fetch, undefined, { log: reads.log, maxWaitMs: SELECT_MAX_WAIT_MS }, { log: reads.log })
+        : createGitHub(token),
     loadMap: () => loadMap(new URL('../../coverage-map.json', import.meta.url)),
     scenarios,
     steps: provisioning,
