@@ -191,6 +191,8 @@ test('selected gaps file "Coverage gap" and fail the run; unselected gaps are on
     /no scenario on macos\. It was selected by https:\/\/github.com\/taco3064\/nibfin-core\/issues\/1/,
   );
   match(gh.repo(E2E)[1]?.body ?? '', /R9\.9 is not in coverage-map\.json/);
+  match(gh.repo(E2E)[0]?.body ?? '', /Every rule the coverage map does not exempt with a notE2e reason needs a scenario/);
+  equal(/不測/.test(gh.repo(E2E)[0]?.body ?? ''), false);
   match(output.summary, /\| R3\.9 \| listed, not filed \|/);
   match(output.summary, /\| coverage check \| failed \| 2\/3 rules covered; fails the run only for --all/);
   deepEqual(output.coverage, { passed: false, covered: 2, total: 3 });
@@ -225,7 +227,7 @@ test('selected gaps file "Coverage gap" and fail the run; unselected gaps are on
   );
 });
 
-test('a delivered retest whose selected rules are all 〔不測〕 passes although other rules are uncovered', async () => {
+test('a delivered retest whose selected rules are all notE2e passes although other rules are uncovered', async () => {
   const gh = gate();
   const p = plan({
     selection: { all: false, rules: [] },

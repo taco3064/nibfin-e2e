@@ -437,7 +437,7 @@ export async function report(input: ReportInput): Promise<{ output: ReportOutput
     const body = [
       `Rule ${gap.id} was selected in the release gate run ${runLink}, but ${missing}.${from}`,
       '',
-      'Every rule the Proposal does not mark 〔不測：…〕 needs a scenario on each platform it requires (Proposal R8.15, R8.16).',
+      'Every rule the coverage map does not exempt with a notE2e reason needs a scenario on each platform it requires (Proposal R8.15, R8.16).',
       '',
       FOOTER,
     ].join('\n');

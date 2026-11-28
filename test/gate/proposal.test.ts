@@ -73,6 +73,7 @@ test('the first update creates the request; previous comes from the last closed 
   });
   match(created?.body ?? '', /- Previous handled update: 2026-11-21T00:00:00.000Z/);
   match(created?.body ?? '', /Notion's version history \(kept 7 days on the Free plan\)/);
+  match(created?.body ?? '', /gets its `coverage-map\.json` entry in this repository.*the Proposal no longer marks which rules are tested \(Proposal R8\.15\)/);
   match(created?.body ?? '', /```text\npage-1\nb1\nb2\n```/);
 });
 

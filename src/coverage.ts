@@ -41,7 +41,7 @@ export function validateMap(raw: unknown): { entries: MapEntry[]; errors: string
 
     if ('notE2e' in e) {
       if (typeof e.notE2e !== 'string' || e.notE2e.trim() === '') {
-        errors.push(`${where}: notE2e must be the non-empty reason from the rule's 〔不測：…〕 mark`);
+        errors.push(`${where}: notE2e must be the non-empty reason the coverage map gives for not testing the rule`);
       }
       return;
     }
@@ -114,7 +114,7 @@ export function crossCheck(entries: MapEntry[], scenarios: Scenario[]): string[]
     for (const r of s.rules) {
       const e = entryById.get(r);
       if (!e) errors.push(`scenario ${s.id}: declares ${r}, which is not in the coverage map`);
-      else if (isExcluded(e)) errors.push(`scenario ${s.id}: declares ${r}, which the Proposal marks 不測`);
+      else if (isExcluded(e)) errors.push(`scenario ${s.id}: declares ${r}, which the coverage map does not test: ${e.notE2e}`);
       else if (!e.scenarios.includes(s.id))
         errors.push(`scenario ${s.id}: declares ${r}, but the map does not list it`);
     }
