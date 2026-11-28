@@ -4,6 +4,7 @@ import type { Comment } from '../../scenarios/lifecycle/analysis.ts';
 import {
   briefRecord,
   labelAddedAt,
+  labelRemovedAt,
   RESOLUTION_ISSUES,
   resolutionGate,
   resolutionRecord,
@@ -52,6 +53,31 @@ test('the resolution gate is waiting when no delivering Issue is listed, and a r
     reason: 'the pending resolution stage (R4.40–R4.52) is not delivered yet: no delivering product Issue is listed',
   });
   await rejects(resolutionGate(routes({}).github, 'stage'));
+});
+
+test('the decision group waits on the amended R4.51 delivery and opens when all are delivered', async () => {
+  const table: Record<string, object> = {};
+  for (const [repo, n] of RESOLUTION_ISSUES.decision) table[`GET /repos/${repo}/issues/${n}`] = delivered;
+  table['GET /repos/taco3064/nibfin-core/issues/810'] = { state: 'open', labels: [{ name: 'scope' }] };
+  match(
+    (await resolutionGate(routes(table).github, 'decision'))?.reason ?? '',
+    /amended decision reading of R4\.51 .*taco3064\/nibfin-core#810 not closed with delivered$/,
+  );
+  equal(await resolutionGate(routes(table).github, 'stage'), undefined);
+  table['GET /repos/taco3064/nibfin-core/issues/810'] = delivered;
+  equal(await resolutionGate(routes(table).github, 'decision'), undefined);
+  equal((await resolutionGate(routes({}).github, 'decision', { stage: [] }))?.status, 'waiting');
+});
+
+test('the time pending was removed is its latest unlabeled event', () => {
+  const events = [
+    { event: 'unlabeled', created_at: '2026-11-27T09:30:00Z', label: { name: 'pending' } },
+    { event: 'labeled', created_at: '2026-11-27T09:45:00Z', label: { name: 'pending' } },
+    { event: 'unlabeled', created_at: '2026-11-27T10:00:00Z', label: { name: 'pending' } },
+    { event: 'unlabeled', created_at: '2026-11-27T11:00:00Z', label: { name: 'scope' } },
+  ];
+  equal(labelRemovedAt(events, 'pending'), PENDING_AT);
+  equal(labelRemovedAt(events.slice(1, 2), 'pending'), undefined);
 });
 
 test('the time pending was added is its latest labeled event', () => {
