@@ -24,10 +24,13 @@ import {
   ranOnRunner,
   refersToIssue,
   routePodmanProblems,
+  rereadWindows,
+  sameIssueOverlapMessage,
   sameIssueOverlaps,
+  STAGES,
   time,
 } from './analysis.ts';
-import type { Activity, Job, Run, Window } from './analysis.ts';
+import type { Activity, Job, ReadWindow, Run, Window } from './analysis.ts';
 import { holdJourney, journey } from './journeys.ts';
 import { DEADLINE, finishAt, hostedRunProblems, message, stageSeen, lifecycle } from './kit.ts';
 import type { Kit } from './kit.ts';
@@ -414,10 +417,12 @@ export const deliveryParallel: Scenario = lifecycle({
         issues.set(issueKey(t.repo, t.issue), { repo: t.repo, n: t.issue });
     }
     const agent: Window[] = [];
-    const all: Window[] = [];
+    // Every job of every stage run; one its run job list showed unfinished is read again by id.
+    const all: ReadWindow[] = [];
     for (const { repo, n } of issues.values()) {
       agent.push(...(await k.windows(s, repo, n)));
-      all.push(...(await k.windows(s, repo, n, true)));
+      const jobs = await k.stageJobs(s, repo, n, STAGES);
+      all.push(...(await rereadWindows(jobs, issueKey(repo, n), (id) => k.obs.job(exec, id), () => k.now())));
     }
     const inJourney = (w: Window) => w.start >= j.startedAt && w.start <= j.endedAt;
     const pair = concurrentPair(agent.filter(inJourney));
@@ -425,7 +430,7 @@ export const deliveryParallel: Scenario = lifecycle({
     const writers = sameIssueOverlaps(agent.filter((w) => w.stage === 'deliver'));
     c.check('R6.5', writers.length === 0, `two Writers overlapped on ${writers.map(([a]) => a.issue).join(', ')}`);
     for (const [a, b] of sameIssueOverlaps(all)) {
-      const what = `${a.issue}: ${a.stage} job ${a.jobId} and ${b.stage} job ${b.jobId} overlapped`;
+      const what = sameIssueOverlapMessage(a, b);
       c.fail('R4.25', what);
       c.fail('R4.36', what);
     }
