@@ -227,7 +227,7 @@ test('a stage wait fails at once when the Issue is closed or has pending, unless
 });
 
 test('a wait with no sandbox activity fails after the stall limit; one with a run in progress or marked quiet does not', async () => {
-  let runs = [run(5, 'shape', 'completed', '2026-11-26T10:00:30Z')];
+  let runs: (ReturnType<typeof run> & { run_attempt?: number })[] = [run(5, 'shape', 'completed', '2026-11-26T10:00:30Z')];
   const f = routes({
     ...base,
     'GET /repos/o/exec/actions/runs': () => ({ workflow_runs: runs }),
@@ -249,8 +249,9 @@ test('a wait with no sandbox activity fails after the stall limit; one with a ru
     /^Error: timed out after 30 min waiting for nothing to happen$/,
   );
 
-  // A run in progress is activity, even when no snapshot changes.
-  runs = [run(5, 'shape', 'in_progress', '2026-11-26T10:00:30Z')];
+  // A run in progress is activity, even when no snapshot changes. It is a re-run: the
+  // observer keeps a completed attempt over an unfinished read of the same attempt.
+  runs = [{ ...run(5, 'shape', 'in_progress', '2026-11-26T10:00:30Z'), run_attempt: 2 }];
   await rejects(
     k.obs.until("I2's shape job to complete", () => undefined, 45 * MIN, undefined, { noIssue: NO_ISSUE }),
     /^Error: timed out after 45 min waiting for I2's shape job to complete$/,
