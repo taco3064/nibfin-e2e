@@ -2,6 +2,7 @@ import { commitOnMain, createTree, mainHead, rulesets } from '../../src/host/san
 import type { TreeEntry } from '../../src/host/sandbox.ts';
 import { excerpt, redact } from './checks.ts';
 import { runningJobContainers, watchJobContainers } from './containers.ts';
+import { runnerCount } from './github.ts';
 import { baselineOf } from './kit.ts';
 import type { Kit } from './kit.ts';
 import { idleProblem, localRunners } from './runners.ts';
@@ -81,21 +82,23 @@ async function waitForContainers(kit: Kit, repo: string): Promise<void> {
 }
 
 /**
- * Re-reads the execution sandbox's Runners every 10 s until both are online and idle,
+ * Re-reads the execution sandbox's Runners every 10 s until all of them (the count the
+ * `nibfin` step added) are online and idle,
  * within the quiesce deadline: a Runner stays busy through a Job's post steps after its
  * container ended, and while a Job starts. A wrong set of registrations or a failed read
  * fails at once; the timeout names every Runner still busy or offline and the time waited.
  */
 async function waitForIdleRunners(kit: Kit): Promise<void> {
   const execution = kit.sandbox.execution;
+  const count = runnerCount(kit.facts);
   const start = kit.now();
   let last: LocalRunner[] | undefined;
   let readError: unknown;
   let logged = false;
   try {
-    await remoteWait(kit, `both Runners of ${execution} to be online and idle`, DEADLINE.quiesce, 10_000, async () => {
+    await remoteWait(kit, `all ${count} Runners of ${execution} to be online and idle`, DEADLINE.quiesce, 10_000, async () => {
       try {
-        last = await localRunners(kit.github, execution);
+        last = await localRunners(kit.github, execution, count);
       } catch (error) {
         readError = error;
         throw error;

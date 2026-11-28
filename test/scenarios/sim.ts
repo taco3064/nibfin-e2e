@@ -30,11 +30,12 @@ export async function until(cond: () => boolean, what = 'the expected point') {
  */
 export function simulate(
   plan: (repo: string, issue: number) => JobPlan,
-  extra: { respond?: (argv: string[], o: ExecOptions) => Partial<ExecResult> | undefined } = {},
+  extra: { respond?: (argv: string[], o: ExecOptions) => Partial<ExecResult> | undefined; runners?: number } = {},
 ) {
   const runs = new Map<string, { repo: string; plan: JobPlan }>();
   let next = 0;
   const h = setup({
+    runners: extra.runners,
     respond: (argv, o) => {
       if (argv[1] === 'container' && argv[2] === 'inspect') {
         const run = runs.get(argv[3] ?? '');

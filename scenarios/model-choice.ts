@@ -10,7 +10,8 @@ import { initEvents, stageJob } from './lib/joblog.ts';
 import { message } from './lib/kit.ts';
 import type { Kit } from './lib/kit.ts';
 import { first, parseProbe } from './lib/probe.ts';
-import { localRunners } from './lib/runners.ts';
+import { runnerCount } from './lib/github.ts';
+import { localRunners, setSlotServices, slotsOf } from './lib/runners.ts';
 import { editRunnerEnv } from './lib/runner-env.ts';
 import { runFirstJob } from './lib/single.ts';
 import type { FirstJob } from './lib/single.ts';
@@ -19,14 +20,33 @@ import { DEADLINE, remoteWait } from './lib/waits.ts';
 /** The slot whose `.env` gets NIBFIN_MODEL; a constant, never taken from GitHub output. */
 const SLOT = 'claude-1';
 
+/**
+ * The two slots whose Jobs the scenario compares. With more Runners on the host, the slots
+ * after these are stopped while it runs, so its two Jobs land on claude-1 and claude-2.
+ */
+const COMPARED = ['claude-1', 'claude-2'];
+
 /** Restarts the slot's user service and waits until its registration is online again. */
-async function restart(kit: Kit, slot: string): Promise<void> {
+async function restart(kit: Kit, slot: string, count: number): Promise<void> {
   const r = await kit.exec(['systemctl', '--user', 'restart', `nibfin-runner-${slot}.service`]);
   if (r.code !== 0)
     throw new Error(`restarting nibfin-runner-${slot}.service exited ${r.code}: ${r.stderr.trim().slice(-1000)}`);
   await remoteWait(kit, `Runner ${slot} to be online after its restart`, DEADLINE.runnerOnline, 10_000, async () => {
-    const runner = (await localRunners(kit.github, kit.sandbox.execution)).find((x) => x.slot === slot);
+    const runner = (await localRunners(kit.github, kit.sandbox.execution, count)).find((x) => x.slot === slot);
     return runner?.status === 'online' ? true : undefined;
+  });
+}
+
+/** Starts the stopped slots again and waits until every Runner the host has reads online. */
+async function startStopped(kit: Kit, slots: string[], count: number): Promise<void> {
+  await setSlotServices(kit.exec, kit.env, 'start', slots);
+  let last = '';
+  await remoteWait(kit, `all ${count} Runners to be online after starting ${slots.join(', ')}`, DEADLINE.runnerOnline, 10_000, async () => {
+    const rs = await localRunners(kit.github, kit.sandbox.execution, count);
+    last = rs.filter((r) => r.status !== 'online').map((r) => `${r.slot} is ${r.status}`).join('; ');
+    return last ? undefined : true;
+  }).catch((error: unknown) => {
+    throw new Error(last ? `${message(error)}: ${last}` : message(error), { cause: error });
   });
 }
 
@@ -80,6 +100,9 @@ export function modelChoice(kitFor: KitFor): Scenario {
       const { execution, peer } = kit.sandbox;
       const opened: [string, number][] = [];
       const c = new Checks(kit.secrets());
+      const count = runnerCount(kit.facts);
+      const extra = slotsOf(count).filter((s) => !COMPARED.includes(s));
+      let stopped = false;
       const body = async (): Promise<Outcome> => {
         await prepareFixture(kit, execution, {
           files: [
@@ -93,8 +116,12 @@ export function modelChoice(kitFor: KitFor): Scenario {
           variables: { NIBFIN_MODEL: 'haiku' },
         });
         await prepareFixture(kit, peer, { files: [], variables: { NIBFIN_MODEL: 'haiku' } });
+        if (extra.length) {
+          stopped = true;
+          await setSlotServices(kit.exec, kit.env, 'stop', extra);
+        }
         editRunnerEnv(kit.env, SLOT, 'NIBFIN_MODEL', 'sonnet');
-        await restart(kit, SLOT);
+        await restart(kit, SLOT, count);
 
         const run = (repo: string) =>
           runFirstJob(kit, repo, {
@@ -167,14 +194,22 @@ export function modelChoice(kitFor: KitFor): Scenario {
         return c.outcome();
       };
       const outcome = await body().catch((error: unknown): Outcome => ({ status: 'failed', reason: message(error) }));
-      // Restore the Runner whatever happened; a failed restore fails the scenario.
-      let restore: string | undefined;
+      // Restore the Runners whatever happened; a failed restore fails the scenario.
+      const restores: string[] = [];
       try {
         editRunnerEnv(kit.env, SLOT, 'NIBFIN_MODEL', undefined);
-        await restart(kit, SLOT);
+        await restart(kit, SLOT, count);
       } catch (error) {
-        restore = `restoring Runner ${SLOT} failed: ${message(error)}`;
+        restores.push(`restoring Runner ${SLOT} failed: ${message(error)}`);
       }
+      if (stopped) {
+        try {
+          await startStopped(kit, extra, count);
+        } catch (error) {
+          restores.push(`starting Runners ${extra.join(', ')} again failed: ${message(error)}`);
+        }
+      }
+      const restore = restores.join('; ') || undefined;
       for (const [repo, n] of opened) await close(kit, repo, n).catch(() => {});
       if (restore)
         return {

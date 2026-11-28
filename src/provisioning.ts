@@ -23,7 +23,7 @@ import type { PeerFacts } from './host/peer.ts';
 import { preparePodman, startPodmanMachine } from './host/podman.ts';
 import { mainHead, onlineRunners, readTemplate, resetSandbox } from './host/sandbox.ts';
 import type { HostServices } from './host/services.ts';
-import type { ProvisioningStep, RunContext, StepOutcome } from './types.ts';
+import type { Platform, ProvisioningStep, RunContext, StepOutcome } from './types.ts';
 import { createKit } from '../scenarios/lib/kit.ts';
 import { runObservedJob } from '../scenarios/lib/observed.ts';
 
@@ -31,6 +31,14 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** Room the output leaves in a filed reason for the command and step prefixes, so `cap` never cuts its end. */
 export const OUTPUT_BUDGET = MAX_REASON - 500;
+
+/**
+ * How many Claude Runners the `nibfin` step adds on each platform. The Linux leg runs on a
+ * 4 vCPU, 16 GB GitHub-hosted host, so four agent Jobs fit at once and lifecycle scenarios
+ * queue less; the Windows leg keeps two (macOS host provisioning is not supported yet and
+ * keeps two as well). Scenarios read the count from the step's `runnerCount` fact.
+ */
+export const RUNNER_COUNT = { linux: 4, macos: 2, windows: 2 } satisfies Record<Platform, number>;
 
 /** The end of `text` in at most `max` characters, marked with `…` at the front when cut. */
 const lastOf = (text: string, max: number) => (text.length <= max ? text : `…${text.slice(text.length - max + 1)}`);
@@ -224,8 +232,10 @@ export function createProvisioning(host: HostServices): ProvisioningStep[] {
           const before = await readHostState(run, ctx.target.platform, { env: host.env });
           await readPeriodicBaseline(run, host, before);
           facts.hostBefore = before;
+          const count = RUNNER_COUNT[ctx.target.platform];
+          facts.runnerCount = count;
           facts.runnerAdd = true;
-          await nibfin(['runner', 'add', 'claude', '--count', '2', '--yes']);
+          await nibfin(['runner', 'add', 'claude', '--count', String(count), '--yes']);
           await nibfin(['init', '--yes']);
           await nibfin(['init', '-R', SANDBOX.peer, '--yes']);
           const execution = await readInitPr(host.github, SANDBOX.execution);
@@ -247,7 +257,7 @@ export function createProvisioning(host: HostServices): ProvisioningStep[] {
           facts.peerBaseline = await baseline(host.github, SANDBOX.peer);
           return {
             status: 'passed',
-            reason: `Runners added; init PRs #${execution.number} and #${peer.number} merged; image ${digest}`,
+            reason: `${count} Runners added; init PRs #${execution.number} and #${peer.number} merged; image ${digest}`,
             facts,
           };
         } catch (error) {

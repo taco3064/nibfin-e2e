@@ -24,6 +24,8 @@ import type { Kit } from './kit.ts';
 import { stageJobRunning } from './journeys.ts';
 import { AWAITS_REVIEW, RELOGIN, SHAPE_MARKER } from './marks.ts';
 import type { Snapshot } from './observe.ts';
+import { runnerCount } from '../lib/github.ts';
+import { runnerSlot, setSlotServices, slotsOf } from '../lib/runners.ts';
 
 /** The closing comment names the PR and its merge commit as GitHub records them (Proposal R1.13, R3.31). */
 export function closingProblems(
@@ -291,7 +293,14 @@ export async function deliverWithCommits(
 }
 
 /**
- * Why I's deliver job and I2's shape job can no longer hold both Runners at once: they
+ * The two Runner slots interrupted-deliver keeps active: I's deliver job and I2's job must
+ * keep every active Runner busy so that I3's job queues (Proposal R4.23), so any slot after
+ * these is stopped for the scenario's run.
+ */
+const ACTIVE_SLOTS = ['claude-1', 'claude-2'];
+
+/**
+ * Why I's deliver job and I2's shape job can no longer hold both active Runners at once: they
  * cannot cover the registered Runners, ran on the same one, I's job completed before
  * I2's started, or I2's job completed before I's started. `oldJob` is `undefined` while
  * I's deliver job has not started. Read from the jobs' own times, not from a snapshot's
@@ -350,6 +359,10 @@ export const interruptedDeliver: Scenario = lifecycle({
     const { exec } = k;
     const filed: number[] = [];
     try {
+      // With more than two Runners on the host, the slots after claude-2 are stopped so that two
+      // jobs can keep every active Runner busy; the finally's runnerServices('start') starts them again.
+      const extra = slotsOf(runnerCount(k.ctx.facts)).filter((s) => !ACTIVE_SLOTS.includes(s));
+      if (extra.length) await setSlotServices(k.ctx.exec, k.ctx.browserEnv(), 'stop', extra);
       const owner = await k.owner();
       const label = await k.ownerLabel();
       await k.ruleset('e2e-approval', [APPROVAL_RULE]);
@@ -391,8 +404,11 @@ export const interruptedDeliver: Scenario = lifecycle({
       );
       const n2 = await file('i2', 'Add decrement', changeRequest(k.slug('i2'), 'decrement', 'returns its argument minus one'));
 
-      // 4: I2 takes the second Runner while I's deliver job holds the other: both Runners busy, read from the jobs' own times.
-      const runnerNames = (await k.obs.runners(exec)).map((r) => r.name);
+      // 4: I2 takes the second Runner while I's deliver job holds the other: both active Runners busy, read from the jobs' own times.
+      // The active Runners are matched by slot, so a stopped slot whose registration still reads online does not count.
+      const runnerNames = (await k.obs.runners(exec))
+        .filter((r) => ACTIVE_SLOTS.includes(runnerSlot(r.name) ?? ''))
+        .map((r) => r.name);
       const i2Shape = async (s: Snapshot) => (await k.agentJobs(s, exec, n2, ['shape'])).find((j) => jobWindow(j, issueKey(exec, n2), 'shape'));
       const iDeliver = async (s: Snapshot) => {
         const j = (await k.agentJobs(s, exec, n, ['deliver'])).find((x) => jobWindow(x, issueKey(exec, n), 'deliver'));
@@ -413,7 +429,7 @@ export const interruptedDeliver: Scenario = lifecycle({
         { gonePast: async (s) => busyGone(await iDeliver(s), await i2Shape(s), runnerNames) ?? (await i2Gone(s)) ?? iGone(s) },
       );
 
-      // I3 is filed as soon as the overlap is seen, so that its route starts while both Runners are busy.
+      // I3 is filed as soon as the overlap is seen, so that its route starts while both active Runners are busy.
       const n3 = await file('i3', 'Add sign', changeRequest(k.slug('i3'), 'sign', 'returns -1, 0 or 1 for the sign of its argument'));
 
       // 3: I's Deliver runs and has pushed to its branch. It runs after step 4: I2 was filed when I got shaped or its deliver run appeared.
@@ -422,7 +438,7 @@ export const interruptedDeliver: Scenario = lifecycle({
 
       // 5: I3 is dispatched while the member is online; its job queues (R4.23). I2 may be in Shape or already in Deliver.
       const d3 = await k.obs.until(
-        'I3\'s shape job to queue on the Owner\'s label while I\'s deliver job and I2\'s shape or deliver job hold both Runners',
+        'I3\'s shape job to queue on the Owner\'s label while I\'s deliver job and I2\'s shape or deliver job hold both active Runners',
         async (s) => {
           const d = await dispatched(k, s, n3, label);
           if (!d) return undefined;
@@ -450,7 +466,7 @@ export const interruptedDeliver: Scenario = lifecycle({
       await k.ctx.stopJobContainers(exec, n2);
       await k.addLabels(exec, n2, ['pause']);
       await k.obs.until(
-        'both Runner registrations to read offline',
+        'every Runner registration to read offline',
         async () => {
           const rs = await k.obs.runners(exec);
           return rs.length > 0 && rs.every((r) => r.status === 'offline') ? true : undefined;

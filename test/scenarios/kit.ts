@@ -53,13 +53,18 @@ export const runner = (id: number, slot: string, extra: { status?: string; busy?
   busy: extra.busy ?? false,
 });
 
-/** Two clean sandboxes whose main is the baseline tree, two idle Runners, and a kit over them. */
+/**
+ * Two clean sandboxes whose main is the baseline tree, `runners` idle Runners (two unless
+ * given; the `nibfin` facts record the same count), and a kit over them.
+ */
 export function setup(
   opts: {
     respond?: (argv: string[], o: ExecOptions) => Partial<ExecResult> | undefined;
     peerRulesets?: 'upgrade';
+    runners?: number;
   } = {},
 ) {
+  const runnerCount = opts.runners ?? 2;
   const fake = new FakeGitHub();
   fake.trees.set(
     BASE_TREE,
@@ -95,6 +100,7 @@ export function setup(
             executionBaseline: { commit: 'c0', tree: BASE_TREE },
             peerBaseline: { commit: 'c0', tree: BASE_TREE },
             imageDigest: 'sha256:' + 'd'.repeat(64),
+            runnerCount,
           }
         : undefined,
     secrets: () => ['sandbox-token-value', 'claude-token-value'],
@@ -107,7 +113,7 @@ export function setup(
     signal: controller.signal,
   };
   const repo = (name: string) => fake.repos.get(name) as ReturnType<typeof cleanRepo>;
-  repo(EXEC).runners.push(runner(1, 'claude-1'), runner(2, 'claude-2'));
+  for (let i = 1; i <= runnerCount; i++) repo(EXEC).runners.push(runner(i, `claude-${i}`));
   /** Aborts the kit's signal, as the harness budget does at its work limit. */
   const abort = (reason = 'harness budget of 190 min ran out') => controller.abort(new Error(reason));
   return { fake, kit, calls: exec.calls, events, logs, repo, abort };
