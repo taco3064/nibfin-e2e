@@ -1,11 +1,12 @@
 import { untilAborted } from '../../src/abort.ts';
 import type { ExecResult } from '../../src/host/exec.ts';
 import { readHostState, readTask, userRuntimeDir } from '../../src/host/hoststate.ts';
-import type { HostRun, HostState, TaskDetail, WindowsHostState } from '../../src/host/hoststate.ts';
+import type { HostRun, HostState, WindowsHostState } from '../../src/host/hoststate.ts';
 import type { RunContext, Scenario } from '../../src/types.ts';
 import { Check, message, precondition, tail } from '../lib/check.ts';
 import { nibfinFacts, registrations } from '../lib/github.ts';
 import type { NibfinFacts, Registration } from '../lib/github.ts';
+import { startTask } from '../lib/start-task.ts';
 import { sleep, waitFor } from '../lib/wait.ts';
 import { hostRun, newEnabledUnits, newTasks } from './runner-add-setup.ts';
 
@@ -132,13 +133,6 @@ export function strandedConsoles(before: Snapshot, after: Snapshot): Stranded[] 
       out.push({ ...p, why: `a podman.exe still alive (parent ${gone ? 'gone' : (parent?.name ?? '?')})` });
   }
   return out;
-}
-
-/** The task whose action runs `podman machine start`; the same match as runner-add-setup. */
-export function startTask(details: { t: string; d: TaskDetail }[]): { t: string; d: TaskDetail } | undefined {
-  return details.find(({ d }) =>
-    d.actions.some((a) => /podman(\.exe)?"?$/i.test(a.execute.trim()) && /\bmachine\s+start\b/.test(a.arguments)),
-  );
 }
 
 /** `podman machine inspect`'s first machine state; throws when it cannot be read. */

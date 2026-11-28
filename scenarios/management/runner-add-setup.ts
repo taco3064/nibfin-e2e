@@ -6,6 +6,7 @@ import type { RunContext, Scenario } from '../../src/types.ts';
 import { Check, tail } from '../lib/check.ts';
 import { parseHelp } from '../lib/gh.ts';
 import { nibfinFacts, registrations, whoami } from '../lib/github.ts';
+import { startTask } from '../lib/start-task.ts';
 
 export const hostRun =
   (ctx: RunContext): HostRun =>
@@ -180,9 +181,7 @@ export const runnerAddSetup: Scenario = {
 
       const tasks = newTasks(before, now);
       const details = await Promise.all(tasks.map(async (t) => ({ t, d: await readTask(run, t) })));
-      const starter = details.find(({ d }) =>
-        d.actions.some((a) => /podman(\.exe)?"?$/i.test(a.execute.trim()) && /\bmachine\s+start\b/.test(a.arguments)),
-      );
+      const starter = startTask(details);
       if (
         c.that(
           !!starter,

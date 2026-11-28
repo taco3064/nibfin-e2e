@@ -6,7 +6,7 @@ import { parseRemaining } from '../lib/gh.ts';
 import { nibfinFacts, openPulls, registrations } from '../lib/github.ts';
 import type { StartTaskRecord, TaskSeen } from '../lib/github.ts';
 import { finishHold, removeHold, startHold } from '../lib/hold.ts';
-import { startTask } from './podman-machine-detached.ts';
+import { startsMachine } from '../lib/start-task.ts';
 import { hostRun, newTasks, wslconfigChanges } from './runner-add-setup.ts';
 
 /** Each task's actions and trigger kinds; a failed read is kept on that task and the others are still read. */
@@ -24,8 +24,7 @@ async function seen(run: HostRun, tasks: string[]): Promise<TaskSeen[]> {
 }
 
 /** The task runs `podman machine start`, by the same match as the R5.12 and R5.13 scenarios. */
-const isStart = (t: TaskSeen) =>
-  !!t.actions && !!startTask([{ t: t.name, d: { actions: t.actions, triggers: t.triggers ?? [], repetitions: [] } }]);
+const isStart = (t: TaskSeen) => !!t.actions && t.actions.some(startsMachine);
 
 export type StartTasks = { tasks: string[] } | { missing: 'unrecorded' | 'gone' | 'none' };
 

@@ -693,6 +693,21 @@ test('recordStartTask: records the new tasks and the one that runs podman machin
   equal(r.error, undefined);
 });
 
+test('recordStartTask: records a task that runs podman machine start through conhost --headless', async () => {
+  const actions = [
+    {
+      execute: 'C:\\Windows\\System32\\conhost.exe',
+      arguments: '--headless C:\\Program Files\\RedHat\\Podman\\podman.exe machine start podman-machine-default',
+    },
+  ];
+  const r = await recordStartTask(
+    () => Promise.resolve(['\\Nibfin podman machine']),
+    () => Promise.resolve({ actions, triggers: ['MSFT_TaskLogonTrigger'], repetitions: [] }),
+    [],
+  );
+  deepEqual(r.task, { name: '\\Nibfin podman machine', actions, triggers: ['MSFT_TaskLogonTrigger'] });
+});
+
 test('recordStartTask: a failed list read is recorded and the helper resolves; a failed detail read stays on that task', async () => {
   deepEqual(
     await recordStartTask(
