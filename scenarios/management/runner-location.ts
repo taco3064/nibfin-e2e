@@ -160,33 +160,96 @@ const RUNNER_PROCESSES = new Set(['runner.listener.exe', 'runner.worker.exe']);
 const isRunnerProcess = (p: WinProcess) => RUNNER_PROCESSES.has((p.Name ?? '').toLowerCase());
 
 export interface Hosting {
-  /** The nearest `Runner.Worker.exe` or `Runner.Listener.exe` ancestor of this process, if any. */
+  /** The runner process that hosts this job: a `Runner.Worker.exe` or `Runner.Listener.exe`. */
   process?: WinProcess;
   /** Its install root (`<root>\bin\Runner.Worker.exe`); undefined when its path is empty. */
   root?: string;
+  /** How the root was found: the parent process walk or the `.runner` registration matching `RUNNER_NAME`. */
+  method?: 'walk' | 'registration';
+  /** When no root was found: what the method saw and why it stopped. */
+  stop?: string;
 }
+
+const MAX_WALK = 64;
+const named = (p: WinProcess) => `${p.Name ?? '(no Name)'} PID ${p.ProcessId}`;
+/** A runner's install root: the parent of its `bin` directory, the same root the runner reads `.runner` from. */
+const installRoot = (path: string) => win32.dirname(win32.dirname(path));
 
 /**
  * The runner hosting this job: from `selfPid`, follows `ParentProcessId` to the first
  * `Runner.Worker.exe` or `Runner.Listener.exe` (any case). Stops at a missing parent, a
- * repeated PID or 64 steps; then there is none.
+ * repeated PID or 64 steps; then there is none, and `stop` names the last process reached
+ * and why the walk ended.
  */
 export function hostingRunner(processes: WinProcess[], selfPid: number): Hosting {
   const byPid = new Map(processes.map((p) => [p.ProcessId, p]));
-  const seen = new Set<number>();
   let cur = byPid.get(selfPid);
-  for (let i = 0; cur && i < 64 && !seen.has(cur.ProcessId); i++) {
-    seen.add(cur.ProcessId);
+  if (!cur) return { stop: `this process, PID ${selfPid}, is not in the Win32_Process list` };
+  const seen = new Set<number>([cur.ProcessId]);
+  for (let i = 0; i < MAX_WALK; i++) {
     const parent = byPid.get(cur.ParentProcessId);
-    if (!parent || seen.has(parent.ProcessId)) break;
-    if (isRunnerProcess(parent))
-      return {
-        process: parent,
-        root: parent.ExecutablePath ? win32.dirname(win32.dirname(parent.ExecutablePath)) : undefined,
-      };
+    if (!parent)
+      return { stop: `stopped at ${named(cur)}: its parent PID ${cur.ParentProcessId} is not in the Win32_Process list` };
+    if (seen.has(parent.ProcessId))
+      return { stop: `stopped at ${named(cur)}: its parent PID ${parent.ProcessId} was already visited` };
+    if (isRunnerProcess(parent)) {
+      if (!parent.ExecutablePath)
+        return { process: parent, stop: `reached ${named(parent)}, which has no ExecutablePath` };
+      return { process: parent, root: installRoot(parent.ExecutablePath), method: 'walk' };
+    }
+    seen.add(parent.ProcessId);
     cur = parent;
   }
-  return {};
+  return { stop: `stopped at ${named(cur)} after ${MAX_WALK} steps` };
+}
+
+/**
+ * The runner hosting this job by its registration: among the install roots of every runner
+ * process with a path, the one root whose `<root>\.runner` has `agentName` equal to
+ * `runnerName` (the job's `RUNNER_NAME`). No root when the name is unset, nothing matches
+ * or several roots match; `stop` then lists each root read with its `agentName` only.
+ */
+export function hostingByRegistration(
+  processes: WinProcess[],
+  runnerName: string | undefined,
+  readFile: HostFs['readFile'],
+): Hosting {
+  const roots = new Map<string, { root: string; process: WinProcess }>();
+  for (const p of processes.filter(isRunnerProcess)) {
+    if (!p.ExecutablePath) continue;
+    const root = installRoot(p.ExecutablePath);
+    const key = win32.normalize(root).toLowerCase();
+    if (!roots.has(key)) roots.set(key, { root, process: p });
+  }
+  const name = runnerName?.trim() ?? '';
+  const read = [...roots.values()].map((r) => {
+    const file = win32.join(r.root, '.runner');
+    const text = readFile(file);
+    const parsed = text === undefined ? undefined : parseRunnerFile(text);
+    const agentName = parsed?.agentName;
+    const seen =
+      text === undefined
+        ? 'not readable'
+        : !parsed
+            ? 'not a JSON object'
+            : agentName === undefined
+              ? 'no agentName'
+              : `agentName ${JSON.stringify(agentName)}`;
+    return { ...r, file, seen, match: name !== '' && agentName?.trim() === name };
+  });
+  const registrations = read.length
+    ? `registrations read: ${read.map((r) => `${r.file} ${r.seen}`).join(', ')}`
+    : 'no runner process with an ExecutablePath to read a .runner from';
+  if (name === '') return { stop: `RUNNER_NAME is unset; ${registrations}` };
+  const matches = read.filter((r) => r.match);
+  const quoted = `RUNNER_NAME ${JSON.stringify(name)}`;
+  if (matches.length === 1) {
+    const m = matches[0] as (typeof matches)[number];
+    return { process: m.process, root: m.root, method: 'registration' };
+  }
+  if (matches.length > 1)
+    return { stop: `${quoted} matches several roots (${matches.map((r) => r.root).join(', ')}); ${registrations}` };
+  return { stop: `${quoted} matches no registration; ${registrations}` };
 }
 
 /** True when the Windows path lies under `root` (case-insensitive). */
@@ -208,19 +271,18 @@ export function serviceProgram(pathName: string): string {
  * Proposal R5.10 on the Windows host: no Runner process (`Runner.Listener.exe`,
  * `Runner.Worker.exe`) and no `actions.runner.*` service outside `hostingRoot`, the install
  * root of the runner hosting this job. A process or service whose path is empty is a problem
- * too. With no hosting root, every one is.
+ * too. With no hosting root, every one is, and `notFound` (when given) replaces the default
+ * text saying no hosting runner was found.
  */
 export function winRunnerProblems(
   processes: WinProcess[],
   services: WinService[],
   hostingRoot: string | undefined,
+  notFound = 'with no runner hosting this job found',
 ): string[] {
   const out: string[] = [];
   const inside = (path: string) => hostingRoot !== undefined && underWin(path, hostingRoot);
-  const where =
-    hostingRoot === undefined
-      ? 'with no runner hosting this job found'
-      : `outside ${hostingRoot}, the runner hosting this job`;
+  const where = hostingRoot === undefined ? notFound : `outside ${hostingRoot}, the runner hosting this job`;
   for (const p of processes.filter(isRunnerProcess)) {
     if (!p.ExecutablePath)
       out.push(
@@ -508,17 +570,41 @@ export function runnerLocation(kitFor: KitFor, deps: LocationDeps = {}): Scenari
         await c.part(RULE, async () => {
           const processes = (await ps(PROCESSES, 'Get-CimInstance Win32_Process')) as WinProcess[];
           const services = (await ps(SERVICES, 'Get-CimInstance Win32_Service')) as WinService[];
-          const hosting = hostingRunner(processes, pid);
-          if (hosting.process && hosting.root === undefined)
-            c.fail(
-              RULE,
-              `the runner hosting this job, ${hosting.process.Name} PID ${hosting.process.ProcessId}, has no ExecutablePath; its install root cannot be read`,
+          // First the parent process walk from this process; when it reaches no runner root
+          // (an intermediate process missing or already exited), the runner install whose
+          // .runner registration names this job's RUNNER_NAME.
+          const walk = hostingRunner(processes, pid);
+          const byRegistration =
+            walk.root === undefined ? hostingByRegistration(processes, kit.env.RUNNER_NAME, fs.readFile) : undefined;
+          const hosting = walk.root !== undefined ? walk : byRegistration?.root !== undefined ? byRegistration : undefined;
+          if (!hosting) {
+            if (walk.process)
+              c.fail(
+                RULE,
+                `the runner hosting this job, ${walk.process.Name} PID ${walk.process.ProcessId}, has no ExecutablePath; its install root cannot be read`,
+              );
+            const diagnosis = `the parent walk from PID ${pid} ${walk.stop ?? 'found no runner'}; by registration, ${byRegistration?.stop ?? 'nothing was read'}`;
+            const problems = winRunnerProblems(
+              processes,
+              services,
+              undefined,
+              'while the runner hosting this job was found by neither the parent walk nor its .runner registration',
             );
+            // A runner that cannot be attributed to this job is a failure; with none on the host there is nothing to attribute.
+            if (problems.length) c.fail(RULE, `no runner hosting this job found on the Windows host: ${diagnosis}`);
+            for (const problem of problems) c.fail(RULE, problem);
+            summary.push(
+              `no Runner process or actions.runner.* service on the Windows host; no hosting runner found: ${diagnosis}`,
+            );
+            return;
+          }
           for (const problem of winRunnerProblems(processes, services, hosting.root)) c.fail(RULE, problem);
+          const how =
+            hosting.method === 'walk'
+              ? 'found by the parent walk'
+              : `found by its .runner registration matching RUNNER_NAME ${JSON.stringify(kit.env.RUNNER_NAME?.trim())} after the parent walk from PID ${pid} ${walk.stop ?? 'found no runner'}`;
           summary.push(
-            hosting.process && hosting.root !== undefined
-              ? `no other Runner process or actions.runner.* service on the Windows host; excluded the runner hosting this job: ${hosting.process.Name} PID ${hosting.process.ProcessId} under ${hosting.root}`
-              : 'no Runner process or actions.runner.* service on the Windows host; no hosting runner found',
+            `no other Runner process or actions.runner.* service on the Windows host; excluded the runner hosting this job, ${how}: ${hosting.process ? `${named(hosting.process)} under ` : ''}${hosting.root}`,
           );
         });
 

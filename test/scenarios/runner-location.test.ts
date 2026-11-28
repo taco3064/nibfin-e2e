@@ -5,6 +5,7 @@ import type { HostFs } from '../../scenarios/management/host-requirements.ts';
 import { listenerRoot } from '../../scenarios/management/host-requirements.ts';
 import {
   DISCOVER,
+  hostingByRegistration,
   hostingRunner,
   isLinuxOs,
   layoutProblems,
@@ -114,13 +115,95 @@ test('runner location: the hosting runner is the nearest Runner ancestor of this
   const h = hostingRunner(hostedTree(), 400);
   equal(h.process?.ProcessId, 200);
   equal(h.root, HOSTED);
-  deepEqual(hostingRunner([proc(1, 0, 'explorer.exe', null), proc(2, 1, 'node.exe', null)], 2), {});
-  deepEqual(hostingRunner(hostedTree(), 999), {});
+  equal(h.method, 'walk');
+  equal(h.stop, undefined);
+  deepEqual(hostingRunner([proc(1, 0, 'explorer.exe', null), proc(2, 1, 'node.exe', null)], 2), {
+    stop: 'stopped at explorer.exe PID 1: its parent PID 0 is not in the Win32_Process list',
+  });
+  deepEqual(hostingRunner(hostedTree(), 999), {
+    stop: 'this process, PID 999, is not in the Win32_Process list',
+  });
   // A parent cycle stops the walk.
-  deepEqual(hostingRunner([proc(1, 2, 'a.exe', null), proc(2, 1, 'b.exe', null), proc(3, 1, 'node.exe', null)], 3), {});
+  deepEqual(hostingRunner([proc(1, 2, 'a.exe', null), proc(2, 1, 'b.exe', null), proc(3, 1, 'node.exe', null)], 3), {
+    stop: 'stopped at b.exe PID 2: its parent PID 1 was already visited',
+  });
+  const long = Array.from({ length: 70 }, (_, i) => proc(i + 1, i + 2, 'cmd.exe', null));
+  deepEqual(hostingRunner(long, 1), { stop: 'stopped at cmd.exe PID 65 after 64 steps' });
   const empty = hostingRunner([proc(1, 0, 'RUNNER.WORKER.EXE', null), proc(2, 1, 'node.exe', null)], 2);
   equal(empty.process?.ProcessId, 1);
   equal(empty.root, undefined);
+  equal(empty.method, undefined);
+  equal(empty.stop, 'reached RUNNER.WORKER.EXE PID 1, which has no ExecutablePath');
+});
+
+const CACHED = 'C:\\actions-runner\\cached\\2.338.2';
+/** The hosted image's layout: the runner under `cached\\<version>\\bin`, reached through Git Bash and npm. */
+const cachedTree = (gap: boolean) => [
+  proc(4, 0, 'System', null),
+  proc(636, 4, 'Runner.Listener.exe', `${CACHED}\\bin\\Runner.Listener.exe`),
+  proc(3428, 636, 'Runner.Worker.exe', `${CACHED}\\bin\\Runner.Worker.exe`),
+  proc(3500, 3428, 'bash.exe', 'C:\\Program Files\\Git\\bin\\bash.exe'),
+  // With a gap, npm's process has exited and is missing from the list.
+  ...(gap ? [] : [proc(3600, 3500, 'node.exe', 'C:\\hostedtoolcache\\node\\node.exe')]),
+  proc(400, 3600, 'node.exe', 'C:\\hostedtoolcache\\node\\node.exe'),
+];
+const HOSTED_NAME = 'GitHub Actions 1000001234';
+const hostedRunnerFile = (name = HOSTED_NAME) => JSON.stringify({ AgentId: 12, AgentName: name, PoolId: 1 });
+
+test('runner location: the cached runner layout resolves to cached\\<version>', () => {
+  const h = hostingRunner(cachedTree(false), 400);
+  equal(h.process?.ProcessId, 3428);
+  equal(h.root, CACHED);
+  equal(h.method, 'walk');
+});
+
+test('runner location: a missing intermediate parent stops the walk and names where', () => {
+  deepEqual(hostingRunner(cachedTree(true), 400), {
+    stop: 'stopped at node.exe PID 400: its parent PID 3600 is not in the Win32_Process list',
+  });
+});
+
+test('runner location: the registration fallback matches exactly one root by RUNNER_NAME', () => {
+  const files: Record<string, string> = { [`${CACHED}\\.runner`]: `\uFEFF${hostedRunnerFile()}` };
+  const read = (p: string) => files[p];
+  const h = hostingByRegistration(cachedTree(true), ` ${HOSTED_NAME} `, read);
+  equal(h.method, 'registration');
+  equal(h.root, CACHED);
+  equal(h.process?.ProcessId, 636);
+  equal(h.stop, undefined);
+
+  const foreign = 'C:\\Users\\u\\nibfin\\runners\\claude-1';
+  const withForeign = [...cachedTree(true), proc(700, 4, 'Runner.Listener.exe', `${foreign}\\bin\\Runner.Listener.exe`)];
+  files[`${foreign}\\.runner`] = JSON.stringify({ agentName: 'myhost-1a2b3c4d-claude-1', agentId: 3 });
+  equal(hostingByRegistration(withForeign, HOSTED_NAME, read).root, CACHED);
+
+  deepEqual(hostingByRegistration(withForeign, 'other', read), {
+    stop: `RUNNER_NAME "other" matches no registration; registrations read: ${CACHED}\\.runner agentName "${HOSTED_NAME}", ${foreign}\\.runner agentName "myhost-1a2b3c4d-claude-1"`,
+  });
+  // Only agentName is shown, never the other fields.
+  ok(!hostingByRegistration(withForeign, 'other', read).stop?.includes('PoolId'));
+  deepEqual(hostingByRegistration(cachedTree(true), undefined, read), {
+    stop: `RUNNER_NAME is unset; registrations read: ${CACHED}\\.runner agentName "${HOSTED_NAME}"`,
+  });
+  equal(hostingByRegistration(cachedTree(true), '  ', read).root, undefined);
+  deepEqual(hostingByRegistration(cachedTree(true), HOSTED_NAME, () => undefined), {
+    stop: `RUNNER_NAME "${HOSTED_NAME}" matches no registration; registrations read: ${CACHED}\\.runner not readable`,
+  });
+  deepEqual(hostingByRegistration(cachedTree(true), HOSTED_NAME, () => '[1]'), {
+    stop: `RUNNER_NAME "${HOSTED_NAME}" matches no registration; registrations read: ${CACHED}\\.runner not a JSON object`,
+  });
+  // Several roots with the job's name: RUNNER_NAME is not unique, so none is chosen.
+  files[`${foreign}\\.runner`] = hostedRunnerFile();
+  match(
+    hostingByRegistration(withForeign, HOSTED_NAME, read).stop as string,
+    /^RUNNER_NAME "GitHub Actions 1000001234" matches several roots \(C:\\actions-runner\\cached\\2\.338\.2, C:\\Users\\u\\nibfin\\runners\\claude-1\); registrations read: /,
+  );
+  // The roots are compared case-insensitively, so one install is read once.
+  const twice = [...cachedTree(true), proc(800, 4, 'runner.worker.exe', `${CACHED.toUpperCase()}\\BIN\\Runner.Worker.exe`)];
+  equal(hostingByRegistration(twice, HOSTED_NAME, read).root, CACHED);
+  deepEqual(hostingByRegistration([proc(400, 1, 'node.exe', null)], HOSTED_NAME, read), {
+    stop: `RUNNER_NAME "${HOSTED_NAME}" matches no registration; no runner process with an ExecutablePath to read a .runner from`,
+  });
 });
 
 test('runner location: on the Windows host only the hosting runner may run', () => {
@@ -178,6 +261,10 @@ test('runner location: on the Windows host only the hosting runner may run', () 
     winRunnerProblems(hostedTree(), [svc('actions.runner.hosted', `${HOSTED}\\bin\\RunnerService.exe`)], undefined)
       .length,
     3,
+  );
+  match(
+    winRunnerProblems(hostedTree(), [], undefined, 'while nothing was found')[0] as string,
+    /Runner\.Listener\.exe PID 100 from C:\\actions-runner\\bin\\Runner\.Listener\.exe while nothing was found; Runners must/,
   );
 });
 
@@ -303,6 +390,7 @@ interface Opts {
   machine?: string;
   ssh?: (script: string) => { code?: number; stdout?: string; stderr?: string };
   powershell?: { code: number; stdout: string };
+  env?: Record<string, string>;
 }
 
 const linuxShow = (unit: string) =>
@@ -359,7 +447,7 @@ function scenario(o: Opts) {
     },
   });
   for (const r of h.repo(EXEC).runners) r.os = o.os ?? 'Linux';
-  h.kit.env = { HOME: '/h', PATH: '/usr/bin', XDG_RUNTIME_DIR: `/run/user/${UID}` };
+  h.kit.env = { HOME: '/h', PATH: '/usr/bin', XDG_RUNTIME_DIR: `/run/user/${UID}`, ...o.env };
   h.kit.facts = (id) =>
     id === 'nibfin' ? { hostBefore: o.platform === 'linux' ? LINUX_BEFORE : WINDOWS_BEFORE } : undefined;
   const s = runnerLocation(() => h.kit, { fs: o.fs ?? linuxHost(), pid: 400, uid: UID });
@@ -433,7 +521,10 @@ test('runner-location passes on Windows with the Runners in the VM, excluding th
   const { h, run } = scenario({ platform: 'windows' });
   const out = await run();
   equal(out.status, 'passed', out.reason);
-  match(out.reason, /excluded the runner hosting this job: Runner\.Worker\.exe PID 200 under C:\\actions-runner/);
+  match(
+    out.reason,
+    /excluded the runner hosting this job, found by the parent walk: Runner\.Worker\.exe PID 200 under C:\\actions-runner/,
+  );
   match(
     out.reason,
     /Runners nibfin-runner-claude-1\.service, nibfin-runner-claude-2\.service run as systemd user services inside podman machine podman-machine-default under user@1000\.service/,
@@ -451,7 +542,82 @@ test('runner-location passes on Windows with the Runners in the VM, excluding th
 test('runner-location says when no hosting runner was found', async () => {
   const out = await scenario({ platform: 'windows', processes: [proc(400, 1, 'node.exe', 'C:\\n\\node.exe')] }).run();
   equal(out.status, 'passed', out.reason);
-  match(out.reason, /no hosting runner found/);
+  match(
+    out.reason,
+    /no hosting runner found: the parent walk from PID 400 stopped at node\.exe PID 400: its parent PID 1 is not in the Win32_Process list; by registration, RUNNER_NAME is unset; no runner process/,
+  );
+});
+
+const windowsFs = (files: Record<string, string>) =>
+  memFs(Object.fromEntries(Object.entries(files).map(([p, text]) => [p, { text }])));
+
+test('runner-location finds the hosting runner by its registration when the parent walk breaks', async () => {
+  const foreign = 'C:\\Users\\u\\nibfin\\runners\\claude-1\\bin\\Runner.Listener.exe';
+  const out = await scenario({
+    platform: 'windows',
+    processes: cachedTree(true),
+    services: [{ Name: 'actions.runner.hosted', State: 'Running', PathName: `"${CACHED}\\bin\\RunnerService.exe"` }],
+    fs: windowsFs({ [`${CACHED}\\.runner`]: hostedRunnerFile() }),
+    env: { RUNNER_NAME: HOSTED_NAME },
+  }).run();
+  equal(out.status, 'passed', out.reason);
+  match(
+    out.reason,
+    /excluded the runner hosting this job, found by its \.runner registration matching RUNNER_NAME "GitHub Actions 1000001234" after the parent walk from PID 400 stopped at node\.exe PID 400: its parent PID 3600 is not in the Win32_Process list: Runner\.Listener\.exe PID 636 under C:\\actions-runner\\cached\\2\.338\.2/,
+  );
+
+  // A foreign runner process or service is still reported when the root came from the fallback.
+  const withForeign = await scenario({
+    platform: 'windows',
+    processes: [...cachedTree(true), proc(700, 4, 'Runner.Listener.exe', foreign)],
+    services: [{ Name: 'actions.runner.o-exec.h', State: 'Running', PathName: 'C:\\nibfin\\bin\\RunnerService.exe' }],
+    fs: windowsFs({ [`${CACHED}\\.runner`]: hostedRunnerFile() }),
+    env: { RUNNER_NAME: HOSTED_NAME },
+  }).run();
+  equal(withForeign.status, 'failed');
+  match(
+    withForeign.reason,
+    /R5\.10: Windows host runs Runner\.Listener\.exe PID 700 from C:\\Users\\u\\nibfin\\runners\\claude-1\\bin\\Runner\.Listener\.exe outside C:\\actions-runner\\cached\\2\.338\.2, the runner hosting this job/,
+  );
+  match(
+    withForeign.reason,
+    /R5\.10: Windows service actions\.runner\.o-exec\.h \(Running\) runs C:\\nibfin\\bin\\RunnerService\.exe outside C:\\actions-runner\\cached\\2\.338\.2/,
+  );
+  ok(!/PID 636 from|PID 3428 from/.test(withForeign.reason), withForeign.reason);
+});
+
+test('runner-location names what the walk and the registrations saw when neither finds the hosting runner', async () => {
+  const walkStop = 'the parent walk from PID 400 stopped at node\\.exe PID 400: its parent PID 3600 is not in the Win32_Process list';
+  const cases: [Record<string, string>, Record<string, string>, string][] = [
+    [{ [`${CACHED}\\.runner`]: hostedRunnerFile() }, { RUNNER_NAME: 'other' }, 'RUNNER_NAME "other" matches no registration; registrations read: C:\\\\actions-runner\\\\cached\\\\2\\.338\\.2\\\\\\.runner agentName "GitHub Actions 1000001234"'],
+    [{}, { RUNNER_NAME: HOSTED_NAME }, 'RUNNER_NAME "GitHub Actions 1000001234" matches no registration; registrations read: C:\\\\actions-runner\\\\cached\\\\2\\.338\\.2\\\\\\.runner not readable'],
+    [{ [`${CACHED}\\.runner`]: hostedRunnerFile() }, {}, 'RUNNER_NAME is unset; registrations read: '],
+  ];
+  for (const [files, env, want] of cases) {
+    const out = await scenario({ platform: 'windows', processes: cachedTree(true), fs: windowsFs(files), env }).run();
+    equal(out.status, 'failed');
+    match(out.reason, new RegExp(`R5\\.10: no runner hosting this job found on the Windows host: ${walkStop}; by registration, ${want}`));
+    match(
+      out.reason,
+      /R5\.10: Windows host runs Runner\.Listener\.exe PID 636 from C:\\actions-runner\\cached\\2\.338\.2\\bin\\Runner\.Listener\.exe while the runner hosting this job was found by neither the parent walk nor its \.runner registration; Runners must run inside the podman machine VM/,
+    );
+    match(out.reason, /Runner\.Worker\.exe PID 3428 from .* while the runner hosting this job was found by neither/);
+  }
+
+  // Duplicate match: two installs both name RUNNER_NAME, so neither is excluded.
+  const other = 'C:\\r2';
+  const dup = await scenario({
+    platform: 'windows',
+    processes: [...cachedTree(true), proc(900, 4, 'Runner.Listener.exe', `${other}\\bin\\Runner.Listener.exe`)],
+    fs: windowsFs({ [`${CACHED}\\.runner`]: hostedRunnerFile(), [`${other}\\.runner`]: hostedRunnerFile() }),
+    env: { RUNNER_NAME: HOSTED_NAME },
+  }).run();
+  equal(dup.status, 'failed');
+  match(
+    dup.reason,
+    /by registration, RUNNER_NAME "GitHub Actions 1000001234" matches several roots \(C:\\actions-runner\\cached\\2\.338\.2, C:\\r2\)/,
+  );
+  match(dup.reason, /Runner\.Listener\.exe PID 900 from C:\\r2\\bin\\Runner\.Listener\.exe while the runner hosting this job/);
 });
 
 test('runner-location fails on Windows naming the host Runner, service, VM and registration', async () => {
