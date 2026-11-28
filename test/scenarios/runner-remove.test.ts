@@ -39,6 +39,15 @@ test('startTasksToCheck: with no record, or only a read error, a new start task 
   });
 });
 
+test('startTasksToCheck: a new task that runs podman machine start through conhost --headless is checked', () => {
+  const fresh = [
+    other('\\Nibfin podman machine', 'conhost.exe', `--headless ${PODMAN} machine start podman-machine-default`),
+  ];
+  deepEqual(startTasksToCheck({ present: ['\\Nibfin podman machine'], fresh }), { tasks: ['\\Nibfin podman machine'] });
+  const stop = [other('\\stop', 'conhost.exe', `--headless "${PODMAN}" machine stop`)];
+  deepEqual(startTasksToCheck({ present: ['\\stop'], fresh: stop }), { missing: 'none' });
+});
+
 test('startTasksToCheck: a new non-podman task is not taken as the start task', () => {
   const fresh = [
     other('\\a', 'C:\\x.exe', 'machine start'),

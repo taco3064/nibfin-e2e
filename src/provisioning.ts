@@ -28,7 +28,7 @@ import type { Platform, ProvisioningStep, RunContext, StepOutcome } from './type
 import { createKit } from '../scenarios/lib/kit.ts';
 import { runObservedJob } from '../scenarios/lib/observed.ts';
 import type { StartTaskRecord, TaskSeen } from '../scenarios/lib/github.ts';
-import { startTask } from '../scenarios/management/podman-machine-detached.ts';
+import { startTask } from '../scenarios/lib/start-task.ts';
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
