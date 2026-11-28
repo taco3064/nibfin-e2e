@@ -1,8 +1,8 @@
-// How the Deliver running when `pending` was added ended, and what `pending` let through
-// (Issue #665, Proposal R4.13, R4.10).
+// How the Deliver running when `pending` was added ended: it must open its PR before
+// `pending` holds P (Issue #665, #715, Proposal R4.13, R4.10).
 import { deepEqual, equal, match } from 'node:assert/strict';
 import { test } from 'node:test';
-import { branchPr, dispatchedWhilePending, pendingOutcome, prTestFault, prTestState } from '../../scenarios/lifecycle/journeys.ts';
+import { branchPr, pendingOutcome, prTestFault, prTestState } from '../../scenarios/lifecycle/journeys.ts';
 
 const done = {
   id: 7,
@@ -19,14 +19,26 @@ const base = {
   shaped: true,
   job: done,
   runCompleted: true,
+  pendingAt: Date.parse('2026-11-20T10:05:00Z'),
 };
 
-test('a deliver job that succeeded in a completed run without a PR is held on that first judgment', () => {
-  deepEqual(pendingOutcome(base), { kind: 'held', completedAt: Date.parse(done.completed_at) });
-  deepEqual(pendingOutcome({ ...base, sendBackExpected: true }), {
-    kind: 'held',
-    completedAt: Date.parse(done.completed_at),
-  });
+test('a deliver job that succeeded in a completed run without a PR is an R4.13 fault on that first judgment', () => {
+  for (const sendBackExpected of [false, true]) {
+    const o = pendingOutcome({ ...base, sendBackExpected });
+    equal(o?.kind, 'fault');
+    const reason = o?.kind === 'fault' ? o.reason : '';
+    match(reason, /^R4\.13: the running Deliver stopped before opening its PR: /);
+    match(
+      reason,
+      /deliver job 7 succeeded without a PR while pending was on \(started 2026-11-20T10:00:00Z, completed 2026-11-20T10:20:00Z\)$/,
+    );
+  }
+});
+
+test('a deliver job that completed at or before pending was added, without a PR, is R4.13 not exercised', () => {
+  const reason = "R4.13: not exercised: P's deliver job 7 completed before pending was added, without a PR";
+  deepEqual(pendingOutcome({ ...base, pendingAt: Date.parse(done.completed_at) }), { kind: 'fault', reason });
+  deepEqual(pendingOutcome({ ...base, pendingAt: Date.parse('2026-11-20T10:30:00Z') }), { kind: 'fault', reason });
 });
 
 test('a running job or an unfinished run keeps the wait going', () => {
@@ -64,28 +76,6 @@ test('a deliver job that failed while pending was on is a named fault', () => {
 
 test('P closed while pending was on is a fault', () => {
   deepEqual(pendingOutcome({ ...base, open: false }), { kind: 'fault', reason: 'P closed while pending was on' });
-});
-
-test('runs created while pending was on, other than the held one, are named', () => {
-  const pendingAt = Date.parse('2026-11-20T10:05:00Z');
-  const runs = [
-    { id: 1, stage: 'deliver' as const, created_at: '2026-11-20T09:59:00Z' },
-    { id: 2, stage: 'deliver' as const, created_at: '2026-11-20T10:06:00Z' },
-    { id: 3, stage: 'review' as const, created_at: '2026-11-20T10:07:00Z' },
-    { id: 4, stage: 'deliver' as const, created_at: '2026-11-20T10:05:30Z' },
-  ];
-  deepEqual(dispatchedWhilePending(runs, pendingAt, 4), [
-    'deliver run 2 created 2026-11-20T10:06:00Z',
-    'review run 3 created 2026-11-20T10:07:00Z',
-  ]);
-});
-
-test('no run created while pending was on passes', () => {
-  deepEqual(dispatchedWhilePending([], 0, 1), []);
-  deepEqual(
-    dispatchedWhilePending([{ id: 1, stage: 'deliver', created_at: '2026-11-20T09:59:00Z' }], Date.parse('2026-11-20T10:05:00Z'), 9),
-    [],
-  );
 });
 
 // Only an open PR is P's PR once `pending` is on, and the PR test wait ends with a named
