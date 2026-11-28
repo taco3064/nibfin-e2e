@@ -132,8 +132,9 @@ async function checkLoginContainer(
       pass: `R6.11 (Codex branch; Claude /login not exercised): login container ${shortId(match.id)} from ${ref} (image ${match.imageName || '(none)'}) ran "${match.argv.join(' ')}" with OpenStdin=${match.openStdin} Tty=${match.tty}`,
     };
   }
-  // A login-shaped candidate from another image may only mean GHCR :main moved after
-  // init; loginVerdict calls it run state only when it is proven to be from :main.
+  // A login-shaped candidate from another image is read against GHCR :main only to name
+  // the cause; loginVerdict reports it as an R6.11 failure even when it is from the
+  // current :main, because the login must run in the Jobs' image.
   let current: CurrentMain | undefined;
   if (sample.seen.some((c) => otherImageLogin(c, image.id))) {
     try {

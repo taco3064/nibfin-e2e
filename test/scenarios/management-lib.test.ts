@@ -852,7 +852,7 @@ test('shapeMiss holds the misses of loginMiss except the image id', () => {
   equal(loginMiss(login(), JOB_IMAGE), undefined);
 });
 
-test('loginVerdict: run state only for a login-shaped candidate proven to be from a moved :main; the observation always stays', async () => {
+test("loginVerdict: a login-shaped candidate from any image other than the Jobs', even a moved :main, is an R6.11 failure; the observation always stays", async () => {
   const CUR_IMAGE = 'd'.repeat(64);
   const D3 = 'sha256:' + '3'.repeat(64);
   const ref = `ghcr.io/taco3064/nibfin@${D1}`;
@@ -869,19 +869,20 @@ test('loginVerdict: run state only for a login-shaped candidate proven to be fro
   // Proven by the container's ImageDigest.
   const byDigest = login({ id: '7'.repeat(64), image: CUR_IMAGE, digest: D2 });
   const rs = verdict({ seen: [byDigest], current: { digest: await mainDigest(ghcr(D2)) } });
+  match(rs, r611);
+  equal(rs.startsWith('run state:'), false, rs);
   match(
     rs,
-    /^run state: precondition not reached: GHCR :main is sha256:2+, init resolved sha256:1+; a newer main image appeared after init and login candidate container 777777777777 /,
-  );
-  match(
-    rs,
-    /; observed: container 777777777777 .*: image id differs from the Jobs' image id aaaaaaaaaaaa within 60 s$/,
+    /; observed: container 777777777777 .*: image id differs from the Jobs' image id aaaaaaaaaaaa within 60 s \(GHCR :main is sha256:2+, init resolved sha256:1+; login candidate container 777777777777 image ghcr\.io\/taco3064\/nibfin:main \(sha256:2+, id dddddddddddd\) .* is from the current :main, not from the Jobs' image ghcr\.io\/taco3064\/nibfin@sha256:1+\)$/,
   );
   // Proven by the local image id of ghcr.io/taco3064/nibfin@<current>, with a platform digest.
   const byId = login({ id: '8'.repeat(64), image: CUR_IMAGE, digest: D3 });
+  const rsId = verdict({ seen: [byId], current: { digest: D2, imageId: `sha256:${CUR_IMAGE}` } });
+  match(rsId, r611);
+  equal(rsId.startsWith('run state:'), false, rsId);
   match(
-    verdict({ seen: [byId], current: { digest: D2, imageId: `sha256:${CUR_IMAGE}` } }),
-    /^run state: precondition not reached: GHCR :main is sha256:2+, init resolved sha256:1+; .*login candidate container 888888888888 .*observed: container 888888888888 /,
+    rsId,
+    /observed: container 888888888888 .* within 60 s \(GHCR :main is sha256:2+, init resolved sha256:1+; login candidate container 888888888888 image ghcr\.io\/taco3064\/nibfin:main \(sha256:3+, id dddddddddddd\) .* is from the current :main, not from the Jobs' image /,
   );
 
   // From neither the Jobs' image nor the current :main.
@@ -892,7 +893,7 @@ test('loginVerdict: run state only for a login-shaped candidate proven to be fro
     neither,
     /observed: container 999999999999 .*: image id differs .* within 60 s \(GHCR :main is sha256:2+, init resolved sha256:1+; no login candidate is from it\)$/,
   );
-  // Current image not present locally and the digest differs: never run state.
+  // Current image not present locally and the digest differs: no candidate is proven from it.
   match(verdict({ seen: [byId], current: { digest: D2 } }), r611);
 
   // :main has not moved.
