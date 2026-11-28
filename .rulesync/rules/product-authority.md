@@ -18,9 +18,15 @@ https://app.notion.com/p/40006b644a2080dab1a8c2e562f95373
   (Authority), Shapes, reviews and e2e coverage maps. Older references such as
   "Proposal §5" mean that whole section of this page.
 - Rule ids are never reused or renumbered, so an id keeps pointing at the same
-  rule after edits. A rule ending in 〔不測：…〕 is not covered by e2e; every
-  other rule is. The reasons and decision history sit in each section's 紀錄
+  rule after edits. The reasons and decision history sit in each section's 紀錄
   toggle and are not rules.
+- The Proposal does not say which rules e2e covers. nibfin-e2e's coverage map
+  decides that and records why a rule is not covered (Proposal R8.15); ignore
+  any 〔不測：…〕 mark still left on a rule or quoted in an Issue. e2e covers
+  only what users operate directly: `gh nibfin` commands, install and removal,
+  the Dashboard, the website, collaborator Runners and the configuration users
+  write themselves.
+  Nibfin's automatic workflow is verified by Nibfin's own development.
 - Its child pages are not product rules: 進度 is the progress log, Nibfin 自身
   Repository 的使用設定 is how Nibfin's own repositories are set up, and the
   封存 pages are archives for history only. None of them override the main page.
