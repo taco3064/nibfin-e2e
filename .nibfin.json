@@ -1,0 +1,5 @@
+{
+  "skills": {
+    "scope": { "mode": "extend", "path": ".nibfin/e2e-coverage-scope.md" }
+  }
+}
