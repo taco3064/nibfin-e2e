@@ -1,10 +1,14 @@
-import { deepEqual, equal, match } from 'node:assert/strict';
+import { deepEqual, equal, match, rejects } from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  SETTLE_MS,
   behindProblems,
   conflictProblems,
+  conflictWindow,
   mergeMethod,
   notExercisedWhy,
+  seenRuns,
+  settledMergeable,
 } from '../../scenarios/lifecycle/review-rebase.ts';
 import type { RebaseEvidence } from '../../scenarios/lifecycle/review-rebase.ts';
 
@@ -68,7 +72,7 @@ test('conflictProblems passes review, then Deliver, a force push and a merged he
   const ok = evidence({
     delivers: [
       { id: 1, started_at: iso(-30) },
-      { id: 2, started_at: iso(12) },
+      { id: 2, started_at: iso(12), reason: 'conflict' },
     ],
     runs: [
       { id: 3, stage: 'review', created_at: iso(-20) },
@@ -80,7 +84,7 @@ test('conflictProblems passes review, then Deliver, a force push and a merged he
   deepEqual(conflictProblems(ok), []);
 });
 
-test('conflictProblems requires a review run between the conflict and the Deliver', () => {
+test('conflictProblems fails a first Deliver with no REASON and names it', () => {
   const late = evidence({
     delivers: [{ id: 2, started_at: iso(12) }],
     runs: [
@@ -91,7 +95,9 @@ test('conflictProblems requires a review run between the conflict and the Delive
     descends: true,
   });
   deepEqual(conflictProblems(late), [
-    'no review or finish run of o/exec#7 was created between the conflicting commit and deliver job 2 (REASON unknown, started ' +
+    'the first deliver job 2 of o/exec#7 after the conflicting commit ' +
+      'a'.repeat(40) +
+      ' carries REASON unknown, not a conflict rebase (conflict or rebase) (started ' +
       iso(12) +
       '); stage runs in that window: none',
   ]);
@@ -148,29 +154,109 @@ test('conflictProblems still passes with only a review run in the window', () =>
       conflicted([
         { id: 4, stage: 'review', created_at: iso(5) },
         { id: 6, stage: 'finish', created_at: iso(15) },
-      ]),
+      ], 'conflict'),
     ),
     [],
   );
 });
 
-test('conflictProblems fails with only a route run in the window and names it and the Deliver REASON', () => {
-  const problems = conflictProblems(
-    conflicted(
-      [
-        { id: 3, stage: 'review', created_at: iso(-20) },
-        { id: 9, stage: 'route', created_at: iso(4) },
-        { id: 10, stage: 'finish', created_at: iso(13) },
-      ],
-      'rebase',
+test('conflictProblems passes with only a route run before a Deliver with REASON conflict (R4.35)', () => {
+  deepEqual(
+    conflictProblems(
+      conflicted(
+        [
+          { id: 3, stage: 'review', created_at: iso(-20) },
+          { id: 9, stage: 'route', created_at: iso(4) },
+          { id: 10, stage: 'finish', created_at: iso(13) },
+        ],
+        'conflict',
+      ),
     ),
+    [],
   );
-  deepEqual(problems, [
-    'no review or finish run of o/exec#7 was created between the conflicting commit and deliver job 2 (REASON rebase, started ' +
+});
+
+test('conflictProblems fails a first Deliver with another REASON and names the job and the stage runs', () => {
+  deepEqual(conflictProblems(conflicted([{ id: 4, stage: 'review', created_at: iso(5) }], 'ci-failure')), [
+    'the first deliver job 2 of o/exec#7 after the conflicting commit ' +
+      'a'.repeat(40) +
+      ' carries REASON ci-failure, not a conflict rebase (conflict or rebase) (started ' +
       iso(12) +
-      '); stage runs in that window: 9 route ' +
-      iso(4),
+      '); stage runs in that window: 4 review ' +
+      iso(5),
   ]);
+});
+
+test('conflictProblems names an unreadable REASON', () => {
+  const problems = conflictProblems(conflicted([], 'unreadable: boom'));
+  equal(problems.length, 1);
+  match(problems[0] as string, /deliver job 2 .* carries REASON unreadable: boom, not a conflict rebase/);
+});
+
+test('conflictWindow takes the earliest Deliver after the commit and the runs up to its start', () => {
+  const e = evidence({
+    delivers: [
+      { id: 1, started_at: iso(-30) },
+      { id: 5, started_at: iso(20), reason: 'review' },
+      { id: 2, started_at: iso(12), reason: 'conflict' },
+    ],
+    runs: [
+      { id: 3, stage: 'review', created_at: iso(-20) },
+      { id: 9, stage: 'route', created_at: iso(4) },
+      { id: 10, stage: 'finish', created_at: iso(13) },
+    ],
+  });
+  const w = conflictWindow(e);
+  equal(w.first?.id, 2);
+  equal(seenRuns(w.runs), `9 route ${iso(4)}`);
+  deepEqual(conflictWindow(evidence()), { runs: [] });
+  equal(seenRuns([]), 'none');
+});
+
+/** A fake clock whose sleep advances it. */
+const clock = () => {
+  let t = 0;
+  return { now: () => t, sleep: async (ms: number) => void (t += ms) };
+};
+
+test('settledMergeable settles on the second read', async () => {
+  const values = [{ mergeable: null, mergeable_state: 'unknown' }, { mergeable: false, mergeable_state: 'dirty' }];
+  let i = 0;
+  const got = await settledMergeable(async () => values[Math.min(i++, 1)] as (typeof values)[number], clock());
+  deepEqual(got, { mergeable: false, state: 'dirty', reads: 2, settled: true });
+});
+
+test('settledMergeable returns the last value unsettled once the bound passes', async () => {
+  const c = clock();
+  const got = await settledMergeable(async () => ({ mergeable: null, mergeable_state: 'unknown' }), c);
+  equal(got.settled, false);
+  equal(got.mergeable, null);
+  equal(got.state, 'unknown');
+  equal(got.reads, 7);
+  equal(c.now() <= SETTLE_MS, true);
+});
+
+test('settledMergeable retries a read that throws', async () => {
+  let i = 0;
+  const got = await settledMergeable(async () => {
+    if (i++ === 0) throw new Error('boom');
+    return { mergeable: true, mergeable_state: 'behind' };
+  }, clock());
+  deepEqual(got, { mergeable: true, state: 'behind', reads: 2, settled: true });
+});
+
+test('settledMergeable names a read that keeps failing', async () => {
+  const got = await settledMergeable(async () => {
+    throw new Error('boom');
+  }, clock());
+  equal(got.settled, false);
+  equal(got.error, 'boom');
+});
+
+test('settledMergeable still propagates an abort', async () => {
+  const ac = new AbortController();
+  ac.abort(new Error('stopped'));
+  await rejects(settledMergeable(async () => ({ mergeable: null }), { ...clock(), signal: ac.signal }), /stopped/);
 });
 
 test('notExercisedWhy: a finish run alone does not exercise the behind half', () => {
