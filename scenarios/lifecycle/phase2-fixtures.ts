@@ -16,7 +16,7 @@ import {
 } from './analysis.ts';
 import type { Issue, Job, Pull, Run, Stage } from './analysis.ts';
 import { DIRECT_READ_MS } from './journeys.ts';
-import { DEADLINE, changeRequest, lifecycle, redact } from './kit.ts';
+import { AFTER_DELIVERED, DEADLINE, changeRequest, lifecycle, redact } from './kit.ts';
 import type { Kit } from './kit.ts';
 import { PENDING_MARKER } from './marks.ts';
 import type { Snapshot } from './observe.ts';
@@ -152,6 +152,7 @@ export async function shapeLive(
     }
   };
   return k.obs.until("M2's shape run or job to be queued or running", fn, o.deadlineMs, o.show, {
+    ...k.about(k.exec, n),
     gonePast: k.stageGone(k.exec, n, 'shape', { jobs: false }),
   });
 }
@@ -192,6 +193,9 @@ export function dispatchedBefore(deliver: Job & { run: Run }, reassignedAt: numb
   return `M2's deliver job ${deliver.id} (run ${deliver.run.id}, created ${deliver.run.created_at}, job started ${String(deliver.started_at)}) was dispatched before the reassignment at ${new Date(reassignedAt).toISOString()}, so it could not use the new list`;
 }
 
+/** Why M2's waits between Nibfin's `pause` for the collaborator and the scenario's removal of it do not end on it (Proposal R4.26). */
+const ROUTING_PAUSE = 'Nibfin adds pause for the collaborator assigned first, and the scenario removes it after shaped';
+
 export const assigneeRouting: Scenario = lifecycle({
   id: 'assignee-routing',
   concurrent: true,
@@ -227,6 +231,8 @@ export const assigneeRouting: Scenario = lifecycle({
         (s) => (k.stages(s, exec, m1.number, ['route']).some((r) => r.status === 'completed') ? true : undefined),
         DEADLINE.event,
         k.show(exec, m1.number),
+        // R4.22 judges a pause on M1 once its runs settled, so a pause does not end this wait.
+        { ...k.about(exec, m1.number), expects: { pause: 'R4.22 checks for pause on M1 after its runs settle' } },
       );
       const s1 = await k.settle('M1 routed', m1At, k.runsOf(exec, m1.number));
       c.check(
@@ -259,9 +265,7 @@ export const assigneeRouting: Scenario = lifecycle({
               .sort((a, b) => time(a.started_at) - time(b.started_at))[0],
           DEADLINE.stage,
           show,
-          {
-            gonePast: k.stageGone(exec, n, 'deliver', { jobs: false }),
-          },
+          { ...k.about(exec, n), gonePast: k.stageGone(exec, n, 'deliver', { jobs: false }) },
         );
       if (seen.kind === 'missed' && seen.deliver) {
         k.ctx.log(
@@ -288,6 +292,7 @@ export const assigneeRouting: Scenario = lifecycle({
         },
         DEADLINE.stage,
         show,
+        { ...k.about(exec, n), expects: { pause: ROUTING_PAUSE } },
       );
       if (seen.kind === 'missed') c.notExercised('R4.24', shapeMissedNote(seen));
       else {
@@ -306,6 +311,7 @@ export const assigneeRouting: Scenario = lifecycle({
           },
           DEADLINE.stage,
           show,
+          { ...k.about(exec, n), expects: { pause: ROUTING_PAUSE } },
         );
         if ('run' in shape) {
           const statuses =
@@ -330,6 +336,7 @@ export const assigneeRouting: Scenario = lifecycle({
         (s) => (k.labels(s, exec, n).includes('shaped') ? true : undefined),
         DEADLINE.event,
         show,
+        { ...k.about(exec, n), expects: { pause: ROUTING_PAUSE } },
       );
       // removeLabel accepts a 404, so read whether pause was on just before the removal.
       const { data: beforeRemoval } = await k.gh.rest<Issue>('GET', `/repos/${exec}/issues/${n}`);
@@ -500,12 +507,13 @@ export const peerDispatch: Scenario = lifecycle({
         },
         DEADLINE.delivery,
         show,
-        { gonePast: k.stageGone(peer, n, 'deliver', { jobs: false }) },
+        { ...k.about(peer, n), gonePast: k.stageGone(peer, n, 'deliver', { jobs: false }) },
       );
       const conflict = await writeConflict(k, peer, branch, trigger === 'merged');
       if (!conflict) c.notExercised('R3.18', 'the PR merged before the first observed push');
 
       await k.obs.until('Q to close with delivered', (s) => k.delivered(s, peer, n), DEADLINE.delivery, show, {
+        ...k.about(peer, n),
         gonePast: k.closeGone(peer, n),
       });
       const s = await k.obs.fresh();
@@ -662,6 +670,10 @@ export const protectedPaths: Scenario = lifecycle({
           },
           DEADLINE.delivery,
           k.show(exec, f.n),
+          {
+            ...k.about(exec, f.n),
+            expects: { pending: 'a request to change a protected path stops with pending (Proposal R3.47)' },
+          },
         );
       }
       const branches = (await k.gh.list<{ name: string }>(`/repos/${exec}/branches`)).map((b) => b.name);
@@ -798,7 +810,7 @@ export const fixLoops: Scenario = lifecycle({
       const show = k.show(exec, n);
       // F getting pending, or closing, ends every wait up to its closure (R4.3, R4.5);
       // the fix waits also end once a fix deliver job for their reason did not succeed.
-      const gone = { gonePast: k.closeGone(exec, n) };
+      const gone = { ...k.about(exec, n), gonePast: k.closeGone(exec, n) };
       const headsAfter: { reason: string; prHead: string; branchHead: string }[] = [];
       const readHeads = async (reason: string, pr: number) => {
         const { data: p } = await k.gh.rest<Pull>('GET', `/repos/${exec}/pulls/${pr}`);
@@ -836,7 +848,7 @@ export const fixLoops: Scenario = lifecycle({
         (s) => fixJob(k, s, n, 'ci-failure'),
         DEADLINE.stage,
         show,
-        { gonePast: fixGone(k, n, 'ci-failure') },
+        { ...k.about(exec, n), gonePast: fixGone(k, n, 'ci-failure') },
       );
       await readHeads('ci-failure', pr1.number);
 
@@ -872,7 +884,7 @@ export const fixLoops: Scenario = lifecycle({
           (s) => fixJob(k, s, n, 'review', at),
           DEADLINE.stage,
           show,
-          { gonePast: fixGone(k, n, 'review', at) },
+          { ...k.about(exec, n), gonePast: fixGone(k, n, 'review', at) },
         );
         await readHeads('review', pr1.number);
         const merged1 = await k.obs.until(
@@ -944,7 +956,7 @@ export const fixLoops: Scenario = lifecycle({
         (s) => fixJob(k, s, n, 'cd-failure'),
         DEADLINE.stage,
         show,
-        { gonePast: fixGone(k, n, 'cd-failure') },
+        { ...k.about(exec, n), gonePast: fixGone(k, n, 'cd-failure') },
       );
       const pr2 = await k.obs.until(
         'a new fix PR for F',
@@ -996,7 +1008,7 @@ export const fixLoops: Scenario = lifecycle({
         },
         DEADLINE.event,
         show,
-        { gonePast: pendingGone(k, exec, n) },
+        { ...k.about(exec, n), expects: { closed: AFTER_DELIVERED }, gonePast: pendingGone(k, exec, n) },
       );
       for (const d of deletions)
         c.check(

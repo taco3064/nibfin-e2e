@@ -22,7 +22,7 @@ import {
 import type { Issue, Job, Run, Stage, Window } from './analysis.ts';
 import { AUTO_CLEARED_CLASSES, briefRecord, pendingAddedAt, resolutionRecord } from '../lib/resolution.ts';
 import { Observer } from './observe.ts';
-import type { Snapshot } from './observe.ts';
+import type { Expects, IssueRef, Snapshot } from './observe.ts';
 
 const MIN = 60_000;
 
@@ -54,6 +54,8 @@ export const PUBLISH_GRACE = DEADLINE.quiet;
  * below `STALL`, so on a quiet sandbox the named reason comes before the stall message.
  */
 export const REPAIR_GRACE = 10 * MIN;
+/** Why a wait after the Issue closed with `delivered` (such as one for its branch deletions) does not end on the closure. */
+export const AFTER_DELIVERED = 'it runs after the Issue closed with delivered';
 /** The characters of a Nibfin comment one full quote keeps; longer text is cut at its end. */
 export const QUOTE_LIMIT = 1500;
 
@@ -170,6 +172,13 @@ export class Kit {
   readonly sleep: ((ms: number) => Promise<void>) | undefined;
   private lock: Promise<unknown> = Promise.resolve();
   private readonly memos = new Map<string, Promise<unknown>>();
+  /**
+   * The harness's own `pause`, by "repo#n": `on` from just before the harness adds it,
+   * `offAt` once its removal returned. The hold check exempts the harness's own `pause`
+   * (the timeline cannot tell, since the harness may act with the Owner's token). It
+   * lives in memory: concurrent scenarios of one run share the kit and so the record.
+   */
+  private readonly ownPause = new Map<string, { on: boolean; offAt?: number }>();
 
   constructor(ctx: RunContext, opts: KitOptions = {}) {
     this.ctx = ctx;
@@ -189,6 +198,7 @@ export class Kit {
       log: ctx.log,
       signal: ctx.signal,
       stallMs: opts.stallMs ?? STALL,
+      held: (s, i, e) => this.heldReason(s, i.repo, i.n, e),
     });
   }
 
@@ -223,16 +233,26 @@ export class Kit {
       labels: spec.labels ?? [],
       assignees: spec.assignees ?? [],
     });
+    if (spec.labels?.includes('pause')) this.ownPause.set(`${repo}#${data.number}`, { on: true });
     this.ctx.log(`${spec.scenario}: filed ${repo}#${data.number} ${spec.title}`);
     return data;
   }
 
   async addLabels(repo: string, n: number, labels: string[]): Promise<void> {
+    // Recorded before the write, so no snapshot shows the harness's `pause` ahead of the record.
+    if (labels.includes('pause')) this.ownPause.set(`${repo}#${n}`, { on: true });
     await this.gh.rest('POST', `/repos/${repo}/issues/${n}/labels`, { labels });
   }
 
   async removeLabel(repo: string, n: number, label: string): Promise<void> {
     await this.gh.rest('DELETE', `/repos/${repo}/issues/${n}/labels/${encodeURIComponent(label)}`, undefined, [404]);
+    if (label === 'pause') this.ownPause.set(`${repo}#${n}`, { on: false, offAt: this.now() });
+  }
+
+  /** Whether a `pause` the snapshot shows on the Issue is the harness's own: on, or its removal returned no earlier than the read began. */
+  private ownPauseOn(s: Snapshot, repo: string, n: number): boolean {
+    const r = this.ownPause.get(`${repo}#${n}`);
+    return r !== undefined && (r.on || (r.offAt !== undefined && s.startedAt <= r.offAt));
   }
 
   /** Adds `pause` to the given Issues that are still open; used in `finally`, so it never throws. */
@@ -420,6 +440,12 @@ export class Kit {
     }));
   }
 
+  /** The `issues` option of a wait on the progress of these Issues of `repo`, so the hold check judges each. */
+  about(repo: string, ...numbers: [number, ...number[]]): { issues: [IssueRef, ...IssueRef[]] } {
+    const [first, ...rest] = numbers;
+    return { issues: [{ repo, n: first }, ...rest.map((n) => ({ repo, n }))] };
+  }
+
   /** Jobs of the Issue's finish runs, each with its window (`undefined` when no runner took it). */
   async finishJobs(s: Snapshot, repo: string, n: number): Promise<FinishJob[]> {
     return this.windowedJobs(s, repo, n, ['finish']);
@@ -463,7 +489,7 @@ export class Kit {
         const open = s.runs.filter((r) => scope(r) && time(r.created_at) >= after && r.status !== 'completed');
         return `still running: ${open.map((r) => `${r.display_title} (${r.status})`).join(', ') || 'nothing (waiting for the quiet period)'}`;
       },
-      { quiet: true },
+      { quiet: true, noIssue: 'it waits for runs to complete, which no hold of an Issue stops' },
     );
   }
 
@@ -484,16 +510,16 @@ export class Kit {
   ): (s: Snapshot) => Promise<string | undefined> {
     const since = opts.since ?? this.now() - MIN;
     const name = repo === this.exec ? `#${n}` : `${repo}#${n}`;
+    // `pause` is the shared wait's to judge (`heldReason`); this check keeps to closure, `pending` and the stage.
+    const expects: Expects = {
+      pause: 'stageGone judges only closure, pending and the stage',
+      ...(opts.allowPending ? { pending: 'the caller allows pending' } : {}),
+    };
     return async (s) => {
       const reason = await (async () => {
         const i = this.issue(s, repo, n);
-        if (i?.state === 'closed') {
-          const delivered = i.labels.some((l) => l.name === 'delivered');
-          if (delivered || !(s.at - time(i.closed_at) < CLOSE_GRACE))
-            return `${name} is closed (${i.state_reason ?? 'no reason'})${delivered ? ' with delivered' : ' without delivered'}`;
-        }
-        if (!opts.allowPending && i?.labels.some((l) => l.name === 'pending'))
-          return this.pendingReason(s, repo, n, name);
+        const held = await this.hold(s, repo, n, expects);
+        if (held !== undefined) return held;
         if (opts.jobs === false) return undefined;
         const later = this.stages(s, repo, n, AGENT_STAGES).filter((r) => r.stage !== stage);
         for (const j of await this.agentJobs(s, repo, n, [stage])) {
@@ -516,6 +542,35 @@ export class Kit {
       })();
       return reason === undefined ? undefined : redact(reason, this.ctx.secretValues());
     };
+  }
+
+  /**
+   * The shared hold check of every lifecycle wait naming the Issue (the observer's `held`):
+   * why the Issue's progress is held and the wait can no longer succeed, unless `expects`
+   * names that hold (Proposal R4.12, R4.13, R1.14). The Issue is closed (with `delivered`,
+   * or past `CLOSE_GRACE` without it); it has `pending` the repair stage is not clearing
+   * automatically (`pendingReason`), whoever added it; or it has `pause` the harness did
+   * not add. Undefined when the snapshot does not show the Issue; secrets are redacted.
+   */
+  async heldReason(s: Snapshot, repo: string, n: number, expects: Expects): Promise<string | undefined> {
+    const reason = await this.hold(s, repo, n, expects);
+    return reason === undefined ? undefined : redact(reason, this.ctx.secretValues());
+  }
+
+  private async hold(s: Snapshot, repo: string, n: number, expects: Expects): Promise<string | undefined> {
+    const i = this.issue(s, repo, n);
+    if (!i) return undefined;
+    const name = repo === this.exec ? `#${n}` : `${repo}#${n}`;
+    if (expects.closed === undefined && i.state === 'closed') {
+      const delivered = i.labels.some((l) => l.name === 'delivered');
+      if (delivered || !(s.at - time(i.closed_at) < CLOSE_GRACE))
+        return `${name} is closed (${i.state_reason ?? 'no reason'})${delivered ? ' with delivered' : ' without delivered'}`;
+    }
+    if (expects.pending === undefined && i.labels.some((l) => l.name === 'pending'))
+      return this.pendingReason(s, repo, n, name);
+    if (expects.pause === undefined && i.labels.some((l) => l.name === 'pause') && !this.ownPauseOn(s, repo, n))
+      return `${name} has pause, which the scenario did not add${fullQuote(await this.lastComment(repo, n))}`;
+    return undefined;
   }
 
   /**

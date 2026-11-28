@@ -8,6 +8,8 @@ import { credentialOutcome, leaks, scan } from '../../scenarios/lifecycle/phase3
 import { SCOPE_ISSUES, scopeGate } from '../../scenarios/lifecycle/requests.ts';
 import { clock, context, routes } from './fake.ts';
 import type { Handler } from './fake.ts';
+/** The options of a test wait that exercises the observer itself, not an Issue. */
+const NO_ISSUE = { noIssue: 'the test exercises the observer itself' };
 
 const empty = {
   'GET /repos/o/exec/actions/runs': { workflow_runs: [] },
@@ -29,7 +31,7 @@ test('waiters share one snapshot, refreshed at most once per interval', async ()
     intervalMs: 60_000,
   });
   let polls = 0;
-  const waiter = (after: number) => obs.until('x', () => (++polls >= after ? true : undefined), 600_000);
+  const waiter = (after: number) => obs.until('x', () => (++polls >= after ? true : undefined), 600_000, undefined, NO_ISSUE);
   await Promise.all([waiter(3), waiter(4), waiter(5)]);
   const reads = f.calls.filter((x) => x.startsWith('GET /repos/o/exec/actions/runs'));
   equal(reads.length <= 3, true, `${reads.length} snapshots for three waiters`);
@@ -45,6 +47,7 @@ test('until fails at its deadline naming what it waited for and the observed sta
       () => undefined,
       5 * 60_000,
       () => 'o/exec#1 open [scope]',
+      NO_ISSUE,
     ),
     /timed out after 5 min waiting for A to close; observed: o\/exec#1 open \[scope\]/,
   );
@@ -549,13 +552,13 @@ test('a failed read during a wait is logged and the wait goes on; the deadline n
     log: (m) => logs.push(m),
   });
   const started = c.now();
-  equal(await obs.until('anything', () => true, 10 * 60_000), true);
+  equal(await obs.until('anything', () => true, 10 * 60_000, undefined, NO_ISSUE), true);
   equal(c.now() - started >= 2 * 60_000, true, 'each retry of the read waits one interval');
   equal(logs.filter((l) => /a read while waiting for anything failed: .*502/.test(l)).length, 2);
   const broken = routes({ ...empty, 'GET /repos/o/exec/issues': { status: 502, data: { message: 'Bad Gateway' } } });
   const obs2 = new Observer(broken.github, ['o/exec'], { since: c.now(), now: c.now, sleep: c.sleep });
   await rejects(
-    obs2.until('B', () => true, 3 * 60_000),
+    obs2.until('B', () => true, 3 * 60_000, undefined, NO_ISSUE),
     /timed out after 3 min waiting for B; last read error: GitHub GET \/repos\/o\/exec\/issues.* returned 502: Bad Gateway/,
   );
 });

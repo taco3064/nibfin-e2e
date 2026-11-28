@@ -34,18 +34,47 @@ export interface ObserverOptions {
   /**
    * A wait not marked `quiet` fails once no snapshot changed and no run was in progress
    * for this long; absent, never. It fails only on a recent snapshot judged by the
-   * wait's `gonePast`, when given: one whose read started no earlier than one interval
-   * before the decision, or one read anew for it.
+   * wait's early-exit checks (its `gonePast` and the hold check) with no reason: one whose
+   * read started no earlier than one interval before the decision, or one read anew for it.
    */
   stallMs?: number;
+  /**
+   * The hold check of a wait that names `issues`: a reason when the Issue is held (closed,
+   * or with `pending` or `pause`, Proposal R4.12, R4.13) in a way the wait does not expect.
+   * A wait naming `issues` on an observer without it throws.
+   */
+  held?: (s: Snapshot, issue: IssueRef, expects: Expects) => Promise<string | undefined>;
 }
 
-export interface UntilOptions {
-  /** A reason when the goal is out of reach; checked on each snapshot after `fn`. */
+/** An Issue a wait is about; `repo` is the full `owner/name`. */
+export interface IssueRef {
+  repo: string;
+  n: number;
+}
+
+/** What holds an Issue so a wait on its progress can no longer succeed. */
+export type Hold = 'closed' | 'pause' | 'pending';
+/** The holds a wait expects, each with why. */
+export type Expects = Partial<Record<Hold, string>>;
+
+interface CommonOptions {
+  /** A reason when the goal is out of reach; checked on each snapshot after `fn`, before the hold check. */
   gonePast?: (s: Snapshot) => string | undefined | Promise<string | undefined>;
   /** This wait expects silence; the stall check does not apply. */
   quiet?: boolean;
 }
+
+/**
+ * Every wait decides whether it is about Issues' progress. With `issues`, the observer's
+ * hold check ends it once one of them is held, except for the holds `expects` names with
+ * why. With `noIssue`, it says why it waits on no Issue's progress (runs to complete, a
+ * harness PR's check) and gets no hold check.
+ */
+export type UntilOptions = CommonOptions
+  & (
+    | { issues: [IssueRef, ...IssueRef[]]; expects?: Expects; noIssue?: never }
+    | { noIssue: string; issues?: never; expects?: never }
+  );
 
 /** What a snapshot shows of the sandboxes' activity; two equal fingerprints mean nothing changed. */
 export function fingerprint(s: Pick<Snapshot, 'runs' | 'issues' | 'pulls'>): string {
@@ -190,11 +219,14 @@ export class Observer {
 
   /**
    * Waits until `fn` returns a value other than `undefined`. On each snapshot after
-   * `fn` it ends early when `opts.gonePast` gives a reason the goal is out of reach (only
-   * snapshots read after the wait began are judged), or
+   * `fn` it ends early when `opts.gonePast` gives a reason the goal is out of reach or,
+   * for a wait naming `opts.issues`, when the observer's `held` check finds one of them
+   * held in a way `opts.expects` does not name (the scenario's reason first, then each
+   * Issue in order; only snapshots read after the wait began are judged), or
    * when the sandboxes showed no activity for `stallMs` (unless the wait is `quiet`).
+   * A wait naming `issues` on an observer without `held` throws at once.
    * The stall check fails only on a recent snapshot read after the wait began and, when
-   * `gonePast` is given, judged by it with no reason: one whose read started (its
+   * the wait has early-exit checks, judged by them with no reason: one whose read started (its
    * `startedAt`, not `at`) no earlier than one interval before the decision. Without
    * one, as after a pass or read that blocked for long, it first reads a snapshot anew,
    * newer than every read made or in flight at the decision (a `fresh()` inside `fn`
@@ -202,18 +234,35 @@ export class Observer {
    * At the deadline it fails naming what it waited for and, through `show`, the last
    * observed state. It ends with the abort reason once the run's signal aborts.
    *
-   * A wait only reads, so a failed read (a refresh or a read inside `fn` or
-   * `gonePast`) is logged and the wait goes on to its next snapshot; the last such
+   * A wait only reads, so a failed read (a refresh or a read inside `fn`, `gonePast`
+   * or the hold check) is logged and the wait goes on to its next snapshot; the last such
    * error is named if the deadline passes. Harness writes are never repeated.
    */
   async until<T>(
     desc: string,
     fn: (s: Snapshot) => T | undefined | Promise<T | undefined>,
     timeoutMs: number,
-    show?: (s: Snapshot) => string | Promise<string>,
-    opts: UntilOptions = {},
+    show: ((s: Snapshot) => string | Promise<string>) | undefined,
+    opts: UntilOptions,
   ): Promise<T> {
     const signal = this.opts.signal;
+    const held = this.opts.held;
+    const issues = opts.issues;
+    if (issues && !held) throw new Error(`waiting for ${desc}: no hold check installed for the Issues it names`);
+    const expects = opts.expects ?? {};
+    // The scenario's own reason first (it knows more), then the hold check of each Issue in order.
+    const gone =
+      opts.gonePast || issues
+        ? async (s: Snapshot): Promise<string | undefined> => {
+          const reason = await opts.gonePast?.(s);
+          if (reason !== undefined || !issues || !held) return reason;
+          for (const i of issues) {
+            const r = await held(s, i, expects);
+            if (r !== undefined) return r;
+          }
+          return undefined;
+        }
+        : undefined;
     const start = this.now();
     // Snapshots read (or being read) before the wait began may predate the caller's own
     // last write, such as removing `pending`; only later ones can show the goal out of reach.
@@ -222,7 +271,7 @@ export class Observer {
     let seen = -1;
     let lastError: string | undefined;
     let last: Snapshot | undefined;
-    // The `startedAt` of the latest snapshot after `staleUpTo` that `gonePast` (when given) judged with no reason.
+    // The `startedAt` of the latest snapshot after `staleUpTo` that the early-exit checks (when any) judged with no reason.
     let checkedAt = -Infinity;
     const fail = async (message: string): Promise<never> => {
       let state = '';
@@ -239,12 +288,12 @@ export class Observer {
     const calmSince = () => Math.max(this.lastActivityAt ?? start, start, this.lastFailedAt ?? start);
     const stalled = (): Promise<never> =>
       fail(`no sandbox activity for ${Math.round((this.now() - calmSince()) / 60_000)} min while waiting for ${desc}`);
-    // Whether `gonePast` (when given) judged the snapshot with no reason; a reason ends the wait, a failed read is logged.
+    // Whether the early-exit checks (when any) judged the snapshot with no reason; a reason ends the wait, a failed read is logged.
     const judge = async (s: Snapshot): Promise<boolean> => {
-      if (!opts.gonePast) return true;
+      if (!gone) return true;
       let reason: string | undefined;
       try {
-        reason = await opts.gonePast(s);
+        reason = await gone(s);
       } catch (error) {
         readError(error);
         return false;

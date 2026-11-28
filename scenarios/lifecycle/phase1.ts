@@ -127,6 +127,9 @@ export function foreignLabelGone(
   };
 }
 
+/** Why login-expiry's first waits do not end on `pending`: the invalid login fails the shape and Nibfin adds it (Proposal R6.13). */
+const LOGIN_PENDING = 'the shape fails on the invalid login and Nibfin adds pending';
+
 export const loginExpiry: Scenario = lifecycle({
   id: 'login-expiry',
   rules: ['R6.13', 'R1.12', 'R3.42', 'R3.43'],
@@ -156,6 +159,7 @@ export const loginExpiry: Scenario = lifecycle({
           ),
         DEADLINE.stage,
         show,
+        { ...k.about(exec, n), expects: { pending: LOGIN_PENDING } },
       );
       await k.obs.until(
         '`pending` and a comment naming the re-login command',
@@ -167,6 +171,7 @@ export const loginExpiry: Scenario = lifecycle({
         },
         DEADLINE.event,
         show,
+        { ...k.about(exec, n), expects: { pending: LOGIN_PENDING } },
       );
 
       await k.ctx.claudeLogin('valid');
@@ -178,6 +183,7 @@ export const loginExpiry: Scenario = lifecycle({
         (s) => k.stages(s, exec, n, AGENT_STAGES).find((r) => time(r.created_at) >= woke),
         DEADLINE.stage,
         show,
+        k.about(exec, n),
       );
       c.check(
         'R6.13',
@@ -200,7 +206,7 @@ export const loginExpiry: Scenario = lifecycle({
         (s) => s.runs.find((r) => r.id === next.id && r.status === 'completed'),
         DEADLINE.stage,
         show,
-        { gonePast: exit },
+        { ...k.about(exec, n), gonePast: exit },
       );
       // R1.12 counts the redone run's agent job, not the run: a run whose agent job never ran also concludes success.
       const r112 = redoneShapeProblem(done, await k.obs.jobs(exec, done.id));
@@ -216,7 +222,7 @@ export const loginExpiry: Scenario = lifecycle({
         (s) => (k.labels(s, exec, n).includes('shaped') ? true : undefined),
         DEADLINE.event,
         show,
-        { gonePast: exit },
+        { ...k.about(exec, n), gonePast: exit },
       );
       await k.addLabels(exec, n, ['pause']);
       const comments = await k.obs.comments(exec, n);
@@ -400,7 +406,7 @@ export const interruptedDeliver: Scenario = lifecycle({
         (s) => (i2Due(k.labels(s, exec, n), k.stages(s, exec, n, ['deliver']).map((r) => r.stage)) ? true : undefined),
         DEADLINE.stage,
         show,
-        { gonePast: k.stageGone(exec, n, 'shape') },
+        { ...k.about(exec, n), gonePast: k.stageGone(exec, n, 'shape') },
       );
       const n2 = await file('i2', 'Add decrement', changeRequest(k.slug('i2'), 'decrement', 'returns its argument minus one'));
 
@@ -426,7 +432,10 @@ export const interruptedDeliver: Scenario = lifecycle({
         },
         DEADLINE.stage,
         k.show(exec, n, n2),
-        { gonePast: async (s) => busyGone(await iDeliver(s), await i2Shape(s), runnerNames) ?? (await i2Gone(s)) ?? iGone(s) },
+        {
+          ...k.about(exec, n, n2),
+          gonePast: async (s) => busyGone(await iDeliver(s), await i2Shape(s), runnerNames) ?? (await i2Gone(s)) ?? iGone(s),
+        },
       );
 
       // I3 is filed as soon as the overlap is seen, so that its route starts while both active Runners are busy.
@@ -448,7 +457,7 @@ export const interruptedDeliver: Scenario = lifecycle({
         },
         DEADLINE.event,
         k.show(exec, n3),
-        { gonePast: k.stageGone(exec, n3, 'shape') },
+        { ...k.about(exec, n3), gonePast: k.stageGone(exec, n3, 'shape') },
       );
       const recordedAt = k.now();
       let j3 = d3.queued;
@@ -472,6 +481,8 @@ export const interruptedDeliver: Scenario = lifecycle({
           return rs.length > 0 && rs.every((r) => r.status === 'offline') ? true : undefined;
         },
         DEADLINE.event,
+        undefined,
+        { noIssue: 'it waits on the Runner registrations, which no hold of an Issue changes' },
       );
 
       // 7: I3's job stays queued, not re-dispatched (R4.23).
@@ -501,9 +512,7 @@ export const interruptedDeliver: Scenario = lifecycle({
         (s) => dispatched(k, s, n4, label),
         DEADLINE.event,
         k.show(exec, n4),
-        {
-          gonePast: k.stageGone(exec, n4, 'shape'),
-        },
+        { ...k.about(exec, n4), gonePast: k.stageGone(exec, n4, 'shape') },
       );
       c.check('R4.21', d4.queued !== undefined, `I4's shape job started while every Runner was offline`);
       const s8 = await k.obs.fresh();
@@ -535,6 +544,7 @@ export const interruptedDeliver: Scenario = lifecycle({
           },
           DEADLINE.stage,
           k.show(exec, issue),
+          k.about(exec, issue),
         );
         await k.addLabels(exec, issue, ['pause']);
         c.check(
@@ -557,7 +567,7 @@ export const interruptedDeliver: Scenario = lifecycle({
         },
         DEADLINE.stage,
         show,
-        { gonePast: k.stageGone(exec, n, 'deliver', { jobs: false }) },
+        { ...k.about(exec, n), gonePast: k.stageGone(exec, n, 'deliver', { jobs: false }) },
       );
       for (const j of redo.fresh) {
         const ok = time(j.started_at) >= time(redo.old.completed_at);
@@ -580,6 +590,7 @@ export const interruptedDeliver: Scenario = lifecycle({
         (s) => s.pulls.get(exec)?.find((p) => p.head.ref === branch),
         DEADLINE.stage,
         show,
+        k.about(exec, n),
       );
       const waits = await k.obs.until(
         'a marked PR comment saying the merge waits for a review',
@@ -595,6 +606,7 @@ export const interruptedDeliver: Scenario = lifecycle({
         },
         DEADLINE.stage,
         show,
+        k.about(exec, n),
       );
       const calm = await k.settle('the review-awaited comment', waits.at, k.runsOf(exec, n));
       c.check(
@@ -614,6 +626,7 @@ export const interruptedDeliver: Scenario = lifecycle({
       await k.addLabels(exec, n, ['pause']);
       await k.removeLabel(exec, n, 'pause');
       await k.obs.until('I to close with delivered', (s) => k.delivered(s, exec, n), DEADLINE.delivery, show, {
+        ...k.about(exec, n),
         gonePast: k.closeGone(exec, n),
       });
       const prs = await k.obs.pullsByHead(exec, branch);

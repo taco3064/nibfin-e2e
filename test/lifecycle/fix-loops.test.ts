@@ -83,7 +83,7 @@ test('a fix-loops wait guarded by closeGone ends on the first fresh snapshot whe
       },
       DEADLINE.stage,
       k.show('o/exec', 6),
-      { gonePast: k.closeGone('o/exec', 6) },
+      { ...k.about('o/exec', 6), gonePast: k.closeGone('o/exec', 6) },
     ),
     new RegExp(
       `^Error: gave up waiting for a marked review comment on F's PR after the harness commit: #6 has pending${noRecord}; last Nibfin comment: Deliver stopped: CHANGELOG\\.md is outside the Issue \\(\\*\\*\\*\\)\\.`,
@@ -179,7 +179,7 @@ test('a ci-failure deliver job that completed with failure does not satisfy the 
       (s) => fixJob(k, s, 6, 'ci-failure'),
       DEADLINE.stage,
       k.show('o/exec', 6),
-      { gonePast: fixGone(k, 6, 'ci-failure') },
+      { ...k.about('o/exec', 6), gonePast: fixGone(k, 6, 'ci-failure') },
     ),
     /^Error: gave up waiting for a deliver job with REASON ci-failure: #6's ci-failure deliver job 21 \(run 7\) completed with failure; o\/exec#6 open \[scope, shaped, pending\] runs: deliver completed\/failure; last Nibfin comment: Nibfin stopped and needs a person\. - Code: STAGE_BLOCKED/,
   );
@@ -198,7 +198,7 @@ test('a successful ci-failure deliver job satisfies the fix wait', async () => {
     (s) => fixJob(k, s, 6, 'ci-failure'),
     DEADLINE.stage,
     undefined,
-    { gonePast: fixGone(k, 6, 'ci-failure') },
+    { ...k.about('o/exec', 6), gonePast: fixGone(k, 6, 'ci-failure') },
   );
   equal(j.id, 21);
   equal(j.run.id, 7);

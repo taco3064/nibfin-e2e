@@ -5,7 +5,7 @@ import { AGENT_STAGES, selfHosted, time, wakeRuns } from './analysis.ts';
 import type { Issue, Job, Pull, Run, Stage } from './analysis.ts';
 import { DEADLINE, changeRequest, message, redact } from './kit.ts';
 import type { Kit } from './kit.ts';
-import type { Snapshot } from './observe.ts';
+import type { Expects, Snapshot } from './observe.ts';
 import { sleep } from '../lib/wait.ts';
 import { untilAborted } from '../../src/abort.ts';
 
@@ -35,8 +35,9 @@ type JobWaitExit = 'missed' | 'hard' | 'followed';
  * jobs of the Issue's unfinished runs of that stage directly every `DIRECT_READ_MS`
  * rather than through the observer's snapshot and its cached job reads, which may miss a
  * short job (Issue #544). The wait fails at once when such a job completed before any
- * read saw it running, and otherwise ends on `stageGone`, the stall limit or the deadline.
- * Every reason from `stageGone` also names what the direct reads saw: each run read, the
+ * read saw it running, and otherwise ends on a hold of the Issue (`Kit.heldReason`), on
+ * `stageGone`, the stall limit or the deadline.
+ * Every reason from those also names what the direct reads saw: each run read, the
  * stage's job in its last read (or that no read saw a run of the stage), and the last
  * direct read error, if any.
  *
@@ -82,6 +83,7 @@ interface StageJobOptions {
   show?: (s: Snapshot) => Promise<string>;
   /** The Issue's name in the reason (default `P`). */ who?: string;
   /** Only the stage's jobs created at or after this epoch ms count for `stageGone`. */ since?: number;
+  /** The holds of the Issue this wait expects, each with why (see `Kit.heldReason`). */ expects?: Expects;
   whileRunning?: {
     /** What the wait still needs, as it reads after "before" in the reason. */
     what: string;
@@ -189,8 +191,9 @@ function waitStageJob(
       await untilAborted(pause(DIRECT_READ_MS), k.ctx.signal);
     }
   };
-  // The closed and `pending` exits are judged apart from the job exit, so a caller can tell them apart.
-  const hard = k.stageGone(k.exec, n, stage, { since: o.since, jobs: false });
+  // The holds (closed, `pending`, `pause`) are judged apart from the job exit, so a caller can
+  // tell them apart, and here rather than by the observer, so their reason names what the direct reads saw.
+  const hard: Gone = (s) => k.heldReason(s, k.exec, n, o.expects ?? {});
   const followed = k.stageGone(k.exec, n, stage, { since: o.since });
   const redacted = (reason: string) => redact(reason, k.ctx.secretValues());
   const gonePast: Gone = async (s) => {
@@ -210,7 +213,14 @@ function waitStageJob(
     }
     return undefined;
   };
-  return { wait: k.obs.until(o.desc, fn, o.deadlineMs, o.show, { gonePast }), exit: () => exit };
+  return {
+    wait: k.obs.until(o.desc, fn, o.deadlineMs, o.show, {
+      gonePast,
+      issues: [{ repo: k.exec, n }],
+      expects: o.expects,
+    }),
+    exit: () => exit,
+  };
 }
 
 export interface Journey {
@@ -311,6 +321,7 @@ async function driveJourney(k: Kit, filed: number[]): Promise<Journey> {
     (s) => (wakeRuns(s.runs, exec, a.number).some((r) => r.status === 'completed') ? true : undefined),
     DEADLINE.event,
     k.show(exec, a.number),
+    k.about(exec, a.number),
   );
   const calm = await k.settle('A opened', k.now(), k.runsOf(exec, a.number));
   // Route may run for any Issue event; only an agent stage would mean A was taken up.
@@ -350,6 +361,7 @@ async function driveJourney(k: Kit, filed: number[]): Promise<Journey> {
     (s) => s.pulls.get(exec)?.find((p) => p.head.ref === branch && p.merged_at),
     DEADLINE.delivery,
     k.show(exec, a.number),
+    k.about(exec, a.number),
   );
   const { data: main } = await k.gh.rest<{ commit: { sha: string } }>('GET', `/repos/${exec}/branches/main`);
   const mergeSha = aPr.merge_commit_sha ?? main.commit.sha;
@@ -364,6 +376,8 @@ async function driveJourney(k: Kit, filed: number[]): Promise<Journey> {
       return r && r.status === 'completed' && (r.run_attempt ?? 1) === 1 ? r : undefined;
     },
     DEADLINE.event,
+    undefined,
+    { noIssue: "it waits on the merge commit's CI run, which no hold of A stops; A staying open is judged after" },
   );
   // What a CI or CD completion of the merge wakes: A's own runs and Nibfin's runs for the merge commit.
   const ofA = k.runsOf(exec, a.number);
@@ -387,6 +401,8 @@ async function driveJourney(k: Kit, filed: number[]): Promise<Journey> {
       return (r.run_attempt ?? 1) >= 2 && r.status !== 'completed' ? r : undefined;
     },
     DEADLINE.event,
+    undefined,
+    { noIssue: 'it waits on the re-run the harness started, which no hold of A stops' },
   );
   await k.gh.rest('POST', `/repos/${exec}/git/refs`, { ref: `refs/tags/${t}-a-cd`, sha: mergeSha });
   const cdRun = await k.obs.until(
@@ -396,6 +412,8 @@ async function driveJourney(k: Kit, filed: number[]): Promise<Journey> {
       return r?.status === 'completed' ? r : undefined;
     },
     DEADLINE.event,
+    undefined,
+    { noIssue: "it waits on the merge commit's CD run, which no hold of A stops; A staying open is judged after" },
   );
   const heldCi = (r: Run) => r.name === 'CI' && r.head_sha === mergeSha;
   const afterCd = await k.settle(
@@ -411,7 +429,7 @@ async function driveJourney(k: Kit, filed: number[]): Promise<Journey> {
     (s) => k.delivered(s, exec, a.number),
     DEADLINE.delivery,
     k.show(exec, a.number),
-    { gonePast: k.closeGone(exec, a.number) },
+    { ...k.about(exec, a.number), gonePast: k.closeGone(exec, a.number) },
   );
   for (const [name, n] of [
     ['B', b.number],
@@ -423,7 +441,7 @@ async function driveJourney(k: Kit, filed: number[]): Promise<Journey> {
       (s) => k.delivered(s, exec, n),
       DEADLINE.delivery,
       k.show(exec, n),
-      { gonePast: k.closeGone(exec, n) },
+      { ...k.about(exec, n), gonePast: k.closeGone(exec, n) },
     );
   }
   return {
@@ -468,6 +486,8 @@ export interface HoldJourney {
 }
 
 const hasLabel = (k: Kit, s: Snapshot, n: number, l: string) => k.labels(s, k.exec, n).includes(l);
+/** Why the hold journey's waits that run while its own `pending` is on do not end on it. */
+const OWN_PENDING = 'the hold journey added pending itself and waits on what P does while it is on';
 
 export type PauseOutcome = { kind: 'published' } | { kind: 'fault'; reason: string };
 
@@ -652,6 +672,8 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
     },
     DEADLINE.stage,
     show,
+    // The harness's own `pause` is on; the hold check exempts it.
+    k.about(exec, n),
   );
   const pauseLate =
     time(shapeDone.completed_at) <= pausedAt
@@ -704,7 +726,10 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
     },
     DEADLINE.stage,
     show,
-    { gonePast: k.stageGone(exec, n, 'deliver', { since: editedAt - 60_000, allowPending: true }) },
+    {
+      ...k.about(exec, n),
+      gonePast: k.stageGone(exec, n, 'deliver', { since: editedAt - 60_000, allowPending: true }),
+    },
   );
   const prOf = (s: Snapshot, open = false) => branchPr(s.pulls.get(exec), n, open);
   /**
@@ -747,6 +772,8 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
       DEADLINE.stage,
       show,
       {
+        ...k.about(exec, n),
+        expects: { pending: OWN_PENDING },
         gonePast: firstOf(
           async () => fault,
           k.stageGone(exec, n, 'deliver', { since, allowPending: true }),
@@ -770,6 +797,7 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
       (x) => (hasLabel(k, x, n, 'shaped') ? x : undefined),
       DEADLINE.stage,
       show,
+      k.about(exec, n),
     );
     // The label's own time, not the snapshot's: a Deliver may start before the next snapshot.
     reshapedAt = await k.labeledAt(exec, n, 'shaped', editedAt);
@@ -780,7 +808,7 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
       running('deliver', reshapedAt),
       DEADLINE.stage,
       show,
-      { gonePast: k.stageGone(exec, n, 'deliver', { since: reshapedAt - 60_000 }) },
+      { ...k.about(exec, n), gonePast: k.stageGone(exec, n, 'deliver', { since: reshapedAt - 60_000 }) },
     );
     await k.addLabels(exec, n, ['pending']);
     pendingAt = k.now();
@@ -796,10 +824,10 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
   /**
    * Waits for the `test` check of P's open PR to complete. It ends at once on `gone`, then
    * when it can no longer succeed (`prTestFault`), judging only P's deliver runs created at
-   * or after `since`. Every failure names the PR, its head and
-   * `test` check, before P's summary.
+   * or after `since`. Every failure names the PR, its head and `test` check, before P's
+   * summary. `expects` are the holds of P the wait expects.
    */
-  const prTest = (gone: Gone, since: number) => {
+  const prTest = (gone: Gone, expects: Expects, since: number) => {
     // The PR this wait saw open: once it is closed, a snapshot alone cannot tell it from an older closed PR.
     let seen: number | undefined;
     const judged = (s: Snapshot) => {
@@ -847,7 +875,7 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
       },
       DEADLINE.stage,
       state,
-      { gonePast: firstOf(gone, own) },
+      { ...k.about(exec, n), expects, gonePast: firstOf(gone, own) },
     );
   };
 
@@ -856,7 +884,7 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
     if (!hasLabel(k, s, n, 'shaped'))
       return `P lost shaped while waiting for its PR's test: ${await k.summary(s, exec, n)}`;
     return k.stageGone(exec, n, 'deliver', { since: pendAt - 60_000, allowPending: true })(s);
-  }, (reshapedAt ?? editedAt) - 60_000);
+  }, { pending: OWN_PENDING }, (reshapedAt ?? editedAt) - 60_000);
   const quiet = await k.settle("P's PR test", testDone, ofP);
   const reviewWhilePending = k.stages(quiet, exec, n, ['review']).filter((r) => time(r.created_at) >= pendAt).length;
   // The hold is only shown when PR CI completed, and so woke the review, after `pending` was on.
@@ -869,6 +897,7 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
   await k.removeLabel(exec, n, 'pending');
   const unpendedAt = k.now();
   await k.obs.until('P to close with delivered', (s) => k.delivered(s, exec, n), DEADLINE.delivery, show, {
+    ...k.about(exec, n),
     gonePast: k.closeGone(exec, n),
   });
   return {

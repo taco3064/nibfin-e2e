@@ -10,6 +10,8 @@ import { allBusyAt, busyGone, i2Due } from '../../scenarios/lifecycle/phase1.ts'
 import { clock, context, routes } from './fake.ts';
 
 const MIN = 60_000;
+/** Why a test wait names no Issue: it exercises the wait itself (stall, abort, deadline). */
+const NO_ISSUE = 'the test exercises the wait itself';
 const base = {
   'GET /repos/o/peer/actions/runs': { workflow_runs: [] },
   'GET /repos/o/peer/issues': [],
@@ -75,6 +77,7 @@ test('a stage wait fails on the first snapshot showing the stage job completed a
   const started = c.now();
   await rejects(
     k.obs.until("I2's shape job to run", () => undefined, DEADLINE.stage, k.show('o/exec', 6), {
+      ...k.about('o/exec', 6),
       gonePast: k.stageGone('o/exec', 6, 'shape'),
     }),
     /^Error: gave up waiting for I2's shape job to run: #6's shape job 11 completed \(run 5, success\) and a deliver run 7 followed; observed: o\/exec#6 open \[scope, shaped\]/,
@@ -133,6 +136,9 @@ test('with publishes, a stage wait fails once a successful job of the stage left
   const started = c.now();
   await rejects(
     k.obs.until('`shaped`', () => undefined, DEADLINE.event, k.show('o/exec', 6), {
+      ...k.about('o/exec', 6),
+      // The fixture's pause stands for one a paused Issue has; this test judges only the publishes exit.
+      expects: { pause: 'the fixture is paused on purpose' },
       gonePast: k.stageGone('o/exec', 6, 'shape', { since, publishes: 'shaped' }),
     }),
     /^Error: gave up waiting for `shaped`: #6's shape job 11 completed \(run 5, success\) and #6 has no shaped [5-9] min later \(labels: scope, pause\)/,
@@ -196,7 +202,7 @@ test('a stage wait fails at once when the Issue is closed or has pending, unless
   equal(await gone(s1), `#6 has pending${noRecord(15)}; last Nibfin comment: Deliver stopped: the push was rejected (***).`);
   equal(await k.stageGone('o/exec', 6, 'deliver', { allowPending: true })(s1), undefined);
   await rejects(
-    k.obs.until("I's deliver job to run", () => undefined, DEADLINE.stage, undefined, { gonePast: gone }),
+    k.obs.until("I's deliver job to run", () => undefined, DEADLINE.stage, undefined, { ...k.about('o/exec', 6), gonePast: gone }),
     new RegExp(`gave up waiting for I's deliver job to run: #6 has pending${noRecord()}; last Nibfin comment`),
   );
 
@@ -232,21 +238,21 @@ test('a wait with no sandbox activity fails after the stall limit; one with a ru
   const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
   const started = c.now();
   await rejects(
-    k.obs.until("I2's shape job to run", () => undefined, DEADLINE.stage, k.show('o/exec', 6)),
+    k.obs.until("I2's shape job to run", () => undefined, DEADLINE.stage, k.show('o/exec', 6), { noIssue: NO_ISSUE }),
     /^Error: no sandbox activity for 20 min while waiting for I2's shape job to run; observed: o\/exec#6 open/,
   );
   equal(c.now() - started, 20 * MIN);
 
   // A quiet wait runs to its own deadline.
   await rejects(
-    k.obs.until('nothing to happen', () => undefined, 30 * MIN, undefined, { quiet: true }),
+    k.obs.until('nothing to happen', () => undefined, 30 * MIN, undefined, { noIssue: NO_ISSUE, quiet: true }),
     /^Error: timed out after 30 min waiting for nothing to happen$/,
   );
 
   // A run in progress is activity, even when no snapshot changes.
   runs = [run(5, 'shape', 'in_progress', '2026-11-26T10:00:30Z')];
   await rejects(
-    k.obs.until("I2's shape job to complete", () => undefined, 45 * MIN),
+    k.obs.until("I2's shape job to complete", () => undefined, 45 * MIN, undefined, { noIssue: NO_ISSUE }),
     /^Error: timed out after 45 min waiting for I2's shape job to complete$/,
   );
 });
@@ -260,11 +266,11 @@ test("a stall counts from the wait's own start, so a wait after a quiet one does
   const c = clock();
   const obs = new Observer(f.github, ['o/exec'], { since: c.now(), now: c.now, sleep: c.sleep, stallMs: 20 * MIN });
   await rejects(
-    obs.until('quiet', () => undefined, 25 * MIN, undefined, { quiet: true }),
+    obs.until('quiet', () => undefined, 25 * MIN, undefined, { noIssue: NO_ISSUE, quiet: true }),
     /timed out after 25 min/,
   );
   let polls = 0;
-  equal(await obs.until('the third look', () => (++polls === 3 ? true : undefined), 60 * MIN), true);
+  equal(await obs.until('the third look', () => (++polls === 3 ? true : undefined), 60 * MIN, undefined, { noIssue: NO_ISSUE }), true);
 });
 
 test("an observer wait ends with the abort reason once the run's signal aborts", async () => {
@@ -282,6 +288,8 @@ test("an observer wait ends with the abort reason once the run's signal aborts",
       'A to close',
       () => (++polls === 2 ? (ctl.abort(new Error('harness budget of 190 min ran out')), undefined) : undefined),
       DEADLINE.delivery,
+      undefined,
+      { noIssue: NO_ISSUE },
     ),
     /^Error: harness budget of 190 min ran out$/,
   );
@@ -295,7 +303,7 @@ test("an observer wait ends with the abort reason once the run's signal aborts",
     signal: ctl2.signal,
   });
   await slow.next();
-  const waiting = slow.until('B', () => undefined, DEADLINE.delivery);
+  const waiting = slow.until('B', () => undefined, DEADLINE.delivery, undefined, { noIssue: NO_ISSUE });
   setTimeout(() => ctl2.abort(new Error('budget')), 5);
   await rejects(waiting, /^Error: budget$/);
 });
@@ -422,7 +430,7 @@ test("a wait is not judged on a snapshot taken before it began, such as one stil
     },
     DEADLINE.delivery,
     undefined,
-    { gonePast: k.closeGone('o/exec', 6) },
+    { ...k.about('o/exec', 6), gonePast: k.closeGone('o/exec', 6) },
   );
   equal(closed.number, 6);
   equal(polls, 2);
@@ -440,7 +448,7 @@ test('failed reads do not count as calm: the stall limit counts from the last fa
   });
   const obs = new Observer(f.github, ['o/exec'], { since: c.now(), now: c.now, sleep: c.sleep, stallMs: 20 * MIN });
   await rejects(
-    obs.until('A to close', () => undefined, DEADLINE.delivery),
+    obs.until('A to close', () => undefined, DEADLINE.delivery, undefined, { noIssue: NO_ISSUE }),
     /^Error: no sandbox activity for 20 min while waiting for A to close/,
   );
   const took = (c.now() - started) / MIN;
@@ -484,7 +492,7 @@ test('a wait whose first pass blocks past the stall limit while the Issue gets p
       },
       DEADLINE.stage,
       k.show('o/exec', 6),
-      { gonePast: k.closeGone('o/exec', 6) },
+      { ...k.about('o/exec', 6), gonePast: k.closeGone('o/exec', 6) },
     ),
     new RegExp(
       `^Error: gave up waiting for a marked review comment: #6 has pending${noRecord()}; last Nibfin comment: Nibfin stopped and needs a person\\. - Code: STAGE_BLOCKED`,
@@ -518,7 +526,7 @@ test("a refresh inside a blocked pass does not stand in for the stall decision's
       },
       DEADLINE.stage,
       undefined,
-      { gonePast: k.closeGone('o/exec', 6) },
+      { ...k.about('o/exec', 6), gonePast: k.closeGone('o/exec', 6) },
     ),
     new RegExp(
       `^Error: gave up waiting for a marked review comment: #6 has pending${noRecord()}; last Nibfin comment: Nibfin stopped and needs a person\\. - Code: STAGE_BLOCKED`,
@@ -549,6 +557,7 @@ test('an observer read blocked on a peer request does not count as recent for th
   await k.obs.next();
   await rejects(
     k.obs.until('a marked review comment', () => undefined, DEADLINE.stage, undefined, {
+      ...k.about('o/exec', 6),
       gonePast: k.closeGone('o/exec', 6),
     }),
     new RegExp(
@@ -573,13 +582,13 @@ test('a blocked pass with no gonePast reason and no activity still fails on the 
     return undefined;
   };
   await rejects(
-    k.obs.until('a marked review comment', block, DEADLINE.stage, undefined, { gonePast: k.closeGone('o/exec', 6) }),
+    k.obs.until('a marked review comment', block, DEADLINE.stage, undefined, { ...k.about('o/exec', 6), gonePast: k.closeGone('o/exec', 6) }),
     /^Error: no sandbox activity for 25 min while waiting for a marked review comment$/,
   );
   equal(c.now() - started, STALL + 5 * MIN);
   // Without gonePast too.
   polls = 0;
-  await rejects(k.obs.until('B', block, DEADLINE.stage), /^Error: no sandbox activity for 25 min while waiting for B$/);
+  await rejects(k.obs.until('B', block, DEADLINE.stage, undefined, { noIssue: NO_ISSUE }), /^Error: no sandbox activity for 25 min while waiting for B$/);
 });
 
 // The pending reason keeps the whole stop reason; summary keeps a short form (Issue #597).
@@ -621,6 +630,7 @@ test('a stop comment of about 600 characters appears in the pending reason in fu
   equal(await k.closeGone('o/exec', 6)(s), reason);
   await rejects(
     k.obs.until('a marked review comment', () => undefined, DEADLINE.stage, undefined, {
+      ...k.about('o/exec', 6),
       gonePast: k.closeGone('o/exec', 6),
     }),
     new RegExp(
@@ -693,6 +703,7 @@ test('a wait ended by pending holds the stop reason once: in the reason, not aga
   const k = stopKit(stopBody(fenced));
   const err = await k.obs
     .until('a marked review comment', () => undefined, DEADLINE.stage, k.show('o/exec', 6), {
+      ...k.about('o/exec', 6),
       gonePast: k.closeGone('o/exec', 6),
     })
     .then(

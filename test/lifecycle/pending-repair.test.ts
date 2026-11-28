@@ -96,7 +96,7 @@ test('a pending with an external-temporary record does not end the wait, past th
     (s) => (k.labels(s, 'o/exec', 6).includes('pending') ? undefined : true),
     DEADLINE.stage,
     undefined,
-    { gonePast: gone },
+    { noIssue: 'the test judges the stage check alone', gonePast: gone },
   );
   equal(done, true);
 });
