@@ -8,8 +8,8 @@
   },
   "scripts": {
     "typecheck": "tsc -p .",
-    "lint": "eslint . && prettier --check .",
-    "format": "prettier --write .",
+    "lint": "eslint .",
+    "format": "eslint . --fix",
     "test": "node --test \"test/**/*.test.ts\"",
     "verify": "npm run typecheck && npm run lint && npm test",
     "e2e": "node src/cli.ts",
@@ -17,11 +17,11 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@stylistic/eslint-plugin": "6.0.1",
     "@types/node": "^24.19.4",
     "ajv": "^8.20.0",
     "eslint": "^10.15.0",
     "playwright-core": "1.65.1",
-    "prettier": "3.10.1",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.74.0"
   }

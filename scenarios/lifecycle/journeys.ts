@@ -14,13 +14,13 @@ type Gone = (s: Snapshot) => Promise<string | undefined>;
 /** A `gonePast` check giving the first reason any of `checks` gives. */
 const firstOf =
   (...checks: Gone[]): Gone =>
-  async (s) => {
-    for (const c of checks) {
-      const reason = await c(s);
-      if (reason !== undefined) return reason;
-    }
-    return undefined;
-  };
+    async (s) => {
+      for (const c of checks) {
+        const reason = await c(s);
+        if (reason !== undefined) return reason;
+      }
+      return undefined;
+    };
 
 /** How often `stageJobRunning` reads a stage run's jobs directly. */
 export const DIRECT_READ_MS = 10_000;
@@ -385,10 +385,10 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
   const show = k.show(exec, n);
   const running =
     (stage: 'shape' | 'deliver', after = 0) =>
-    async (s: Snapshot) =>
-      (await k.agentJobs(s, exec, n, [stage])).find(
-        (j: Job) => j.status === 'in_progress' && selfHosted(j) && time(j.started_at) >= after,
-      );
+      async (s: Snapshot) =>
+        (await k.agentJobs(s, exec, n, [stage])).find(
+          (j: Job) => j.status === 'in_progress' && selfHosted(j) && time(j.started_at) >= after,
+        );
 
   const shapeJob = await stageJobRunning(k, n, 'shape', {
     desc: "P's shape job to run",

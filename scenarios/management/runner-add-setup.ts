@@ -9,8 +9,8 @@ import { nibfinFacts, registrations, whoami } from '../lib/github.ts';
 
 export const hostRun =
   (ctx: RunContext): HostRun =>
-  (argv, env) =>
-    ctx.exec(argv, { env });
+    (argv, env) =>
+      ctx.exec(argv, { env });
 
 /** User units enabled now that were not enabled before runner add. */
 export function newEnabledUnits(before: LinuxHostState, now: LinuxHostState): string[] {
