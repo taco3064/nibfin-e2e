@@ -129,6 +129,19 @@ test('the real coverage map requires no macOS coverage (Proposal R8.24)', () => 
   }
 });
 
+test('the real coverage map marks R8.26 and R8.27 not tested by e2e (Proposal R8.26, R8.27)', () => {
+  const { entries } = loadMap(new URL('../coverage-map.json', import.meta.url));
+  const expected: [string, string][] = [
+    ['R8.26', 'e2e 自身使用的測試機制'],
+    ['R8.27', 'e2e 自身'],
+  ];
+  for (const [id, reason] of expected) {
+    const e = entries.find((x) => x.id === id);
+    ok(e && isExcluded(e), `Proposal ${id}: ${id} must be a notE2e entry`);
+    equal(e.notE2e, reason, `Proposal ${id}: the reason must be the text of its 〔不測〕 mark`);
+  }
+});
+
 test('loadMap reports an unreadable file', () => {
   match(loadMap(new URL('./missing.json', import.meta.url)).errors[0] ?? '', /cannot read/);
 });
