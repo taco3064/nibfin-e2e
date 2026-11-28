@@ -65,6 +65,8 @@ function setup(labels: () => string[], timeline: () => unknown[]) {
     ],
     'GET /repos/o/exec/issues/6/comments': [comment],
     'GET /repos/o/exec/issues/6/timeline': () => timeline(),
+    // The events GitHub lists are the timeline's label events, which is all `pendingAddedAt` reads.
+    'GET /repos/o/exec/issues/6/events': () => timeline(),
   });
   const c = clock();
   const k = new Kit(context(f.github, { secretValues: () => ['tok-9'] }), { now: c.now, sleep: c.sleep });
@@ -134,11 +136,12 @@ test("a pending added after the re-login is named with its time and actor; an ol
 
   const old = setup(
     () => ['scope', 'pending'],
-    () => [labeled('pending', '2026-11-26T09:59:59Z', 'nibfin-bot')],
+    // Before the re-login, and past REPAIR_GRACE with no repair record, so stageGone ends the wait.
+    () => [labeled('pending', '2026-11-26T09:45:00Z', 'nibfin-bot')],
   );
   const s = await old.k.obs.fresh();
   equal(await old.foreign(s), undefined);
-  match((await old.exit(s)) ?? '', /^#6 has pending; last Nibfin comment: Shape stopped: log in again/);
+  match((await old.exit(s)) ?? '', /^#6 has pending; no repair record \d+ min after pending was added at \S+; last Nibfin comment: Shape stopped: log in again/);
 });
 
 test('R1.12 counts only a self-hosted agent job that ran on a Runner and succeeded', () => {

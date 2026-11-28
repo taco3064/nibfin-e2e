@@ -132,6 +132,11 @@ const shapeRoutes = (
     'GET /repos/o/exec/actions/runs/5/jobs': () => ({ jobs: o.jobs() }),
     'GET /repos/o/exec/actions/runs/7/jobs': { jobs: [] },
     'GET /repos/o/exec/issues': [o.issue ?? issue],
+    // `pending` added past REPAIR_GRACE before the wait, with no repair record, ends it at once.
+    'GET /repos/o/exec/issues/6/comments': [],
+    'GET /repos/o/exec/issues/6/events': [
+      { event: 'labeled', created_at: iso(-3_600_000), label: { name: 'pending' } },
+    ],
   });
 const direct = (calls: string[]) =>
   calls.filter((x) => x.startsWith('GET /repos/o/exec/actions/runs/5/jobs?filter=latest'));

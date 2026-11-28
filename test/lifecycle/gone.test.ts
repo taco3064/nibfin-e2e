@@ -17,6 +17,15 @@ const base = {
   'GET /repos/o/exec/pulls': [],
   'GET /rate_limit': {},
 };
+// The Issue's events: `pending` added past REPAIR_GRACE before the fake clock's start,
+// so a `pending` with no repair record ends a wait at once.
+const pendingAt = '2026-11-26T09:45:00Z';
+const pendingEvents = {
+  'GET /repos/o/exec/issues/6/events': [{ event: 'labeled', created_at: pendingAt, label: { name: 'pending' } }],
+};
+/** The part of a pending reason saying no repair record was written; `min` defaults to any count. */
+const noRecord = (min?: number) =>
+  `; no repair record ${min ?? '\\d+'} min after pending was added at ${new Date(pendingAt).toISOString()}`;
 const run = (id: number, stage: string, status: string, created: string, n = 6) => ({
   id,
   display_title: `Nibfin · o/exec#${n} · ${stage}`,
@@ -167,6 +176,7 @@ test('a stage wait fails at once when the Issue is closed or has pending, unless
     ...base,
     'GET /repos/o/exec/actions/runs': { workflow_runs: [] },
     'GET /repos/o/exec/issues': () => issues,
+    ...pendingEvents,
     'GET /repos/o/exec/issues/6/comments': [
       {
         id: 1,
@@ -183,11 +193,11 @@ test('a stage wait fails at once when the Issue is closed or has pending, unless
   const gone = k.stageGone('o/exec', 6, 'deliver');
   issues = [issue(6, { labels: [{ name: 'scope' }, { name: 'pending' }] })];
   const s1 = await k.obs.fresh();
-  equal(await gone(s1), '#6 has pending; last Nibfin comment: Deliver stopped: the push was rejected (***).');
+  equal(await gone(s1), `#6 has pending${noRecord(15)}; last Nibfin comment: Deliver stopped: the push was rejected (***).`);
   equal(await k.stageGone('o/exec', 6, 'deliver', { allowPending: true })(s1), undefined);
   await rejects(
     k.obs.until("I's deliver job to run", () => undefined, DEADLINE.stage, undefined, { gonePast: gone }),
-    /gave up waiting for I's deliver job to run: #6 has pending/,
+    new RegExp(`gave up waiting for I's deliver job to run: #6 has pending${noRecord()}; last Nibfin comment`),
   );
 
   // Closed with delivered ends a stage wait at once; closed without it after a grace period, as Nibfin may label after closing.
@@ -429,6 +439,7 @@ test('a wait whose first pass blocks past the stall limit while the Issue gets p
     'GET /repos/o/exec/actions/runs': { workflow_runs: [] },
     'GET /repos/o/exec/issues': () => issues,
     'GET /repos/o/exec/issues/6/comments': blockedComment,
+    ...pendingEvents,
   });
   const c = clock();
   const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
@@ -447,7 +458,9 @@ test('a wait whose first pass blocks past the stall limit while the Issue gets p
       k.show('o/exec', 6),
       { gonePast: k.closeGone('o/exec', 6) },
     ),
-    /^Error: gave up waiting for a marked review comment: #6 has pending; last Nibfin comment: Nibfin stopped and needs a person\. - Code: STAGE_BLOCKED/,
+    new RegExp(
+      `^Error: gave up waiting for a marked review comment: #6 has pending${noRecord()}; last Nibfin comment: Nibfin stopped and needs a person\\. - Code: STAGE_BLOCKED`,
+    ),
   );
   equal(polls, 1);
 });
@@ -459,6 +472,7 @@ test("a refresh inside a blocked pass does not stand in for the stall decision's
     'GET /repos/o/exec/actions/runs': { workflow_runs: [] },
     'GET /repos/o/exec/issues': () => issues,
     'GET /repos/o/exec/issues/6/comments': blockedComment,
+    ...pendingEvents,
   });
   const c = clock();
   const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
@@ -478,7 +492,9 @@ test("a refresh inside a blocked pass does not stand in for the stall decision's
       undefined,
       { gonePast: k.closeGone('o/exec', 6) },
     ),
-    /^Error: gave up waiting for a marked review comment: #6 has pending; last Nibfin comment: Nibfin stopped and needs a person\. - Code: STAGE_BLOCKED/,
+    new RegExp(
+      `^Error: gave up waiting for a marked review comment: #6 has pending${noRecord()}; last Nibfin comment: Nibfin stopped and needs a person\\. - Code: STAGE_BLOCKED`,
+    ),
   );
 });
 
@@ -491,6 +507,7 @@ test('an observer read blocked on a peer request does not count as recent for th
     'GET /repos/o/exec/actions/runs': { workflow_runs: [] },
     'GET /repos/o/exec/issues': () => issues,
     'GET /repos/o/exec/issues/6/comments': blockedComment,
+    ...pendingEvents,
     // The wait's first read lists the exec issues, then blocks on the peer's while F gets pending.
     'GET /repos/o/peer/issues': () => {
       if (++peerReads === 2) {
@@ -506,7 +523,9 @@ test('an observer read blocked on a peer request does not count as recent for th
     k.obs.until('a marked review comment', () => undefined, DEADLINE.stage, undefined, {
       gonePast: k.closeGone('o/exec', 6),
     }),
-    /^Error: gave up waiting for a marked review comment: #6 has pending; last Nibfin comment: Nibfin stopped and needs a person\. - Code: STAGE_BLOCKED/,
+    new RegExp(
+      `^Error: gave up waiting for a marked review comment: #6 has pending${noRecord()}; last Nibfin comment: Nibfin stopped and needs a person\\. - Code: STAGE_BLOCKED`,
+    ),
   );
   equal(peerReads >= 3, true, 'the decision read anew');
 });
@@ -553,6 +572,7 @@ function stopKit(body: string, secrets: string[] = []) {
     ...base,
     'GET /repos/o/exec/actions/runs': { workflow_runs: [] },
     'GET /repos/o/exec/issues': pendingIssue(),
+    ...pendingEvents,
     'GET /repos/o/exec/issues/6/comments': [
       { id: 9, body, created_at: '', updated_at: '', user: null, html_url: stopUrl },
     ],
@@ -568,7 +588,7 @@ test('a stop comment of about 600 characters appears in the pending reason in fu
   const k = stopKit(body);
   const s = await k.obs.next();
   const reason = await k.stageGone('o/exec', 6, 'shape')(s);
-  equal(reason, `#6 has pending; last Nibfin comment: ${text}`);
+  equal(reason, `#6 has pending${noRecord(15)}; last Nibfin comment: ${text}`);
   equal(reason?.endsWith(`see ${blockedUrl} \`\`\``), true);
   equal(await k.closeGone('o/exec', 6)(s), reason);
   await rejects(
@@ -576,7 +596,7 @@ test('a stop comment of about 600 characters appears in the pending reason in fu
       gonePast: k.closeGone('o/exec', 6),
     }),
     new RegExp(
-      `^Error: gave up waiting for a marked review comment: #6 has pending; last Nibfin comment: ${escape(text)}$`,
+      `^Error: gave up waiting for a marked review comment: #6 has pending${noRecord()}; last Nibfin comment: ${escape(text)}$`,
     ),
   );
 });
@@ -587,9 +607,9 @@ test('a stop comment over the limit is cut at its end on a whole token, with the
   equal(text.length > QUOTE_LIMIT, true);
   const k = stopKit(body);
   const reason = (await k.stageGone('o/exec', 6, 'shape')(await k.obs.next())) ?? '';
-  const m = /^#6 has pending; last Nibfin comment: (.*) … \(cut, (\d+) more characters; full comment: (\S+)\)$/.exec(
-    reason,
-  );
+  const m = new RegExp(
+    `^#6 has pending${noRecord()}; last Nibfin comment: (.*) … \\(cut, (\\d+) more characters; full comment: (\\S+)\\)$`,
+  ).exec(reason);
   equal(!!m, true, reason);
   const [, kept = '', dropped = '', url = ''] = m ?? [];
   equal(url, stopUrl);

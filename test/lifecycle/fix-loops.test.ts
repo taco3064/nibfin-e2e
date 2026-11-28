@@ -22,6 +22,16 @@ const base = {
   'GET /repos/o/exec/actions/runs': { workflow_runs: [] },
   'GET /rate_limit': {},
 };
+// The Issue's events: `pending` added past REPAIR_GRACE before the fake clock's start,
+// so a `pending` with no repair record ends a wait at once.
+const pendingAt = '2026-11-26T09:45:00Z';
+const pendingEvents = {
+  'GET /repos/o/exec/issues/6/events': [{ event: 'labeled', created_at: pendingAt, label: { name: 'pending' } }],
+};
+const noRecord = `; no repair record \\d+ min after pending was added at ${escape(new Date(pendingAt).toISOString())}`;
+function escape(t: string): string {
+  return t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 const issue = (n: number, extra: Record<string, unknown> = {}) => ({
   number: n,
   title: 't',
@@ -57,6 +67,7 @@ test('a fix-loops wait guarded by closeGone ends on the first fresh snapshot whe
     ...base,
     'GET /repos/o/exec/issues': () => issues,
     'GET /repos/o/exec/issues/6/comments': blocked,
+    ...pendingEvents,
   });
   const c = clock();
   const k = new Kit(context(f.github, { secretValues: () => ['tok-9'] }), { now: c.now, sleep: c.sleep });
@@ -74,7 +85,9 @@ test('a fix-loops wait guarded by closeGone ends on the first fresh snapshot whe
       k.show('o/exec', 6),
       { gonePast: k.closeGone('o/exec', 6) },
     ),
-    /^Error: gave up waiting for a marked review comment on F's PR after the harness commit: #6 has pending; last Nibfin comment: Deliver stopped: CHANGELOG\.md is outside the Issue \(\*\*\*\)\./,
+    new RegExp(
+      `^Error: gave up waiting for a marked review comment on F's PR after the harness commit: #6 has pending${noRecord}; last Nibfin comment: Deliver stopped: CHANGELOG\\.md is outside the Issue \\(\\*\\*\\*\\)\\.`,
+    ),
   );
   equal(c.now() - started < 10 * MIN, true, 'it ended long before the stall limit');
 });
@@ -134,6 +147,7 @@ function fixKit(conclusion: string) {
         },
       ],
     },
+    ...pendingEvents,
     'GET /repos/o/exec/actions/jobs/21/logs': { status: 302, headers: { location: 'https://logs.example/21' } },
     'GET /repos/o/exec/issues': [issue(6, { labels: [{ name: 'scope' }, { name: 'shaped' }, { name: 'pending' }] })],
     'GET /repos/o/exec/issues/6/comments': [
@@ -171,9 +185,9 @@ test('a ci-failure deliver job that completed with failure does not satisfy the 
   );
   equal(c.now() - started < STALL, true, 'it ended long before the stall check');
   // Started before `from`, as for the review wait, the failed job does not end it.
-  equal(
-    await fixGone(k, 6, 'ci-failure', Date.parse('2026-11-26T10:05:00Z'))(await k.obs.current()),
-    '#6 has pending; last Nibfin comment: Nibfin stopped and needs a person. - Code: STAGE_BLOCKED',
+  match(
+    (await fixGone(k, 6, 'ci-failure', Date.parse('2026-11-26T10:05:00Z'))(await k.obs.current())) ?? '',
+    new RegExp(`^#6 has pending${noRecord}; last Nibfin comment: Nibfin stopped and needs a person\\. - Code: STAGE_BLOCKED$`),
   );
 });
 
