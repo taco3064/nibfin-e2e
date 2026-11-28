@@ -43,14 +43,14 @@ export async function decisionFixture(k: Kit, scenario: string): Promise<Fixture
   };
 }
 
+/** Why the waits for a product-decision stop and its record do not end on `pending`: it is how Shape stops for the decision (Proposal R4.45). */
+const DECISION_PENDING = 'Shape stops with pending for the product decision';
+
 /**
  * Waits until the fixture has `pending` and returns the Issue from the first snapshot that
  * shows it (its body is the baseline for "unchanged", R4.45). It ends early when Shape
  * published instead, the Issue closed, or a shape job completed and another stage followed.
  */
-/** Why the waits for a product-decision stop and its record do not end on `pending`: it is how Shape stops for the decision (Proposal R4.45). */
-const DECISION_PENDING = 'Shape stops with pending for the product decision';
-
 export async function awaitDecisionStop(k: Kit, n: number, show: (s: Snapshot) => Promise<string>): Promise<Issue> {
   const gone = k.stageGone(k.exec, n, 'shape', { allowPending: true });
   return k.obs.until(
