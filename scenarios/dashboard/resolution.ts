@@ -9,6 +9,7 @@ import { deleteFile, putFile, whoami } from '../lib/github.ts';
 import {
   briefRecord,
   classIn,
+  isFinishedRecord,
   pendingAddedAt,
   resolutionGate,
   resolutionRecord,
@@ -16,6 +17,7 @@ import {
 } from '../lib/resolution.ts';
 import type { ResolutionRecord } from '../lib/resolution.ts';
 import { waitFor } from '../lib/wait.ts';
+import type { WaitOptions } from '../lib/wait.ts';
 import { Checks, describeComments, markerOf, time } from '../lifecycle/analysis.ts';
 import type { Comment } from '../lifecycle/analysis.ts';
 import { DEADLINE, kitFor, message } from '../lifecycle/kit.ts';
@@ -29,6 +31,8 @@ import {
   chooseDialogProblems,
   controlsFromAriaSnapshot,
   decisionOption,
+  decisionStopNotExercised,
+  elementMissing,
   nextStepLines,
   ownWordsComment,
   ownWordsIndex,
@@ -40,6 +44,7 @@ import { READ_ONLY_REPO, readOnlyPrecondition } from './operations.ts';
 import type { Secrets } from './support.ts';
 import {
   bodyText,
+  button,
   closeDialog,
   defineScenario,
   dialog,
@@ -51,6 +56,7 @@ import {
   openDashboard,
   openPage,
   readAutoShown,
+  readUpdateMarker,
   selectRepo,
   startDashboard,
 } from './support.ts';
@@ -66,6 +72,8 @@ const HANDLE_BUTTONS = /^\s*(close|cancel|done|dismiss|resume|關閉|取消|完�
 /** A control that would handle several Issues at once (R9.54 forbids it). */
 const BULK = /\b(all|selected|bulk)\b|全部|批次|多選/i;
 const WATCH_MS = 3000;
+/** The least time between two clicks of a manual view's Refresh control, bounding the Dashboard's extra GitHub reads. */
+const REFRESH_MS = 30_000;
 const STATE_NAME: Record<ResolutionState, string> = { auto: '自動排除中', choose: '等你選擇', handle: '需要你處理' };
 
 const iso = (t: number | undefined) => (t === undefined ? 'unknown' : new Date(t).toISOString());
@@ -78,10 +86,64 @@ interface Fixture {
   title: string;
   pendingAt?: number;
   record?: ResolutionRecord;
+  /** The Issue's comments as read when its finished record was seen. */
+  comments?: Comment[];
 }
 
 /**
- * Watches one fixture's element every 3 s and records each state it shows, with its time.
+ * Refreshes a view marked as manually refreshed (R9.8) with the page's Refresh control, at most
+ * once every 30 s, so that Issues filed after the page loaded are shown. A Live view is never
+ * refreshed; a view whose marker cannot be read is refreshed like a manual one. The page itself
+ * is never reloaded: that would re-send its spent one-time proof (R9.26).
+ */
+class ViewRefresh {
+  private next = 0;
+  private count = 0;
+  private lastAt: number | undefined;
+  private noControl = false;
+  private readonly page: Page;
+  private readonly view: string;
+  private readonly marker: string;
+
+  private constructor(page: Page, view: string, marker: string) {
+    this.page = page;
+    this.view = view;
+    this.marker = marker;
+  }
+
+  static async of(page: Page, view: string): Promise<ViewRefresh> {
+    const marker = await readUpdateMarker(page).catch(
+      (error: unknown) => `unreadable (${briefRecord(message(error), 120)})`,
+    );
+    return new ViewRefresh(page, view, marker);
+  }
+
+  /** Clicks the Refresh control when the view is not Live and the last attempt is 30 s old. */
+  async maybe(): Promise<void> {
+    if (this.marker === 'live' || Date.now() < this.next) return;
+    // Set before awaiting, so watchers reading at the same time share one click.
+    this.next = Date.now() + REFRESH_MS;
+    const control = await button(this.page, /refresh/i).catch(() => undefined);
+    this.noControl = !control;
+    if (!control) return;
+    // A failed click is not a refresh; the next attempt comes after the interval, as after a click.
+    if (!(await control.click().then(() => true, () => false))) return;
+    this.count++;
+    this.lastAt = Date.now();
+    await sleep(3000);
+  }
+
+  /** The view, its update marker and how it was refreshed, for messages. */
+  describe(): string {
+    const head = `${this.view} view, update marker ${this.marker}`;
+    if (this.marker === 'live') return `${head}, so it was not refreshed`;
+    if (this.noControl) return `${head}, which has no Refresh control, so it was not refreshed`;
+    return `${head}, refreshed ${this.count} time(s) by its Refresh control, last at ${iso(this.lastAt)}`;
+  }
+}
+
+/**
+ * Watches one fixture's element every 3 s, refreshing a manual view first, and records each state it shows, with its time.
  * The first time it shows 自動排除中 the Issue is read from GitHub and judged (R9.52).
  */
 class StateWatcher {
@@ -93,9 +155,11 @@ class StateWatcher {
   private readonly k: Kit;
   private readonly c: Checks;
   private readonly f: Fixture;
+  private readonly refresh: ViewRefresh;
 
-  constructor(page: Page, k: Kit, c: Checks, f: Fixture) {
+  constructor(page: Page, k: Kit, c: Checks, f: Fixture, refresh: ViewRefresh) {
     this.page = page;
+    this.refresh = refresh;
     this.k = k;
     this.c = c;
     this.f = f;
@@ -105,6 +169,7 @@ class StateWatcher {
   private async loop(): Promise<void> {
     while (!this.stopped) {
       try {
+        await this.refresh.maybe();
         const at = Date.now();
         const { state } = await elementState(this.page, this.f.title);
         if (this.seen.at(-1)?.state !== state) this.seen.push({ state, at });
@@ -140,11 +205,11 @@ class StateWatcher {
   }
 }
 
-type IssueRead = { state: string; labels: string[]; comments: Comment[]; record: ResolutionRecord | undefined };
+export type IssueRead = { state: string; labels: string[]; comments: Comment[]; record: ResolutionRecord | undefined };
 
-/** Waits for the latest resolution record after `pendingAt`; ends early when `pending` goes first or the Issue closes. */
-async function awaitRecord(k: Kit, n: number, pendingAt: number, deadlineMs: number): Promise<ResolutionRecord> {
-  const read = async (): Promise<IssueRead> => {
+/** The Issue's state, labels and comments, and its latest resolution record after `pendingAt`. */
+function issueRead(k: Kit, n: number, pendingAt: number): () => Promise<IssueRead> {
+  return async () => {
     const { data } = await k.gh.rest<{ state: string; labels: { name: string }[] }>(
       'GET',
       `/repos/${k.exec}/issues/${n}`,
@@ -157,24 +222,42 @@ async function awaitRecord(k: Kit, n: number, pendingAt: number, deadlineMs: num
       record: resolutionRecord(comments, pendingAt),
     };
   };
+}
+
+/**
+ * Waits until the latest resolution record after `pendingAt` is finished: it names one of the
+ * R4.41 classes (R4.49). The unfinished record shown as 自動排除中 (R9.52) is waited past, and
+ * so are its in-place updates (R3.42), since the latest record is taken by last write. Ends
+ * early when `pending` goes first or the Issue closes.
+ */
+export async function awaitRecord(
+  read: () => Promise<IssueRead>,
+  n: number,
+  pendingAt: number,
+  options: WaitOptions,
+): Promise<IssueRead & { record: ResolutionRecord }> {
   let last: IssueRead | undefined;
+  const mins = Math.round(options.deadlineMs / MIN);
   try {
-    last = await waitFor(read, (s) => s.record !== undefined || s.state !== 'open' || !s.labels.includes('pending'), {
-      what: `a resolution record on #${n}`,
-      deadlineMs,
-      intervalMs: 20_000,
-      signal: k.ctx.signal,
-    });
+    last = await waitFor(
+      async () => (last = await read()),
+      (s) => (s.record !== undefined && isFinishedRecord(s.record)) || s.state !== 'open' || !s.labels.includes('pending'),
+      options,
+    );
   } catch {
     // waitFor's message quotes raw comment text, so it is not reported.
-    k.ctx.signal.throwIfAborted();
+    options.signal?.throwIfAborted();
+    const unfinished = last?.record;
     throw new Error(
-      `no resolution record on #${n} within ${Math.round(deadlineMs / MIN)} min after pending was added at ${iso(pendingAt)}`,
+      unfinished
+        ? `the latest resolution record ${unfinished.url} on #${n} never named one of the six R4.41 classes within ${mins} min after pending was added at ${iso(pendingAt)}: ${briefRecord(unfinished.body)}`
+        : `no resolution record on #${n} within ${mins} min after pending was added at ${iso(pendingAt)}`,
     );
   }
-  if (last.record) return last.record;
+  const r = last.record;
+  if (r && isFinishedRecord(r)) return { ...last, record: r };
   throw new Error(
-    `#${n} ${last.state !== 'open' ? `closed` : 'lost pending'} before a resolution record appeared (pending added at ${iso(pendingAt)}; labels [${last.labels.join(', ')}])`,
+    `#${n} ${last.state !== 'open' ? 'closed' : 'lost pending'} before ${r ? `its resolution record ${r.url} named a class` : 'a resolution record appeared'} (pending added at ${iso(pendingAt)}; labels [${last.labels.join(', ')}])`,
   );
 }
 
@@ -192,8 +275,17 @@ async function githubState(k: Kit, n: number): Promise<string> {
   });
 }
 
-/** The element's state and cause match its record (R9.52), read for up to 90 s after the record. */
-async function checkShown(page: Page, c: Checks, f: Fixture, r: ResolutionRecord): Promise<void> {
+/**
+ * The element's state and cause match its record (R9.52), read for up to 90 s after the record,
+ * refreshing a manual view; an element still not found is named with the view it was looked for in.
+ */
+async function checkShown(
+  page: Page,
+  c: Checks,
+  f: Fixture,
+  r: ResolutionRecord,
+  refresh: ViewRefresh,
+): Promise<void> {
   const want = stateOfRecord(r);
   if (!want) {
     c.fail(
@@ -203,11 +295,18 @@ async function checkShown(page: Page, c: Checks, f: Fixture, r: ResolutionRecord
     return;
   }
   const shown = await until(
-    () => elementState(page, f.title),
+    async () => {
+      await refresh.maybe();
+      return elementState(page, f.title);
+    },
     (x) => x.state === want && (!r.cause || causeShown(x.text, r.cause)),
     90_000,
     WATCH_MS,
   );
+  if (!(await issueElement(page, f.title).count())) {
+    c.fail('R9.52', elementMissing(f, refresh.describe()));
+    return;
+  }
   c.check(
     'R9.52',
     shown.state === want,
@@ -383,6 +482,7 @@ async function chooseDialog(
   r: ResolutionRecord,
   me: string,
   mode: ChooseMode,
+  refresh: ViewRefresh,
 ): Promise<void> {
   const { d, text } = await openRepair(page, c, f, r);
   const radios = d.getByRole('radio');
@@ -471,10 +571,12 @@ async function chooseDialog(
   );
   await closeDialog(page);
   const after = await until(
-    () =>
-      issueElement(page, f.title)
+    async () => {
+      await refresh.maybe();
+      return issueElement(page, f.title)
         .innerText()
-        .catch(() => ''),
+        .catch(() => '');
+    },
     (t) => !/\bpending\b/i.test(t),
     90_000,
     WATCH_MS,
@@ -556,11 +658,12 @@ async function run(ctx: RunContext, secrets: Secrets): Promise<string> {
     // The repo view reads open Issues directly; the person view waits on the search index.
     await gotoView(page, 'repo');
     await selectRepo(page, exec);
+    const refresh = await ViewRefresh.of(page, 'repo');
 
     // 等你選擇: the product-decision fixture.
     const issueD = await k.file(exec, await decisionFixture(k, SCENARIO));
     decision = { name: 'product-decision', n: issueD.number, title: issueD.title };
-    const wD = new StateWatcher(page, k, c, decision);
+    const wD = new StateWatcher(page, k, c, decision, refresh);
     watchers.push({ f: decision, w: wD });
     // 等你選擇 decided in the person's own words (R4.51): its own title and code file, so its
     // Issue element and Shape are told apart from the first fixture's. Filed now so both Shapes run together.
@@ -570,14 +673,21 @@ async function run(ctx: RunContext, secrets: Secrets): Promise<string> {
       body: decisionBody(k.slug('round-words')),
     });
     words = { name: 'own-words decision', n: issueW.number, title: issueW.title };
-    const wW = new StateWatcher(page, k, c, words);
+    const wW = new StateWatcher(page, k, c, words, refresh);
     watchers.push({ f: words, w: wW });
     try {
       await awaitDecisionStop(k, decision.n, k.show(exec, decision.n));
       decision.pendingAt = await pendingAddedAt(k.gh, exec, decision.n);
-      decision.record = await awaitRecord(k, decision.n, decision.pendingAt, DEADLINE.stage);
+      const got = await awaitRecord(issueRead(k, decision.n, decision.pendingAt), decision.n, decision.pendingAt, {
+        what: `a finished resolution record on #${decision.n}`,
+        deadlineMs: DEADLINE.stage,
+        intervalMs: 20_000,
+        signal: ctx.signal,
+      });
+      decision.record = got.record;
+      decision.comments = got.comments;
     } catch (error) {
-      c.fail('R9.52', `the product-decision fixture #${decision.n} reached no 等你選擇 record: ${message(error)}`);
+      c.fail('R9.52', `the product-decision fixture #${decision.n} reached no finished resolution record: ${message(error)}`);
       await k.pauseOpen(exec, [decision.n]);
     } finally {
       await wD.stop();
@@ -585,9 +695,16 @@ async function run(ctx: RunContext, secrets: Secrets): Promise<string> {
     try {
       await awaitDecisionStop(k, words.n, k.show(exec, words.n));
       words.pendingAt = await pendingAddedAt(k.gh, exec, words.n);
-      words.record = await awaitRecord(k, words.n, words.pendingAt, DEADLINE.stage);
+      const got = await awaitRecord(issueRead(k, words.n, words.pendingAt), words.n, words.pendingAt, {
+        what: `a finished resolution record on #${words.n}`,
+        deadlineMs: DEADLINE.stage,
+        intervalMs: 20_000,
+        signal: ctx.signal,
+      });
+      words.record = got.record;
+      words.comments = got.comments;
     } catch (error) {
-      c.fail('R9.52', `the own-words decision fixture #${words.n} reached no 等你選擇 record: ${message(error)}`);
+      c.fail('R9.52', `the own-words decision fixture #${words.n} reached no finished resolution record: ${message(error)}`);
       await k.pauseOpen(exec, [words.n]);
     } finally {
       await wW.stop();
@@ -604,7 +721,7 @@ async function run(ctx: RunContext, secrets: Secrets): Promise<string> {
       assignees: [me],
     });
     config = { name: 'invalid-config', n: issueC.number, title: issueC.title };
-    const wC = new StateWatcher(page, k, c, config);
+    const wC = new StateWatcher(page, k, c, config, refresh);
     watchers.push({ f: config, w: wC });
     try {
       const n = config.n;
@@ -627,15 +744,22 @@ async function run(ctx: RunContext, secrets: Secrets): Promise<string> {
         });
       });
       config.pendingAt = await pendingAddedAt(k.gh, exec, n);
-      config.record = await awaitRecord(k, n, config.pendingAt, 15 * MIN);
+      const got = await awaitRecord(issueRead(k, n, config.pendingAt), n, config.pendingAt, {
+        what: `a finished resolution record on #${n}`,
+        deadlineMs: 15 * MIN,
+        intervalMs: 20_000,
+        signal: ctx.signal,
+      });
+      config.record = got.record;
+      config.comments = got.comments;
     } catch (error) {
-      c.fail('R9.52', `the invalid-config fixture #${config.n} reached no 需要你處理 record: ${message(error)}`);
+      c.fail('R9.52', `the invalid-config fixture #${config.n} reached no finished resolution record: ${message(error)}`);
     } finally {
       await wC.stop();
     }
 
     // R9.52: each fixture shows its record's state and cause; every Issue shown as 自動排除中 may be.
-    for (const f of [decision, words, config]) if (f.record) await checkShown(page, c, f, f.record);
+    for (const f of [decision, words, config]) if (f.record) await checkShown(page, c, f, f.record, refresh);
     autoSeen(c, watchers);
     const open = await k.gh.list<{ number: number; title: string; pull_request?: unknown }>(
       `/repos/${exec}/issues?state=open`,
@@ -664,19 +788,25 @@ async function run(ctx: RunContext, secrets: Secrets): Promise<string> {
     await deleteFile(k.gh, exec, '.nibfin.json', `nibfin-e2e ${SCENARIO}: remove the invalid .nibfin.json`);
     filePut = false;
 
-    // R9.53, R9.54 on 等你選擇.
-    if (decision.record) {
-      try {
-        await chooseDialog(page, k, c, decision, decision.record, me, { kind: 'option' });
-      } catch (error) {
-        c.fail('R9.54', message(error));
+    // R9.53, R9.54 on 等你選擇. A finished record without options is another kind of stop than
+    // the product decision the fixture was filed for, so the dialog is not run and its cause is named.
+    const tag = k.tag;
+    const modes: [Fixture, ChooseMode][] = [
+      [decision, { kind: 'option' }],
+      // R9.54 with R4.51: a unique reply with no option number (the tag is r plus hex) and no secret.
+      [
+        words,
+        { kind: 'words', reply: `nibfin-e2e ${tag}: decided in my own words, round exact halves to the nearest even integer.` },
+      ],
+    ];
+    for (const [f, mode] of modes) {
+      if (!f.record) continue;
+      if (!f.record.options.length) {
+        c.notExercised('R9.54', decisionStopNotExercised(f, f.record, f.comments ?? []));
+        continue;
       }
-    }
-    // R9.54 with R4.51: a unique reply with no option number (the tag is r plus hex) and no secret.
-    if (words.record) {
-      const reply = `nibfin-e2e ${k.tag}: decided in my own words, round exact halves to the nearest even integer.`;
       try {
-        await chooseDialog(page, k, c, words, words.record, me, { kind: 'words', reply });
+        await chooseDialog(page, k, c, f, f.record, me, mode, refresh);
       } catch (error) {
         c.fail('R9.54', message(error));
       }
@@ -684,8 +814,13 @@ async function run(ctx: RunContext, secrets: Secrets): Promise<string> {
 
     // R9.56: the sandbox half ran in openRepair; the below-triage half here.
     await readOnlyRepair(page, ctx, c);
+    const reached = (f: Fixture) => {
+      if (!f.record) return 'reached no finished record';
+      const st = stateOfRecord(f.record);
+      return `reached ${st ? STATE_NAME[st] : 'no state'}`;
+    };
     notes.push(
-      `#${decision.n} ${decision.record ? 'reached 等你選擇' : 'reached no record'}, #${words.n} (own words) ${words.record ? 'reached 等你選擇' : 'reached no record'}, #${config.n} ${config.record ? 'reached 需要你處理' : 'reached no record'}; states seen: ${watchers.map(({ f, w }) => `#${f.n} ${w.transitions()}`).join('; ')}`,
+      `#${decision.n} ${reached(decision)}, #${words.n} (own words) ${reached(words)}, #${config.n} ${reached(config)}; states seen: ${watchers.map(({ f, w }) => `#${f.n} ${w.transitions()}`).join('; ')}`,
     );
   } finally {
     for (const { w } of watchers) await w.stop();
