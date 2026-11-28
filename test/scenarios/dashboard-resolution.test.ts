@@ -4,6 +4,8 @@ import {
   autoEligible,
   autoProblem,
   causeShown,
+  chooseDialogProblems,
+  controlsFromAriaSnapshot,
   decisionOption,
   LAG_MS,
   latestPending,
@@ -12,6 +14,8 @@ import {
   nibfinPending,
   optionLabel,
   optionOfChoice,
+  ownWordsComment,
+  ownWordsIndex,
   PENDING_SKEW_MS,
   shownState,
   stateOfRecord,
@@ -184,6 +188,90 @@ test('option helpers: labels without the recommendation, choices by number or te
   equal(decisionOption('<!-- nibfin:decision option=2 -->\nDecided: option 2'), 2);
   equal(decisionOption('1'), 1);
   equal(decisionOption('<!-- nibfin:decision -->\nI choose the first'), undefined);
+});
+
+// The 等你選擇 dialog (R9.54 as amended, R4.51): options, the recommended one preselected, and an own-words reply.
+const failing = (ps: { ok: boolean; message: string }[]) => ps.filter((p) => !p.ok).map((p) => p.message);
+const CHOOSE_TEXT = '產品決策 How halves round is an open product decision 1. Round half to even 2. Round half away from zero';
+const OPTION_CHOICES = [
+  { name: '1. Round half to even', checked: true },
+  { name: '2. Round half away from zero', checked: false },
+];
+
+test('chooseDialogProblems passes the options, the recommended one preselected and a free-text field', () => {
+  const r = parseRecord(comment(CHOOSE, 0));
+  const ps = chooseDialogProblems(
+    { text: CHOOSE_TEXT, choices: OPTION_CHOICES, textboxes: 1, controls: [] },
+    r,
+    7,
+  );
+  deepEqual(failing(ps), []);
+  equal(ps.every((p) => p.rule === 'R9.54'), true);
+});
+
+test('chooseDialogProblems fails R9.54 without an own-words control, naming the controls and quoting the dialog', () => {
+  const r = parseRecord(comment(CHOOSE, 0));
+  const controls = ['radio "1. Round half to even"', 'radio "2. Round half away from zero"', 'button "送出"'];
+  const bad = failing(chooseDialogProblems({ text: CHOOSE_TEXT, choices: OPTION_CHOICES, textboxes: 0, controls }, r, 7));
+  equal(bad.length, 1);
+  match(bad[0] ?? '', /dialog of #7 offers no way to reply in your own words \(R4\.51\)/);
+  match(bad[0] ?? '', /controls: radio "1\. Round half to even", radio "2\. Round half away from zero", button "送出"/);
+  match(bad[0] ?? '', /dialog: "產品決策 How halves round/);
+});
+
+test('an own-words choice is not a missing or extra option and counts as the own-words control', () => {
+  const r = parseRecord(comment(CHOOSE, 0));
+  for (const name of ['用自己的話回覆', 'Reply in your own words']) {
+    const choices = [...OPTION_CHOICES, { name, checked: false }];
+    equal(ownWordsIndex(choices, r), 2, name);
+    for (const textboxes of [0, 1])
+      deepEqual(failing(chooseDialogProblems({ text: CHOOSE_TEXT, choices, textboxes, controls: [] }, r, 7)), [], name);
+  }
+  const other = [...OPTION_CHOICES, { name: 'Round half down', checked: false }];
+  equal(ownWordsIndex(other, r), undefined);
+  const bad = failing(chooseDialogProblems({ text: CHOOSE_TEXT, choices: other, textboxes: 1, controls: [] }, r, 7));
+  deepEqual(bad, [`the 「排除」 dialog of #7 lists 3 choices, not the record's 2; dialog: "${CHOOSE_TEXT}"`]);
+  const preOwn = [
+    { name: '1. Round half to even', checked: false },
+    { name: '2. Round half away from zero', checked: false },
+    { name: '用自己的話回覆', checked: true },
+  ];
+  deepEqual(failing(chooseDialogProblems({ text: CHOOSE_TEXT, choices: preOwn, textboxes: 1, controls: [] }, r, 7)), [
+    'the 「排除」 dialog of #7 preselects choice 3 (no option matched), not the recommended option 1',
+  ]);
+});
+
+test('ownWordsComment holds the reply verbatim, allowing only Nibfin markers, CRLF and outer whitespace', () => {
+  const reply = 'nibfin-e2e rab12cd: decided in my own words, round exact halves to the nearest even integer.';
+  equal(ownWordsComment(reply, reply), true);
+  equal(ownWordsComment(`<!-- nibfin:decision -->\n${reply}`, reply), true);
+  equal(ownWordsComment(`\r\n  ${reply}\r\n`, reply), true);
+  const two = 'first line\nsecond line';
+  equal(ownWordsComment('first line\r\nsecond line', two), true);
+  equal(ownWordsComment('<!-- nibfin:decision option=1 -->\nDecided: option 1', reply), false);
+  equal(ownWordsComment('something else entirely', reply), false);
+  equal(ownWordsComment(`${reply} Thanks!`, reply), false);
+});
+
+test('controlsFromAriaSnapshot lists each control by role and name, unnamed ones too', () => {
+  const snapshot = [
+    '- dialog "排除":',
+    '  - heading "等你選擇" [level=2]',
+    '  - text: How halves round',
+    '  - radiogroup:',
+    '    - radio "1. Round half to even" [checked]',
+    '    - radio "2. Round half away from zero"',
+    '  - textbox',
+    '  - link "run log":',
+    '    - /url: https://github.com/o/exec/actions/runs/1',
+    '  - button "送出"',
+  ].join('\n');
+  deepEqual(controlsFromAriaSnapshot(snapshot), [
+    'radio "1. Round half to even"',
+    'radio "2. Round half away from zero"',
+    'textbox (unnamed)',
+    'button "送出"',
+  ]);
 });
 
 test('defineScenario returns the gate outcome without running, and runs when the gate is open', async () => {
