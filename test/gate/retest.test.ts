@@ -188,6 +188,10 @@ test('select --delivered --since-last-retest plans from the last retest, or fall
   equal(merged.code, 0);
   equal(merged.json.mode, 'delivered-since');
   equal(merged.json.since, '2026-11-28T00:30:00.000Z');
+  match(
+    merged.json.summary,
+    /\| since \| 2026-11-28T00:30:00\.000Z \| --since-last-retest for taco3064\/nibfin-core#1: the newest completed, non-cancelled retest run was queued then \|/,
+  );
   deepEqual(merged.json.selection, { all: false, rules: ['R3.1', 'R3.2'] });
   deepEqual(
     merged.json.sources.map((s: { issue: string }) => s.issue),
