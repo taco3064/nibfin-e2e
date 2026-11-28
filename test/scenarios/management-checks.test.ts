@@ -2,7 +2,7 @@ import { deepEqual, equal, match } from 'node:assert/strict';
 import { test } from 'node:test';
 import { flagDiff, normalDefault } from '../../scenarios/management/dashboard.ts';
 import { releaseSteps } from '../../scenarios/management/image-release.ts';
-import { checkInitFiles } from '../../scenarios/management/init-files.ts';
+import { checkInitFiles, ownerUse, type ImageTags } from '../../scenarios/management/init-files.ts';
 import { namesRebaseOnly } from '../../scenarios/management/init-settings.ts';
 import { newEnabledUnits, wslconfigChanges } from '../../scenarios/management/runner-add-setup.ts';
 import { newCronEntries, newTimerUnits, newTimers, newVmUnits, periodicTriggers } from '../../scenarios/management/runner-no-periodic.ts';
@@ -96,6 +96,41 @@ test('init files: extra and missing files, Owner calls, other digests and bad na
     { path: WFS + 'nibfin-shared-runner.yml', text: shared },
   ], D);
   match(peer.problems.join('\n'), /R5.37: o\/peer init PR has nibfin-shared-runner.yml, so it is not the peer version/);
+});
+
+test('init files: only the SHA-pinned nibfin-core Action whose commit tag is the pinned image passes R5.7', () => {
+  const sha = '0123456789abcdef0123456789abcdef01234567';
+  const other = 'sha256:' + 'c'.repeat(64);
+  const run = (use: string, tags: ImageTags = new Map([[sha, { digest: D }]])) => {
+    const c = new Check();
+    checkInitFiles(c, 'o/peer', 'peer', [{ path: WFS + 'nibfin-issue.yml', text: wf('Issue', `      - uses: ${use}\n`) }], D, tags);
+    return c.problems.join('\n');
+  };
+  equal(run(`taco3064/nibfin-core@${sha}`), '');
+  equal(run(`taco3064/nibfin-core/actions/handoff@${sha}`), '');
+  for (const ref of ['main', 'v1', sha.slice(0, 7)]) {
+    match(run(`taco3064/nibfin-core@${ref}`), new RegExp(`R5.7: o/peer: .github/workflows/nibfin-issue.yml uses taco3064/nibfin-core@${ref}, pinned to ${ref}, not a full 40-character commit SHA`));
+  }
+  match(run(`taco3064/nibfin-core/.github/workflows/x.yml@${sha}`), /R5.7: .*uses taco3064\/nibfin-core\/.github\/workflows\/x.yml@0123\w+, a reusable workflow of nibfin-core, which R5.7 does not allow/);
+  match(run(`taco3064/other-repo@${sha}`), /R5.7: .*uses taco3064\/other-repo@0123\w+, a workflow or action of another Owner repository; R5.7 allows only the taco3064\/nibfin-core Action/);
+  match(run(`taco3064/nibfin-core-x@${sha}`), /another Owner repository/);
+  const none = new RegExp(`R5.7: .*nibfin-issue.yml uses taco3064/nibfin-core@${sha}, whose image tag ghcr.io/taco3064/nibfin:${sha} has no digest \\(none\\), expected sha256:a+`);
+  match(run(`taco3064/nibfin-core@${sha}`, new Map()), none);
+  match(run(`taco3064/nibfin-core@${sha}`, new Map([[sha, {}]])), none);
+  match(run(`taco3064/nibfin-core@${sha}`, new Map([[sha, { digest: other }]])), new RegExp(`whose image tag ghcr.io/taco3064/nibfin:${sha} is sha256:c+, expected sha256:a+`));
+  const failed = run(`taco3064/nibfin-core@${sha}`, new Map([[sha, { error: `GHCR HEAD taco3064/nibfin:${sha} returned 500` }]]));
+  match(failed, new RegExp(`uses taco3064/nibfin-core@${sha}, but ghcr.io/taco3064/nibfin:${sha} could not be read: GHCR HEAD taco3064/nibfin:${sha} returned 500`));
+  equal(/no digest|expected sha256/.test(failed), false);
+  // Other Owner forms keep today's reason, and the github.com/taco3064/ text check still reports.
+  match(run('docker://ghcr.io/taco3064/x'), /uses docker:\/\/ghcr.io\/taco3064\/x, a workflow or action of the Owner/);
+  match(run(`taco3064/nibfin-core@${sha} # https://github.com/taco3064/nibfin-core`), /nibfin-issue.yml refers to a github.com\/taco3064\/ repository/);
+});
+
+test('init files: ownerUse leaves non-Owner values to the other checks and matches the Owner case-insensitively', () => {
+  equal(ownerUse('actions/checkout@v4'), undefined);
+  equal(ownerUse('./.github/workflows/nibfin-job.yml'), undefined);
+  deepEqual(ownerUse('TACO3064/Nibfin-Core@' + 'f'.repeat(40)), { sha: 'f'.repeat(40) });
+  equal(execProblems(), '');
 });
 
 test('init files: a reusable nibfin-job.yml that runs an unpinned image fails R5.7', () => {
