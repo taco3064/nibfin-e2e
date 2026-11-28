@@ -1,7 +1,13 @@
 import { deepEqual, equal, ok } from 'node:assert/strict';
 import { test } from 'node:test';
 import { buttonNamesFromAriaSnapshot, missingButtonMessage } from '../../scenarios/dashboard/checks.ts';
-import { RUNNER_ADD, RUNNER_LOGIN, RUNNER_REMOVE } from '../../scenarios/dashboard/operations.ts';
+import {
+  REPO_OPERATION,
+  RUNNER_ADD,
+  RUNNER_LOGIN,
+  RUNNER_REMOVE,
+  repoViewOf,
+} from '../../scenarios/dashboard/operations.ts';
 
 test('the Runner add matcher accepts add as a whole word anywhere in the name', () => {
   for (const name of ['Add', 'Runner add', 'Add runner', '+ Add runner', 'runner-add']) ok(RUNNER_ADD.test(name), name);
@@ -17,6 +23,17 @@ test('the Runner remove matcher accepts remove as a whole word anywhere in the n
 test('the Runner login matcher accepts login or log in as a whole word anywhere in the name', () => {
   for (const name of ['Login', 'Log in', 'Claude login', 'Re-login']) ok(RUNNER_LOGIN.test(name), name);
   for (const name of ['Logged in', 'Blogin', 'Catalogin']) ok(!RUNNER_LOGIN.test(name), name);
+});
+
+test('the repo-view operation matchers take Init and Upgrade at the start of the name', () => {
+  for (const name of ['Init', 'init', 'Init repository']) ok(REPO_OPERATION.init.test(name), name);
+  for (const name of ['Initialized', 'Re-init', 'Upgrade']) ok(!REPO_OPERATION.init.test(name), name);
+  for (const name of ['Upgrade', 'upgrade image']) ok(REPO_OPERATION.upgrade.test(name), name);
+  for (const name of ['Upgraded', 'Init']) ok(!REPO_OPERATION.upgrade.test(name), name);
+});
+
+test('a repo-view lookup names the repository selected', () => {
+  equal(repoViewOf('o/r'), 'the repo view of o/r');
 });
 
 test('button names come from the button lines of an aria snapshot', () => {

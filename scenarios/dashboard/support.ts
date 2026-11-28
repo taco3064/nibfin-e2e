@@ -580,14 +580,48 @@ export async function mustButton(scope: Page | Locator, name: RegExp, rule: stri
   throw new Error(missingButtonMessage(rule, name, where, shown));
 }
 
-/** Selects or types a repository in the repo view. */
+/** Wait for the repository box after expanding a collapsed picker. */
+const PICKER_OPEN_MS = 5_000;
+
+/** The kinds of repository box, in the order they are preferred. */
+const repoBoxes = (page: Page): Locator[] => [
+  page.getByRole('combobox'),
+  page.getByRole('textbox', { name: /repo|owner/i }),
+  page.getByRole('searchbox'),
+];
+
+/**
+ * The repository picker's box: a list or combobox first, then a textbox named for the
+ * repository (the hand-entry OWNER/REPO box), then a searchbox. The order matters when a
+ * search filter and the hand-entry box are both shown: typing into the filter opens nothing.
+ */
+async function repoBox(page: Page): Promise<Locator | undefined> {
+  for (const box of repoBoxes(page)) if (await box.count()) return box.first();
+  return undefined;
+}
+
+/**
+ * Selects or types a repository in the repo view. A picker collapsed to the open repository
+ * is expanded through its Change button first, so another repository, or one not using
+ * Nibfin yet (R9.16), can be typed as OWNER/REPO.
+ */
 export async function selectRepo(page: Page, repo: string): Promise<void> {
-  const box = page
-    .getByRole('combobox')
-    .or(page.getByRole('textbox', { name: /repo|owner/i }))
-    .or(page.getByRole('searchbox'));
-  if (await box.count()) {
-    const b = box.first();
+  let b = await repoBox(page);
+  if (!b) {
+    const change = page.getByRole('button', { name: /^change\b/i });
+    if (await change.count()) {
+      await change.first().click();
+      const [list, entry, search] = repoBoxes(page) as [Locator, Locator, Locator];
+      await list
+        .or(entry)
+        .or(search)
+        .first()
+        .waitFor({ state: 'visible', timeout: PICKER_OPEN_MS })
+        .catch(() => {});
+      b = await repoBox(page);
+    }
+  }
+  if (b) {
     const tag = await b.evaluate((el) => el.tagName.toLowerCase());
     if (tag === 'select') {
       const ok = await b.selectOption({ label: repo }).then(

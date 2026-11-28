@@ -53,6 +53,25 @@ export const RUNNER_REMOVE = /\bremove\b/i;
 /** The Runner view's login control: the whole word `login` or `log in` anywhere in the name, also used by the login relay. */
 export const RUNNER_LOGIN = /\blog ?in\b/i;
 
+/** The repo view's operations (R9.15): Init where Nibfin is not used yet, Upgrade where it is. */
+export const REPO_OPERATION = { init: /^init\b/i, upgrade: /^upgrade\b/i } as const;
+/** The `where` of a repo-view lookup, naming the repository selected. */
+export const repoViewOf = (repo: string) => `the repo view of ${repo}`;
+
+/**
+ * Opens `repo` in the repo view and returns its `op` button. When the view does not offer
+ * it, fails `rule` naming the repository and listing the buttons shown.
+ */
+export async function repoOperation(
+  page: Page,
+  repo: string,
+  op: keyof typeof REPO_OPERATION,
+  rule: string,
+): Promise<Locator> {
+  await selectRepo(page, repo);
+  return mustButton(page, REPO_OPERATION[op], rule, repoViewOf(repo));
+}
+
 /** Sets a dialog field by its label: a select, a combobox, a checkbox or a text field. */
 export async function setField(d: Locator, label: RegExp, value: string | boolean): Promise<void> {
   const f = d.getByLabel(label).first();
@@ -132,10 +151,12 @@ async function commandSchema(ctx: RunContext, secrets: Secrets): Promise<Map<str
 /** Opens each operation's dialog and compares its fields with the schema (R9.12, R9.13). */
 async function commandDialogs(page: Page, ctx: RunContext, schema: Map<string, SchemaInput[]>, notes: string[]) {
   const problems: string[] = [];
-  const open = async (view: 'runner' | 'repo', name: RegExp, command: string) => {
+  // A repo-view operation is opened on `repo`, a repository where the Dashboard offers it:
+  // Init on one not using Nibfin yet, Upgrade on the execution sandbox.
+  const open = async (view: 'runner' | 'repo', name: RegExp, command: string, repo = ctx.sandbox.execution) => {
     await gotoView(page, view);
-    if (view === 'repo') await selectRepo(page, ctx.sandbox.execution);
-    await (await mustButton(page, name, 'R9.12', `the ${view} view`)).click();
+    if (view === 'repo') await selectRepo(page, repo);
+    await (await mustButton(page, name, 'R9.12', view === 'repo' ? repoViewOf(repo) : `the ${view} view`)).click();
     const d = await dialog(page);
     const inputs = schema.get(command);
     if (!inputs) problems.push(`${command}: not in /api/commands`);
@@ -145,8 +166,8 @@ async function commandDialogs(page: Page, ctx: RunContext, schema: Map<string, S
   await open('runner', RUNNER_ADD, 'runner add');
   await open('runner', RUNNER_REMOVE, 'runner remove');
   await open('runner', RUNNER_LOGIN, 'login');
-  await open('repo', /^init\b/i, 'init');
-  await open('repo', /^upgrade\b/i, 'upgrade');
+  await open('repo', REPO_OPERATION.init, 'init', READ_ONLY_REPO);
+  await open('repo', REPO_OPERATION.upgrade, 'upgrade');
   for (const c of ['pause', 'resume', 'status']) if (!schema.has(c)) problems.push(`${c}: not in /api/commands`);
   check(await button(page, /refresh/i), 'R9.12', 'a Refresh control for status', 'none');
   check(
@@ -160,11 +181,12 @@ async function commandDialogs(page: Page, ctx: RunContext, schema: Map<string, S
 
 /** R9.6: planning progress with elapsed time and cancel; the CLI preview has no progress lines. */
 async function planningProgress(page: Page, ctx: RunContext, notes: string[]) {
+  // Upgrade, because the execution sandbox already uses Nibfin and the view offers Upgrade there.
+  const exec = ctx.sandbox.execution;
   await gotoView(page, 'repo');
-  await selectRepo(page, ctx.sandbox.execution);
-  await (await mustButton(page, /^init\b/i, 'R9.6', 'the repo view')).click();
+  await (await repoOperation(page, exec, 'upgrade', 'R9.6')).click();
   let d = await dialog(page);
-  await (await mustButton(d, PREVIEW, 'R9.6', 'the init dialog')).click();
+  await (await mustButton(d, PREVIEW, 'R9.6', 'the upgrade dialog')).click();
   let sawElapsed = false;
   let sawResult = false;
   let last = '';
@@ -205,9 +227,9 @@ async function planningProgress(page: Page, ctx: RunContext, notes: string[]) {
     progress.slice(0, 3).join(' | '),
   );
 
-  await (await mustButton(page, /^init\b/i, 'R9.6', 'the repo view')).click();
+  await (await mustButton(page, REPO_OPERATION.upgrade, 'R9.6', repoViewOf(exec))).click();
   d = await dialog(page);
-  await (await mustButton(d, PREVIEW, 'R9.6', 'the init dialog')).click();
+  await (await mustButton(d, PREVIEW, 'R9.6', 'the upgrade dialog')).click();
   await d.getByRole('button', { name: CONFIRM }).first().waitFor({ state: 'visible', timeout: 180_000 });
   const preview = await d.innerText();
   check(/→|->/.test(preview), 'R9.21', 'each preview item as current → next', preview.slice(0, 300));
@@ -218,7 +240,7 @@ async function planningProgress(page: Page, ctx: RunContext, notes: string[]) {
     preview.slice(0, 300),
   );
   await closeDialog(page);
-  notes.push('init planning shows progress and cancels; preview shows current → next and No change needed');
+  notes.push('upgrade planning shows progress and cancels; preview shows current → next and No change needed');
 }
 
 /** The read-only repository must be below triage for the account (and have an open Issue); otherwise a precondition, not a product failure. */
@@ -250,8 +272,7 @@ export async function readOnlyPrecondition(ctx: RunContext, opts: { openIssue?: 
 async function failedPlan(page: Page, ctx: RunContext, notes: string[]) {
   await readOnlyPrecondition(ctx);
   await gotoView(page, 'repo');
-  await selectRepo(page, READ_ONLY_REPO);
-  await (await mustButton(page, /^init\b/i, 'R9.21', 'the repo view')).click();
+  await (await repoOperation(page, READ_ONLY_REPO, 'init', 'R9.21')).click();
   const d = await dialog(page);
   await (await mustButton(d, PREVIEW, 'R9.21', 'the init dialog')).click();
   const text = await until(
