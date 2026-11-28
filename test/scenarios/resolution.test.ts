@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import type { Comment } from '../../scenarios/lifecycle/analysis.ts';
 import {
   briefRecord,
+  isFinishedRecord,
   labelAddedAt,
   labelRemovedAt,
   RESOLUTION_ISSUES,
@@ -239,4 +240,33 @@ test('briefRecord drops markers, hides token-shaped strings and caps the length'
   equal(b.includes('nibfin:repair'), false);
   match(b, /^分類：維運或人為操作 use <token> now x+…$/);
   equal(b.length, 301);
+});
+
+test('the unfinished record the repair stage writes first is a record but not finished; a classed one is', () => {
+  const unfinished = resolutionRecord(
+    [
+      comment(
+        "<!-- nibfin:repair -->\nCategory: being classified\nReason: Nibfin's repair agent is looking at this stop",
+        '2026-11-27T10:02:00Z',
+      ),
+    ],
+    PENDING_AT,
+  );
+  equal(unfinished?.classLabel, 'being classified');
+  equal(unfinished?.class, undefined);
+  equal(unfinished && isFinishedRecord(unfinished), false);
+  const oneLine = resolutionRecord(
+    [
+      comment(
+        "<!-- nibfin:repair -->\nCategory: being classified - Reason: Nibfin's repair agent is looking at this stop",
+        '2026-11-27T10:02:00Z',
+      ),
+    ],
+    PENDING_AT,
+  );
+  equal(oneLine && isFinishedRecord(oneLine), false);
+  for (const body of [ZH, EN]) {
+    const r = resolutionRecord([comment(body, '2026-11-27T10:02:00Z')], PENDING_AT);
+    equal(r && isFinishedRecord(r), true);
+  }
 });
