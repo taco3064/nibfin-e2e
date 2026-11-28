@@ -25,7 +25,7 @@ const job = (id: number, extra: Partial<Job> = {}): Job => ({
   ...extra,
 });
 const labeled = (name: string, at: string, login: string | null) => ({ event: 'labeled', created_at: at, label: { name }, actor: login === null ? null : { login } });
-const comment = { id: 1, body: '<!-- nibfin:pending -->\nShape stopped: log in again with `claude /login`.', created_at: '', updated_at: '', user: null, html_url: '' };
+const comment = { id: 1, body: '<!-- nibfin:pending -->\nShape stopped: log in again with `claude /login`.', created_at: '', updated_at: '', user: null, html_url: 'https://github.com/o/exec/issues/6#issuecomment-1' };
 
 /** A Kit over an Issue #6 with the given labels and timeline, `woke` being when the scenario removed `pending`. */
 function setup(labels: () => string[], timeline: () => unknown[]) {
@@ -54,7 +54,7 @@ test('a pause another actor added ends the `shaped` wait at once, naming the lab
   const started = c.now();
   await rejects(
     k.obs.until('`shaped`', (s) => (k.labels(s, 'o/exec', 6).includes('shaped') ? true : undefined), DEADLINE.event, k.show('o/exec', 6), { gonePast: exit }),
-    /^Error: gave up waiting for `shaped`: #6 gained pause at 2026-11-26T10:00:20\.000Z by someone-else, which the scenario did not add; observed: o\/exec#6 open \[scope, pause\] .*last Nibfin comment: Shape stopped: log in again/,
+    /^Error: gave up waiting for `shaped`: #6 gained pause at 2026-11-26T10:00:20\.000Z by someone-else, which the scenario did not add; observed: o\/exec#6 open \[scope, pause\] .*last Nibfin comment: https:\/\/github\.com\/o\/exec\/issues\/6#issuecomment-1$/,
   );
   equal(c.now() - started < STALL, true, 'it ended long before the stall limit');
   equal(c.now() - started < 3 * MIN, true, 'it ended on the first judged snapshot');

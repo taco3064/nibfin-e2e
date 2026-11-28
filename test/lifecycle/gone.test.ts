@@ -4,7 +4,7 @@ import { deepEqual, equal, match, rejects } from 'node:assert/strict';
 import { test } from 'node:test';
 import { busyTogether, issueKey, jobWindow } from '../../scenarios/lifecycle/analysis.ts';
 import type { Job } from '../../scenarios/lifecycle/analysis.ts';
-import { DEADLINE, Kit, PUBLISH_GRACE, STALL } from '../../scenarios/lifecycle/kit.ts';
+import { DEADLINE, Kit, PUBLISH_GRACE, QUOTE_LIMIT, STALL } from '../../scenarios/lifecycle/kit.ts';
 import { Observer } from '../../scenarios/lifecycle/observe.ts';
 import { allBusyAt, busyGone } from '../../scenarios/lifecycle/phase1.ts';
 import { clock, context, routes } from './fake.ts';
@@ -331,4 +331,94 @@ test('a blocked pass with no gonePast reason and no activity still fails on the 
   // Without gonePast too.
   polls = 0;
   await rejects(k.obs.until('B', block, DEADLINE.stage), /^Error: no sandbox activity for 25 min while waiting for B$/);
+});
+
+// The pending reason keeps the whole stop reason; summary keeps a short form (Issue #597).
+const stopUrl = 'https://github.com/o/exec/issues/6#issuecomment-9';
+const blockedUrl = 'https://github.com/o/exec/pull/41#discussion_r1234567890';
+const stopBody = (reason: string) =>
+  `<!-- nibfin:pending -->\nNibfin stopped and needs a person.\n\n- Code: STAGE_BLOCKED\n- Run: https://github.com/o/exec/actions/runs/46027033527\n\n\`\`\`text\n${reason}\n\`\`\``;
+const fenced = `Writer returned blocked (${blockedUrl}): ${'the rebase onto main conflicts in src/app.ts and the other side cannot hold; '.repeat(5)}see ${blockedUrl}`;
+const collapse = (body: string) => body.replace(/<!--[\s\S]*?-->/g, '').replace(/\s+/g, ' ').trim();
+const escape = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+function stopKit(body: string, secrets: string[] = []) {
+  const f = routes({
+    ...base,
+    'GET /repos/o/exec/actions/runs': { workflow_runs: [] },
+    'GET /repos/o/exec/issues': pendingIssue(),
+    'GET /repos/o/exec/issues/6/comments': [{ id: 9, body, created_at: '', updated_at: '', user: null, html_url: stopUrl }],
+  });
+  const c = clock();
+  return new Kit(context(f.github, { secretValues: () => secrets }), { now: c.now, sleep: c.sleep });
+}
+
+test('a stop comment of about 600 characters appears in the pending reason in full, the fenced reason and its final URL included', async () => {
+  const body = stopBody(fenced);
+  const text = collapse(body);
+  equal(text.length > 550 && text.length < 700, true, `the comment is about 600 characters (${text.length})`);
+  const k = stopKit(body);
+  const s = await k.obs.next();
+  const reason = await k.stageGone('o/exec', 6, 'shape')(s);
+  equal(reason, `#6 has pending; last Nibfin comment: ${text}`);
+  equal(reason?.endsWith(`see ${blockedUrl} \`\`\``), true);
+  equal(await k.closeGone('o/exec', 6)(s), reason);
+  await rejects(
+    k.obs.until('a marked review comment', () => undefined, DEADLINE.stage, undefined, { gonePast: k.closeGone('o/exec', 6) }),
+    new RegExp(`^Error: gave up waiting for a marked review comment: #6 has pending; last Nibfin comment: ${escape(text)}$`),
+  );
+});
+
+test('a stop comment over the limit is cut at its end on a whole token, with the dropped count and the comment URL', async () => {
+  const body = stopBody(`Writer returned blocked: ${'conflicting-requirement '.repeat(80)}see ${blockedUrl}`);
+  const text = collapse(body);
+  equal(text.length > QUOTE_LIMIT, true);
+  const k = stopKit(body);
+  const reason = (await k.stageGone('o/exec', 6, 'shape')(await k.obs.next())) ?? '';
+  const m = /^#6 has pending; last Nibfin comment: (.*) … \(cut, (\d+) more characters; full comment: (\S+)\)$/.exec(reason);
+  equal(!!m, true, reason);
+  const [, kept = '', dropped = '', url = ''] = m ?? [];
+  equal(url, stopUrl);
+  equal(kept.length <= QUOTE_LIMIT, true);
+  equal(text.startsWith(kept), true, 'the kept part is the start of the comment');
+  equal(text[kept.length], ' ', 'the cut falls on a whole token');
+  equal(Number(dropped), text.length - kept.length);
+  match(kept, /Code: STAGE_BLOCKED - Run: https:\/\/github\.com\/o\/exec\/actions\/runs\/46027033527 /);
+});
+
+test('a secret inside the stop comment is masked in every quote, also one across the cut', async () => {
+  const head = stopBody('Writer returned blocked: tok-in-text ');
+  const pad = 'x'.repeat(QUOTE_LIMIT - collapse(head).length - 3);
+  const body = `${head.slice(0, -4)}${pad}secret-across-the-cut and more text\n\`\`\``;
+  const text = collapse(body);
+  const at = text.indexOf('secret-across-the-cut');
+  equal(at < QUOTE_LIMIT && at + 'secret-across-the-cut'.length > QUOTE_LIMIT, true, 'the secret straddles the limit');
+  const k = stopKit(body, ['tok-in-text', 'secret-across-the-cut']);
+  const s = await k.obs.next();
+  for (const out of [await k.stageGone('o/exec', 6, 'shape')(s), await k.summary(s, 'o/exec', 6, { full: true }), await k.summary(s, 'o/exec', 6)]) {
+    for (const part of ['tok-in-text', 'tok-in', 'secret-across', 'across-the-cut']) equal(out?.includes(part), false, `${part} in ${out}`);
+  }
+  match((await k.stageGone('o/exec', 6, 'shape')(s)) ?? '', /blocked: \*\*\* x/);
+});
+
+test('summary shows the stop comment\'s code and run link but not its reason; with full it shows the whole comment', async () => {
+  const body = stopBody(fenced);
+  const k = stopKit(body);
+  const s = await k.obs.next();
+  const short = await k.summary(s, 'o/exec', 6);
+  equal(short, 'o/exec#6 open [scope, shaped, pending] runs: none; last Nibfin comment: Code: STAGE_BLOCKED, Run: https://github.com/o/exec/actions/runs/46027033527');
+  equal(await k.show('o/exec', 6)(s), short);
+  equal(await k.summary(s, 'o/exec', 6, { full: true }), `o/exec#6 open [scope, shaped, pending] runs: none; last Nibfin comment: ${collapse(body)}`);
+  const plain = stopKit('<!-- nibfin:pending -->\nShape stopped: log in again.');
+  equal(await plain.summary(await plain.obs.next(), 'o/exec', 6), `o/exec#6 open [scope, shaped, pending] runs: none; last Nibfin comment: ${stopUrl}`);
+});
+
+test('a wait ended by pending holds the stop reason once: in the reason, not again in the observed part', async () => {
+  const k = stopKit(stopBody(fenced));
+  const err = await k.obs.until('a marked review comment', () => undefined, DEADLINE.stage, k.show('o/exec', 6), { gonePast: k.closeGone('o/exec', 6) }).then(
+    () => undefined,
+    (e: unknown) => String(e),
+  );
+  equal(err?.split('Writer returned blocked').length, 2, err);
+  match(err ?? '', /; observed: o\/exec#6 open \[scope, shaped, pending\] runs: none; last Nibfin comment: Code: STAGE_BLOCKED, Run: https:\/\/github\.com\/o\/exec\/actions\/runs\/46027033527$/);
 });

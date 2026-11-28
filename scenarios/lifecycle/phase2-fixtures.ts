@@ -318,7 +318,7 @@ export function fixGone(k: Kit, n: number, reason: string, from = 0): (s: Snapsh
   const closed = k.closeGone(k.exec, n);
   return async (s) => {
     const failed = (await fixJobs(k, s, n, reason)).find((j) => j.conclusion !== 'success' && time(j.started_at) >= from);
-    if (failed) return `#${n}'s ${reason} deliver job ${failed.id} (run ${failed.run.id}) completed with ${String(failed.conclusion)}; ${await k.summary(s, k.exec, n)}`;
+    if (failed) return `#${n}'s ${reason} deliver job ${failed.id} (run ${failed.run.id}) completed with ${String(failed.conclusion)}; ${await k.summary(s, k.exec, n, { full: true })}`;
     return closed(s);
   };
 }
@@ -333,7 +333,7 @@ export const FIX_LOOPS_EXTRA = 'Exception: if a CI or CD failure on this Issue r
 /** A `gonePast` check for a wait after the Issue closed with `delivered`: only `pending` ends it. */
 export function pendingGone(k: Kit, repo: string, n: number): (s: Snapshot) => Promise<string | undefined> {
   const name = repo === k.exec ? `#${n}` : `${repo}#${n}`;
-  return async (s) => (k.issue(s, repo, n)?.labels.some((l) => l.name === 'pending') ? `${name} has pending after closing with delivered; ${await k.summary(s, repo, n)}` : undefined);
+  return async (s) => (k.issue(s, repo, n)?.labels.some((l) => l.name === 'pending') ? `${name} has pending after closing with delivered; ${await k.summary(s, repo, n, { full: true })}` : undefined);
 }
 
 export const fixLoops: Scenario = lifecycle({
@@ -415,7 +415,7 @@ export const fixLoops: Scenario = lifecycle({
       // 4: CD fails after the merge: a cd-failure Deliver from the latest main opens a new PR (R3.30).
       const merged = (await k.obs.pullsByHead(exec, branch)).find((p) => p.merged_at);
       const mergeSha = merged?.merge_commit_sha;
-      if (!merged || !mergeSha) throw new Error(`F's first PR did not merge: ${await k.summary(await k.obs.fresh(), exec, n)}`);
+      if (!merged || !mergeSha) throw new Error(`F's first PR did not merge: ${await k.summary(await k.obs.fresh(), exec, n, { full: true })}`);
       const cd = await k.obs.until('CD of F\'s merge to fail', (s) => s.runs.find((r) => r.repo === exec && r.name === 'CD' && r.event === 'push' && r.head_sha === mergeSha && r.status === 'completed'), DEADLINE.event, show, gone);
       c.check('R3.30', cd.conclusion === 'failure', `CD of F's merge concluded ${String(cd.conclusion)}, expected the README rule to fail it`);
       await k.obs.until('a deliver job with REASON cd-failure', (s) => fixJob(k, s, n, 'cd-failure'), DEADLINE.stage, show, { gonePast: fixGone(k, n, 'cd-failure') });
