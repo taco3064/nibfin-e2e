@@ -28,14 +28,16 @@ on:
   repository_dispatch:
     types: [issue-delivered, proposal-updated]
 
-# Only one run at a time may use the sandboxes (Proposal R8.19); later runs wait in
-# line. A Proposal update touches no sandbox, so it gets a group of its own.
+# Retests coalesce: while one retest runs, only the newest waiting retest is kept (a newer one
+# replaces it), and it retests everything delivered since the last retest started
+# (--since-last-retest). A manual run or a Proposal update gets a group of its own, so it is
+# never replaced. Only one run at a time may use the sandboxes (Proposal R8.19): the run job
+# holds the shared e2e-sandboxes group, and runs wait in line for it.
 concurrency:
   group: >-
-    ${{ github.event.action == 'proposal-updated'
-    && format('e2e-proposal-{0}', github.run_id) || 'e2e-sandboxes' }}
+    ${{ github.event.action == 'issue-delivered'
+    && 'e2e-retest' || format('e2e-{0}', github.run_id) }}
   cancel-in-progress: false
-  queue: max
 
 permissions:
   contents: read
@@ -114,7 +116,7 @@ jobs:
           if [[ "$EVENT" == repository_dispatch ]]; then
             [[ "$DELIVERED_REPO" =~ ^taco3064/(nibfin-core|gh-nibfin|nibfin-e2e)$ && "$DELIVERED_ISSUE" =~ ^[0-9]+$ ]] \
               || { echo "::error::invalid issue-delivered payload"; exit 2; }
-            args=(--delivered "$DELIVERED_REPO#$DELIVERED_ISSUE")
+            args=(--delivered "$DELIVERED_REPO#$DELIVERED_ISSUE" --since-last-retest)
           else
             for r in ${RULES//,/ }; do
               [[ "$r" =~ ^R[0-9]+\.[0-9]+$ ]] || { echo "::error::invalid rule id: $r"; exit 2; }
@@ -150,6 +152,10 @@ jobs:
       matrix:
         os: [windows-2025, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
+    concurrency:
+      group: e2e-sandboxes
+      cancel-in-progress: false
+      queue: max
     timeout-minutes: 240
     defaults:
       run:
