@@ -10,8 +10,19 @@ const MOUNT = `${CLAUDE_VOLUME}:/v`;
 /** Prints the volume root's and settings.json's "uid mode" (or "-"), then the file. */
 const READ =
   'stat -c "%u %a" /v; if [ -e /v/settings.json ]; then stat -c "%u %a" /v/settings.json; cat /v/settings.json; else echo -; fi';
-/** Replaces the file's content from stdin: an existing file keeps its owner and mode, a new one is created 0600. */
-const WRITE = 'umask 077 && cat > /v/settings.json';
+/** Rewrites an existing settings.json in place from stdin, so it keeps its inode, owner and mode. */
+const WRITE_EXISTING = 'umask 077 && cat > /v/settings.json';
+/** Temporary file a new settings.json is written to before it is renamed into place. */
+const TEMP = '/v/.settings.json.new';
+/**
+ * Creates settings.json from stdin when it does not exist yet. The umask alone does not
+ * make a new file 0600 on every storage (a default ACL, for example, can override it), so
+ * the helper empties a temporary file, sets it to 0600 with chmod before any content is
+ * written, fills it and renames it into place. The token therefore never sits in a file
+ * with another mode, and a crash before the rename leaves settings.json absent, so the
+ * next run takes this path again; rename within one filesystem keeps the mode.
+ */
+const WRITE_NEW = `umask 077 && : > ${TEMP} && chmod 600 ${TEMP} && cat > ${TEMP} && mv -f ${TEMP} /v/settings.json`;
 
 /** The login volume's settings.json as read through the helper container. It may hold the token: never print it. */
 export interface ClaudeSettings {
@@ -43,6 +54,23 @@ const HOST_USER = '0';
 const podman = (exec: Exec, args: string[], input?: string) =>
   mustRun(exec, ['podman', ...args], { input, hideStdout: true });
 
+/**
+ * Describes a settings.json owner or mode mismatch from its "uid mode" before and after
+ * the write, with the next step. It holds stat values only, never the file's content.
+ */
+function modeProblem(before: string | undefined, after: string | undefined, expected: string): string {
+  const was =
+    before === undefined
+      ? 'settings.json did not exist before the write'
+      : `settings.json was "${before}" before the write`;
+  const now = after === undefined ? 'after it is missing' : `after it is "${after}"`;
+  const next =
+    before === undefined
+      ? "the helper's explicit chmod 600 did not hold on this volume's storage: check the storage's ACL or mount options for the volume"
+      : 'the in-place write changed its owner or mode: check what else changes the file on this volume';
+  return `${was}; ${now}, expected "${expected}" (uid mode); ${next}`;
+}
+
 /** Reads the login volume's settings.json through the pinned helper image. */
 export async function readClaudeSettings(exec: Exec): Promise<ClaudeSettings> {
   return parse((await podman(exec, ['run', '--rm', '-v', MOUNT, HELPER_IMAGE, 'sh', '-c', READ])).stdout);
@@ -50,8 +78,11 @@ export async function readClaudeSettings(exec: Exec): Promise<ClaudeSettings> {
 
 /**
  * Rewrites the login volume's settings.json with `fn(current settings)`, sent to the helper
- * on stdin only, then reads it back: the owner and mode are kept (a new file is 0600 for the
- * host user) and every key `fn` did not delete is still there. Returns the read-back.
+ * on stdin only, then reads it back: the owner and mode are kept (a new file is set to 0600
+ * for the host user by the helper's own chmod, see WRITE_NEW) and every key `fn` did not
+ * delete is still there. A failed owner or mode check names whether the file existed before
+ * the write and its owner and mode before and after (stat values only, never the content).
+ * Returns the read-back.
  */
 export async function updateClaudeSettings(
   exec: Exec,
@@ -64,7 +95,7 @@ export async function updateClaudeSettings(
   const next = fn(settings);
   await podman(
     exec,
-    ['run', '--rm', '-i', '-v', MOUNT, HELPER_IMAGE, 'sh', '-c', WRITE],
+    ['run', '--rm', '-i', '-v', MOUNT, HELPER_IMAGE, 'sh', '-c', before.file === undefined ? WRITE_NEW : WRITE_EXISTING],
     JSON.stringify(next, null, 2) + '\n',
   );
 
@@ -74,8 +105,7 @@ export async function updateClaudeSettings(
   const [rootUid, rootMode = '0'] = after.root.split(' ');
   if (rootUid !== HOST_USER || !(parseInt(rootMode, 8) & 0o200))
     problems.push(`volume root is "${after.root}", expected owned and writable by the host user`);
-  if (after.file !== expectedFile)
-    problems.push(`settings.json is "${String(after.file)}", expected "${expectedFile}" (uid mode)`);
+  if (after.file !== expectedFile) problems.push(modeProblem(before.file, after.file, expectedFile));
   for (const k of Object.keys(next)) if (!(k in (after.settings ?? {}))) problems.push(`settings.json lost key ${k}`);
   problems.push(...check(after.settings ?? {}));
   if (problems.length) throw new Error(`login volume read-back: ${problems.join('; ')}`);

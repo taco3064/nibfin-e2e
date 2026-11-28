@@ -316,16 +316,29 @@ test('claude-login: the token reaches the helper only on stdin; a new file is 06
   const write = calls.find((c) => c.options.input);
   deepEqual(write?.argv.slice(0, 6), ['podman', 'run', '--rm', '-i', '-v', 'nibfin-home-claude:/v']);
   match(write?.argv[6] ?? '', /^docker\.io\/library\/busybox:[\d.]+@sha256:[0-9a-f]{64}$/);
-  equal(write?.argv.at(-1), 'umask 077 && cat > /v/settings.json');
+  // A new file: the helper sets a temporary file to 0600 before any content, then renames it.
+  const script = write?.argv.at(-1) ?? '';
   equal(
-    calls.some((c) => c.argv.some((a) => /chown|chmod|--userns/.test(a))),
+    script,
+    'umask 077 && : > /v/.settings.json.new && chmod 600 /v/.settings.json.new && ' +
+      'cat > /v/.settings.json.new && mv -f /v/.settings.json.new /v/settings.json',
+  );
+  const chmodAt = script.indexOf('chmod 600');
+  equal(chmodAt >= 0 && chmodAt < script.indexOf('cat >') && script.indexOf('cat >') < script.indexOf('mv -f'), true);
+  equal(
+    calls.some((c) => c.argv.some((a) => /chown|--userns/.test(a))),
     false,
+  );
+  equal(
+    calls.some((c) => c.argv[0] === 'chmod' || (c !== write && c.argv.some((a) => a.includes('chmod')))),
+    false,
+    'chmod runs only inside the new-file helper script',
   );
 });
 
 test('claude-login: other keys, the owner and the mode of an existing file are kept', async () => {
   let written = '';
-  const { exec } = fakeExec((argv, o) => {
+  const { exec, calls } = fakeExec((argv, o) => {
     const script = argv.at(-1) ?? '';
     if (script.startsWith('umask')) return ((written = o.input ?? ''), {});
     if (script.startsWith('stat'))
@@ -338,6 +351,13 @@ test('claude-login: other keys, the owner and the mode of an existing file are k
     enableAllProjectMcpServers: true,
     env: { A: '1', CLAUDE_CODE_OAUTH_TOKEN: 'claude-token' },
   });
+  // An existing file is rewritten in place, with no chmod, so its 0 644 is kept.
+  equal(calls.find((c) => c.options.input)?.argv.at(-1), 'umask 077 && cat > /v/settings.json');
+  equal(
+    calls.some((c) => c.argv.some((a) => /chmod|chown/.test(a))),
+    false,
+  );
+  match(out.reason, /owner and mode 0 644/);
 });
 
 test('claude-login: a read-back with the wrong mode fails without printing the token; Windows starts and stops the machine', async () => {
@@ -350,7 +370,10 @@ test('claude-login: a read-back with the wrong mode fails without printing the t
   });
   const h = harness({ exec, platform: 'windows' });
   const err = await h.runStep('claude-login').catch((e: Error) => e.message);
-  match(String(err), /settings.json is "0 644", expected "0 600"/);
+  match(
+    String(err),
+    /^login volume read-back: settings\.json did not exist before the write; after it is "0 644", expected "0 600" \(uid mode\); the helper's explicit chmod 600 did not hold on this volume's storage: check the storage's ACL or mount options/,
+  );
   equal(String(err).includes('claude-token'), false);
   deepEqual(
     [calls[0]?.argv, calls.at(-1)?.argv],
@@ -359,6 +382,42 @@ test('claude-login: a read-back with the wrong mode fails without printing the t
       ['podman', 'machine', 'stop'],
     ],
   );
+});
+
+test('claude-login: a new file that reads back 0 664 names that it did not exist before, and the token is not printed', async () => {
+  let written = '';
+  const { exec } = fakeExec((argv, o) => {
+    const script = argv.at(-1) ?? '';
+    if (script.startsWith('umask')) return ((written = o.input ?? ''), {});
+    if (script.startsWith('stat')) return { stdout: written ? `0 755\n0 664\n${written}` : '0 755\n-\n' };
+    return undefined;
+  });
+  const err = await harness({ exec })
+    .runStep('claude-login')
+    .then((o) => o.reason)
+    .catch((e: Error) => e.message);
+  match(err, /settings\.json did not exist before the write; after it is "0 664", expected "0 600" \(uid mode\)/);
+  equal(err.includes('claude-token'), false);
+});
+
+test('claude-login: an existing file whose mode changes names its owner and mode before and after, and the token is not printed', async () => {
+  let written = '';
+  const { exec } = fakeExec((argv, o) => {
+    const script = argv.at(-1) ?? '';
+    if (script.startsWith('umask')) return ((written = o.input ?? ''), {});
+    if (script.startsWith('stat'))
+      return { stdout: written ? `0 755\n0 664\n${written}` : '0 755\n0 644\n{"env":{"A":"1"}}' };
+    return undefined;
+  });
+  const err = await harness({ exec })
+    .runStep('claude-login')
+    .then((o) => o.reason)
+    .catch((e: Error) => e.message);
+  match(
+    err,
+    /settings\.json was "0 644" before the write; after it is "0 664", expected "0 644" \(uid mode\); the in-place write changed its owner or mode/,
+  );
+  equal(err.includes('claude-token'), false);
 });
 
 const ALREADY_RUNNING = { code: 125, stderr: 'Error: unable to start "podman-machine-default": already running' };
