@@ -23,11 +23,13 @@ let skipped = '';
 
 /**
  * Launches Chrome the way `openPage` does: the Chrome channel, then `which google-chrome`. Its own
- * profile directory lets it run beside the other browser tests, which node runs in parallel.
+ * profile directory lets it run beside the other browser tests, which node runs in parallel. The
+ * directory name stays short: Chrome puts its singleton socket under `<base>/tmp/com.google.Chrome.XXXXXX/`
+ * and aborts when that Unix socket path exceeds the 107-byte limit, which a longer name does on CI.
  */
 async function launch(): Promise<BrowserContext> {
   const { profileDir, options } = browserLaunchOptions(
-    join(ROOT, '.e2e-work', 'test-browser-login-relay'),
+    join(ROOT, '.e2e-work', 'tb-relay'),
     childEnv(process.env),
     {},
   );
