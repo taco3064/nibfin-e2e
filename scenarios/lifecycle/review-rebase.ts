@@ -11,6 +11,7 @@ import { Checks, reasonOf, time } from './analysis.ts';
 import type { Activity, Pull, Stage } from './analysis.ts';
 import { DEADLINE, changeRequest, lifecycle, message } from './kit.ts';
 import type { Kit } from './kit.ts';
+import { waitFor } from '../lib/wait.ts';
 
 const RULE = 'R3.54';
 
@@ -91,29 +92,47 @@ export function behindProblems(e: RebaseEvidence): string[] {
   return out;
 }
 
-/** The stages that make up the Review stage (R5.72, R5.74): `finish` runs its steps that need no agent. */
-const REVIEW_STAGE: readonly Stage[] = ['review', 'finish'];
+/**
+ * The REASON values a conflict rebase Deliver may carry: `conflict` was seen in a real
+ * run, `rebase` is kept as another name for it. Any other value fails with its name.
+ */
+export const CONFLICT_REASONS: readonly string[] = ['conflict', 'rebase'];
 
 /**
- * What breaks R3.54 for a PR that really conflicted: no Review-stage (`review` or `finish`)
- * run before the Deliver, no force push, or a merged head without the conflicting commit.
+ * The first deliver job that started at or after the conflicting commit, and the
+ * fixture's stage runs created between that commit and the job's start.
+ */
+export function conflictWindow(e: RebaseEvidence): { first?: DeliverJob; runs: RebaseEvidence['runs'] } {
+  const first = e.delivers
+    .filter((j) => after(j.started_at, e.at))
+    .sort((a, b) => time(a.started_at) - time(b.started_at))[0];
+  if (!first) return { runs: [] };
+  return {
+    first,
+    runs: e.runs.filter((r) => after(r.created_at, e.at) && time(r.created_at) <= time(first.started_at)),
+  };
+}
+
+/** Stage runs as `<id> <stage> <created_at>` joined by commas, or `none`. */
+export function seenRuns(runs: RebaseEvidence['runs']): string {
+  return runs.length ? runs.map((r) => `${r.id} ${r.stage} ${r.created_at}`).join(', ') : 'none';
+}
+
+/**
+ * What breaks R3.54 for a PR that really conflicted: the first Deliver after the
+ * conflicting commit does not carry a conflict-rebase REASON, no force push, or a merged
+ * head without the conflicting commit. Whichever Core stage (route, review or finish)
+ * dispatched that Deliver is accepted, since Core picks the stage from the GitHub state
+ * (R4.35).
  */
 export function conflictProblems(e: RebaseEvidence): string[] {
   const out: string[] = [];
-  const late = e.delivers
-    .filter((j) => after(j.started_at, e.at))
-    .sort((a, b) => time(a.started_at) - time(b.started_at));
-  const first = late[0];
+  const { first, runs } = conflictWindow(e);
   if (!first) out.push(`no deliver job for ${e.issue} started after the conflicting commit ${e.sha}`);
-  else {
-    const inWindow = e.runs.filter((r) => after(r.created_at, e.at) && time(r.created_at) <= time(first.started_at));
-    if (!inWindow.some((r) => REVIEW_STAGE.includes(r.stage))) {
-      const seen = inWindow.length ? inWindow.map((r) => `${r.id} ${r.stage} ${r.created_at}`).join(', ') : 'none';
-      out.push(
-        `no review or finish run of ${e.issue} was created between the conflicting commit and deliver job ${first.id} (REASON ${first.reason ?? 'unknown'}, started ${String(first.started_at)}); stage runs in that window: ${seen}`,
-      );
-    }
-  }
+  else if (!CONFLICT_REASONS.includes(first.reason ?? ''))
+    out.push(
+      `the first deliver job ${first.id} of ${e.issue} after the conflicting commit ${e.sha} carries REASON ${first.reason ?? 'unknown'}, not a conflict rebase (${CONFLICT_REASONS.join(' or ')}) (started ${String(first.started_at)}); stage runs in that window: ${seenRuns(runs)}`,
+    );
   if (!forcedAfter(e).length) out.push(`${e.branch} was not force-pushed after the conflicting commit`);
   if (!e.merged) out.push(`${e.issue} has no merged PR`);
   else if (!e.descends)
@@ -122,6 +141,60 @@ export function conflictProblems(e: RebaseEvidence): string[] {
     );
   if (!e.delivered) out.push(`${e.issue} did not close with delivered`);
   return out;
+}
+
+/** How long `settledMergeable` keeps reading, and the pause between its reads. */
+export const SETTLE_MS = 30_000;
+const SETTLE_INTERVAL_MS = 5_000;
+
+type Mergeable = { mergeable?: boolean | null; mergeable_state?: string };
+
+export interface Settled {
+  mergeable?: boolean | null;
+  state?: string;
+  /** How many reads were made. */
+  reads: number;
+  /** Whether `mergeable` became `true` or `false` within the bound. */
+  settled: boolean;
+  /** The last read's error, if the last read failed. */
+  error?: string;
+}
+
+/**
+ * Reads a PR's `mergeable` until it is no longer `null` (GitHub computes it in the
+ * background), for at most `SETTLE_MS`. It never fails on the bound or a read error:
+ * it then returns the last value read with `settled: false`. An abort still propagates.
+ */
+export async function settledMergeable(
+  read: () => Promise<Mergeable>,
+  opts: { now?: () => number; sleep?: (ms: number) => Promise<void>; signal?: AbortSignal } = {},
+): Promise<Settled> {
+  let reads = 0;
+  let last: Mergeable | undefined;
+  let error: string | undefined;
+  const counted = async () => {
+    reads++;
+    try {
+      last = await read();
+      error = undefined;
+      return last;
+    } catch (e) {
+      error = message(e);
+      throw e;
+    }
+  };
+  try {
+    const v = await waitFor(counted, (m) => m.mergeable !== null && m.mergeable !== undefined, {
+      what: 'mergeable to settle',
+      deadlineMs: SETTLE_MS,
+      intervalMs: SETTLE_INTERVAL_MS,
+      ...opts,
+    });
+    return { mergeable: v.mergeable, state: v.mergeable_state, reads, settled: true };
+  } catch (e) {
+    if (opts.signal?.aborted) throw e;
+    return { mergeable: last?.mergeable, state: last?.mergeable_state, reads, settled: false, ...(error ? { error } : {}) };
+  }
 }
 
 interface HalfSpec {
@@ -300,9 +373,12 @@ async function heldHalf(k: Kit, c: Checks, spec: HalfSpec, n: number, harness: s
     c.notExercised(RULE, `${label}: #${n}'s PR #${opened.number} merged before main advanced`);
     return undefined;
   }
-  const { data: state } = await k.gh.rest<Held>('GET', `/repos/${exec}/pulls/${opened.number}`);
+  const state = await settledMergeable(
+    () => k.gh.rest<Held>('GET', `/repos/${exec}/pulls/${opened.number}`).then((r) => r.data),
+    { now: () => k.now(), sleep: k.sleep, signal: k.ctx.signal },
+  );
   c.note(
-    `${label}: PR #${opened.number} read mergeable ${String(state.mergeable)}/${String(state.mergeable_state)} after main advanced`,
+    `${label}: PR #${opened.number} read mergeable ${String(state.mergeable)}/${String(state.state)} after main advanced (${state.reads} read${state.reads === 1 ? '' : 's'})${state.settled ? '' : `; it did not settle within ${SETTLE_MS / 1000} s`}${state.error ? `; last read error: ${state.error}` : ''}`,
   );
   await release(k, spec.slug);
 
@@ -343,9 +419,12 @@ async function heldHalf(k: Kit, c: Checks, spec: HalfSpec, n: number, harness: s
     RULE,
     problems.map((p) => `${label}: ${p}`),
   );
-  return spec.kind === 'behind'
-    ? `#${n} was behind only and merged PR #${merged?.number} without a Deliver`
-    : `#${n} conflicted, was rebased by a Deliver after review and merged PR #${merged?.number}`;
+  if (spec.kind === 'behind') return `#${n} was behind only and merged PR #${merged?.number} without a Deliver`;
+  const { first, runs } = conflictWindow(evidence);
+  const reason = first?.reason ?? 'unknown';
+  if (!problems.length)
+    c.note(`${label}: deliver job ${first?.id} (REASON ${reason}) followed stage runs ${seenRuns(runs)}`);
+  return `#${n} conflicted, was rebased by a Deliver (REASON ${reason}) and merged PR #${merged?.number}`;
 }
 
 export const reviewRebase: Scenario = lifecycle({
