@@ -31,6 +31,8 @@ const CLOSE_GRACE = 2 * MIN;
  * wait counts the stage as not published (a paused Issue is not published, Proposal R4.12).
  */
 export const PUBLISH_GRACE = DEADLINE.quiet;
+/** The characters of a Nibfin comment one full quote keeps; longer text is cut at its end. */
+export const QUOTE_LIMIT = 1500;
 
 export interface GoneOptions {
   /** Only the stage's jobs created at or after this epoch ms count (default: when the check is made, minus one minute). */
@@ -380,7 +382,7 @@ export class Kit {
           const delivered = i.labels.some((l) => l.name === 'delivered');
           if (delivered || !(s.at - time(i.closed_at) < CLOSE_GRACE)) return `${name} is closed (${i.state_reason ?? 'no reason'})${delivered ? ' with delivered' : ' without delivered'}`;
         }
-        if (!opts.allowPending && i?.labels.some((l) => l.name === 'pending')) return `${name} has pending${(await this.lastComment(repo, n)) ?? ''}`;
+        if (!opts.allowPending && i?.labels.some((l) => l.name === 'pending')) return `${name} has pending${fullQuote(await this.lastComment(repo, n))}`;
         if (opts.jobs === false) return undefined;
         const later = this.stages(s, repo, n, AGENT_STAGES).filter((r) => r.stage !== stage);
         for (const j of await this.agentJobs(s, repo, n, [stage])) {
@@ -407,11 +409,16 @@ export class Kit {
     return this.stageGone(repo, n, 'review', { jobs: false });
   }
 
-  /** `; last Nibfin comment: …` of the Issue, or undefined; comments are only context, so a failed read gives undefined. */
-  private async lastComment(repo: string, n: number): Promise<string | undefined> {
+  /**
+   * The Issue's last Nibfin-marked comment, its text without HTML comments, whitespace collapsed
+   * and secrets redacted before any cut; comments are only context, so a failed read gives undefined.
+   */
+  private async lastComment(repo: string, n: number): Promise<LastComment | undefined> {
     try {
       const c = (await this.obs.comments(repo, n)).filter((x) => markerOf(x.body)).at(-1);
-      return c ? `; last Nibfin comment: ${(c.body ?? '').replace(/<!--[\s\S]*?-->/g, '').replace(/\s+/g, ' ').trim().slice(0, 200)}` : undefined;
+      if (!c) return undefined;
+      const text = redact((c.body ?? '').replace(/<!--[\s\S]*?-->/g, '').replace(/\s+/g, ' ').trim(), this.ctx.secretValues());
+      return { text, url: c.html_url ?? '' };
     } catch {
       return undefined;
     }
@@ -433,20 +440,49 @@ export class Kit {
     return ev ? time(ev.created_at) : undefined;
   }
 
-  /** A one-line state of an Issue for failure messages: labels, state and its runs. */
-  async summary(s: Snapshot, repo: string, n: number): Promise<string> {
+  /**
+   * A one-line state of an Issue for failure messages: labels, state and its runs, and the last
+   * Nibfin comment's code and run link; with `full`, that comment's whole text (for messages
+   * where the summary is the only copy of it).
+   */
+  async summary(s: Snapshot, repo: string, n: number, opts: { full?: boolean } = {}): Promise<string> {
     const i = this.issue(s, repo, n);
     if (!i) return `${repo}#${n} not found`;
     const runs = this.stages(s, repo, n)
       .slice(-8)
       .map((r) => `${r.stage} ${r.status}${r.conclusion ? `/${r.conclusion}` : ''}`);
-    const last = (await this.lastComment(repo, n)) ?? '';
+    const comment = await this.lastComment(repo, n);
+    const last = opts.full ? fullQuote(comment) : shortQuote(comment);
     return redact(`${repo}#${n} ${i.state}${i.state_reason ? ` (${i.state_reason})` : ''} [${i.labels.map((l) => l.name).join(', ')}] runs: ${runs.join(', ') || 'none'}${last}`, this.ctx.secretValues());
   }
 
   show(repo: string, ...numbers: number[]): (s: Snapshot) => Promise<string> {
     return async (s) => (await Promise.all(numbers.map((n) => this.summary(s, repo, n)))).join(' | ');
   }
+}
+
+interface LastComment {
+  text: string;
+  url: string;
+}
+
+/** `; last Nibfin comment: <text>`, cut at the end past `QUOTE_LIMIT` on a whole token and marked with the dropped count and the comment URL. */
+function fullQuote(c: LastComment | undefined): string {
+  if (!c) return '';
+  if (c.text.length <= QUOTE_LIMIT) return `; last Nibfin comment: ${c.text}`;
+  const space = c.text.lastIndexOf(' ', QUOTE_LIMIT);
+  const kept = c.text.slice(0, space > 0 ? space : QUOTE_LIMIT);
+  return `; last Nibfin comment: ${kept} … (cut, ${c.text.length - kept.length} more characters; full comment: ${c.url || 'no URL'})`;
+}
+
+/** `; last Nibfin comment: Code: <CODE>, Run: <URL>` with the parts present, else the comment URL, else nothing. */
+function shortQuote(c: LastComment | undefined): string {
+  if (!c) return '';
+  const code = /\bCode:\s*`?([A-Z][A-Z0-9_]*)`?/.exec(c.text)?.[1];
+  const run = /\bRun:\s*<?(https?:\/\/[^\s>)]+)/.exec(c.text)?.[1];
+  const parts = [code && `Code: ${code}`, run && `Run: ${run}`].filter(Boolean);
+  if (parts.length) return `; last Nibfin comment: ${parts.join(', ')}`;
+  return c.url ? `; last Nibfin comment: ${c.url}` : '';
 }
 
 const kits = new WeakMap<object, Kit>();

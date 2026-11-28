@@ -262,7 +262,7 @@ export const deliveryParallel: Scenario = lifecycle({
     // R4.17: X asked for codex in its text and NIBFIN_PROVIDER=codex is set; it ran on this host's Claude Runners.
     const names = (await k.obs.runners(exec)).map((r) => r.name);
     const xJobs = await k.agentJobs(s, exec, j.x.number);
-    c.check('R4.17', k.delivered(s, exec, j.x.number) !== undefined, `X is not delivered: ${await k.summary(s, exec, j.x.number)}`);
+    c.check('R4.17', k.delivered(s, exec, j.x.number) !== undefined, `X is not delivered: ${await k.summary(s, exec, j.x.number, { full: true })}`);
     const foreign = xJobs.filter((x) => !names.includes(x.runner_name ?? ''));
     c.check('R4.17', xJobs.length > 0 && foreign.length === 0, `X's agent jobs ran on ${foreign.map((x) => String(x.runner_name)).join(', ') || 'nothing'}, not only this host's Claude Runners (${names.join(', ')})`);
     return c.outcome(pair ? `${pair[0].issue} and ${pair[1].issue} ran at once on ${pair[0].runner} and ${pair[1].runner}; no Issue ever had two jobs at once` : 'parallel');
@@ -436,7 +436,7 @@ export const pauseAndPending: Scenario = lifecycle({
     c.check('R4.10', delivers.some((r) => time(r.created_at) > h.editedAt), 'P was not delivered once pause was removed');
     const reviewed = k.stages(s, k.exec, n, ['review']).some((r) => time(r.created_at) >= h.unpendedAt);
     c.check('R4.13', reviewed, 'no review after pending was removed');
-    c.check('R4.13', !!k.delivered(s, k.exec, n), `P is not delivered: ${await k.summary(s, k.exec, n)}`);
+    c.check('R4.13', !!k.delivered(s, k.exec, n), `P is not delivered: ${await k.summary(s, k.exec, n, { full: true })}`);
     return c.outcome(`#${n}: pause held it (Shape ${h.pauseOutcome === 'published' ? 'published, then held' : 'held before publishing, redone after pause was removed'}), pending held it before review, and it was delivered once both were removed`);
   },
 });
