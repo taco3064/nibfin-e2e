@@ -6,7 +6,11 @@ import { createHostOperations, parseUnits } from '../../src/host/operations.ts';
 import type { HostServices } from '../../src/host/services.ts';
 import { fakeExec, fakeRunning } from './fakes.ts';
 
-function services(exec: Exec, env: Record<string, string | undefined> = { E2E_SANDBOX_TOKEN: 'sbx-token', E2E_CLAUDE_TOKEN: 'claude-token' }, fetchFn?: typeof fetch): HostServices {
+function services(
+  exec: Exec,
+  env: Record<string, string | undefined> = { E2E_SANDBOX_TOKEN: 'sbx-token', E2E_CLAUDE_TOKEN: 'claude-token' },
+  fetchFn?: typeof fetch,
+): HostServices {
   return {
     env,
     exec,
@@ -41,9 +45,18 @@ test('claudeLogin writes an invalid then the valid token on stdin only, and neve
   match(invalid, /^e2e-invalid-[0-9a-f]{24}$/);
   equal(out.includes(invalid), false);
   await ops.claudeLogin('valid');
-  equal((JSON.parse(v.written()) as { env: { CLAUDE_CODE_OAUTH_TOKEN: string } }).env.CLAUDE_CODE_OAUTH_TOKEN, 'claude-token');
-  equal(v.calls.some((c) => c.argv.join(' ').includes('claude-token') || c.argv.join(' ').includes(invalid)), false);
-  equal(v.calls.some((c) => c.argv.includes('machine')), false);
+  equal(
+    (JSON.parse(v.written()) as { env: { CLAUDE_CODE_OAUTH_TOKEN: string } }).env.CLAUDE_CODE_OAUTH_TOKEN,
+    'claude-token',
+  );
+  equal(
+    v.calls.some((c) => c.argv.join(' ').includes('claude-token') || c.argv.join(' ').includes(invalid)),
+    false,
+  );
+  equal(
+    v.calls.some((c) => c.argv.includes('machine')),
+    false,
+  );
 });
 
 test('host operations refuse other platforms', async () => {
@@ -54,18 +67,24 @@ test('host operations refuse other platforms', async () => {
 });
 
 test('parseUnits keeps only Runner unit names', () => {
-  deepEqual(parseUnits('nibfin-runner-claude-1.service loaded active running X\nnibfin-runner-claude-2.service loaded inactive dead Y\n\nother.service x\n'), [
-    'nibfin-runner-claude-1.service',
-    'nibfin-runner-claude-2.service',
-  ]);
+  deepEqual(
+    parseUnits(
+      'nibfin-runner-claude-1.service loaded active running X\nnibfin-runner-claude-2.service loaded inactive dead Y\n\nother.service x\n',
+    ),
+    ['nibfin-runner-claude-1.service', 'nibfin-runner-claude-2.service'],
+  );
 });
 
 test('runnerServices lists the units, stops each by name and reads each back', async () => {
-  const state = new Map([['nibfin-runner-claude-1.service', 'active'], ['nibfin-runner-claude-2.service', 'active']]);
+  const state = new Map([
+    ['nibfin-runner-claude-1.service', 'active'],
+    ['nibfin-runner-claude-2.service', 'active'],
+  ]);
   const env: Record<string, string | undefined> = {};
   const { exec, calls } = fakeExec((argv) => {
     const [, , verb, unit = ''] = argv;
-    if (verb === 'list-units') return { stdout: [...state.keys()].map((u) => `${u} loaded active running Runner`).join('\n') };
+    if (verb === 'list-units')
+      return { stdout: [...state.keys()].map((u) => `${u} loaded active running Runner`).join('\n') };
     if (verb === 'stop') return (state.set(unit, 'inactive'), {});
     if (verb === 'start') return (state.set(unit, 'active'), {});
     if (verb === 'is-active') return { stdout: `${state.get(unit)}\n`, code: state.get(unit) === 'active' ? 0 : 3 };
@@ -73,13 +92,36 @@ test('runnerServices lists the units, stops each by name and reads each back', a
   });
   const ops = createHostOperations(services(exec, env), 'linux');
   deepEqual(await ops.runnerServices('stop'), [...state.keys()]);
-  deepEqual(calls[0]?.argv, ['systemctl', '--user', 'list-units', '--all', '--plain', '--no-legend', 'nibfin-runner-claude-*.service']);
-  deepEqual(calls.slice(1, 3).map((c) => c.argv.slice(2)), [['stop', 'nibfin-runner-claude-1.service'], ['stop', 'nibfin-runner-claude-2.service']]);
-  equal([...state.values()].every((s) => s === 'inactive'), true);
+  deepEqual(calls[0]?.argv, [
+    'systemctl',
+    '--user',
+    'list-units',
+    '--all',
+    '--plain',
+    '--no-legend',
+    'nibfin-runner-claude-*.service',
+  ]);
+  deepEqual(
+    calls.slice(1, 3).map((c) => c.argv.slice(2)),
+    [
+      ['stop', 'nibfin-runner-claude-1.service'],
+      ['stop', 'nibfin-runner-claude-2.service'],
+    ],
+  );
+  equal(
+    [...state.values()].every((s) => s === 'inactive'),
+    true,
+  );
   match(String(env.XDG_RUNTIME_DIR), /^\/run\/user\/\d+$/);
   await ops.runnerServices('start');
-  equal([...state.values()].every((s) => s === 'active'), true);
-  equal(calls.every((c) => c.options.ghToken === undefined), true);
+  equal(
+    [...state.values()].every((s) => s === 'active'),
+    true,
+  );
+  equal(
+    calls.every((c) => c.options.ghToken === undefined),
+    true,
+  );
 });
 
 test('runnerServices fails when a unit does not read back, and when no unit is loaded', async () => {
@@ -88,12 +130,18 @@ test('runnerServices fails when a unit does not read back, and when no unit is l
     if (argv[2] === 'is-active') return { stdout: 'active\n' };
     return undefined;
   });
-  await rejects(createHostOperations(services(stuck.exec, {}), 'linux').runnerServices('stop'), /nibfin-runner-claude-1.service is active/);
+  await rejects(
+    createHostOperations(services(stuck.exec, {}), 'linux').runnerServices('stop'),
+    /nibfin-runner-claude-1.service is active/,
+  );
   const none = fakeExec(() => ({ stdout: '' }));
-  await rejects(createHostOperations(services(none.exec, {}), 'linux').runnerServices('start'), /no nibfin-runner-claude-\*.service unit/);
+  await rejects(
+    createHostOperations(services(none.exec, {}), 'linux').runnerServices('start'),
+    /no nibfin-runner-claude-\*.service unit/,
+  );
 });
 
-test('stopJobContainers stops only the Issue\'s containers of that repository and reads back none is left', async () => {
+test("stopJobContainers stops only the Issue's containers of that repository and reads back none is left", async () => {
   let running = [
     { Id: 'c1', Labels: { 'io.github.taco3064.nibfin.repo': 'o/r', 'io.github.taco3064.nibfin.issue': '7' } },
     { Id: 'c2', Labels: { 'io.github.taco3064.nibfin.repo': 'o/other', 'io.github.taco3064.nibfin.issue': '7' } },
@@ -104,20 +152,44 @@ test('stopJobContainers stops only the Issue\'s containers of that repository an
     return undefined;
   });
   equal(await createHostOperations(services(exec), 'linux').stopJobContainers('o/r', 7), 1);
-  deepEqual(calls[0]?.argv, ['podman', 'ps', '--filter', 'label=io.github.taco3064.nibfin.issue=7', '--format', 'json']);
+  deepEqual(calls[0]?.argv, [
+    'podman',
+    'ps',
+    '--filter',
+    'label=io.github.taco3064.nibfin.issue=7',
+    '--format',
+    'json',
+  ]);
   deepEqual(calls[1]?.argv, ['podman', 'stop', '--time', '0', 'c1']);
-  deepEqual(running.map((c) => c.Id), ['c2']);
+  deepEqual(
+    running.map((c) => c.Id),
+    ['c2'],
+  );
 });
 
 test('stopJobContainers fails when a container survives', async () => {
-  const { exec } = fakeExec((argv) => (argv[1] === 'ps' ? { stdout: JSON.stringify([{ Id: 'c1', Labels: { 'io.github.taco3064.nibfin.repo': 'r', 'io.github.taco3064.nibfin.issue': '3' } }]) } : undefined));
+  const { exec } = fakeExec((argv) =>
+    argv[1] === 'ps'
+      ? {
+          stdout: JSON.stringify([
+            { Id: 'c1', Labels: { 'io.github.taco3064.nibfin.repo': 'r', 'io.github.taco3064.nibfin.issue': '3' } },
+          ]),
+        }
+      : undefined,
+  );
   await rejects(createHostOperations(services(exec), 'linux').stopJobContainers('o/r', 3), /still running/);
 });
 
 test('secretValues returns the set tokens; ownerLogin and ownerId read GET /user once', async () => {
   let calls = 0;
-  const fetchFn: typeof fetch = async () => (calls++, new Response(JSON.stringify({ login: 'owner', id: 42 }), { status: 200 }));
-  const ops = createHostOperations(services(fakeExec().exec, { E2E_SANDBOX_TOKEN: 'a', E2E_CLAUDE_TOKEN: ' ' }, fetchFn), 'linux');
+  const fetchFn: typeof fetch = async () => (
+    calls++,
+    new Response(JSON.stringify({ login: 'owner', id: 42 }), { status: 200 })
+  );
+  const ops = createHostOperations(
+    services(fakeExec().exec, { E2E_SANDBOX_TOKEN: 'a', E2E_CLAUDE_TOKEN: ' ' }, fetchFn),
+    'linux',
+  );
   deepEqual(ops.secretValues(), ['a']);
   deepEqual([await ops.ownerLogin(), await ops.ownerId(), calls], ['owner', 42, 1]);
 });
@@ -125,19 +197,35 @@ test('secretValues returns the set tokens; ownerLogin and ownerId read GET /user
 test('listByLink follows Link next cursors on the API host only, and stops at the page limit', async () => {
   const seen: { url: string; auth: string | null }[] = [];
   const pages: Record<string, { body: unknown[]; next?: string }> = {
-    'https://api.github.com/repos/o/r/activity?time_period=day&per_page=100': { body: [{ id: 1 }], next: 'https://api.github.com/repos/o/r/activity?per_page=100&after=c1' },
-    'https://api.github.com/repos/o/r/activity?per_page=100&after=c1': { body: [{ id: 2 }], next: 'https://evil.example/steal' },
+    'https://api.github.com/repos/o/r/activity?time_period=day&per_page=100': {
+      body: [{ id: 1 }],
+      next: 'https://api.github.com/repos/o/r/activity?per_page=100&after=c1',
+    },
+    'https://api.github.com/repos/o/r/activity?per_page=100&after=c1': {
+      body: [{ id: 2 }],
+      next: 'https://evil.example/steal',
+    },
   };
   const fetchFn: typeof fetch = async (input, init) => {
     const url = String(input);
     seen.push({ url, auth: new Headers(init?.headers).get('authorization') });
     const p = pages[url];
     if (!p) return new Response('[]', { status: 404 });
-    return new Response(JSON.stringify(p.body), { status: 200, headers: p.next ? { link: `<${p.next}>; rel="next"` } : {} });
+    return new Response(JSON.stringify(p.body), {
+      status: 200,
+      headers: p.next ? { link: `<${p.next}>; rel="next"` } : {},
+    });
   };
   const gh = createGitHub(() => 'tok', fetchFn);
   deepEqual(await gh.listByLink('/repos/o/r/activity?time_period=day'), [{ id: 1 }, { id: 2 }]);
-  equal(seen.some((s) => s.url.startsWith('https://evil.example')), false);
-  const loop: typeof fetch = async () => new Response('[{"id":1}]', { status: 200, headers: { link: '<https://api.github.com/repos/o/r/activity?after=x>; rel="next"' } });
+  equal(
+    seen.some((s) => s.url.startsWith('https://evil.example')),
+    false,
+  );
+  const loop: typeof fetch = async () =>
+    new Response('[{"id":1}]', {
+      status: 200,
+      headers: { link: '<https://api.github.com/repos/o/r/activity?after=x>; rel="next"' },
+    });
   await rejects(createGitHub(() => 'tok', loop).listByLink('/repos/o/r/activity', 3), /more than 3 pages/);
 });

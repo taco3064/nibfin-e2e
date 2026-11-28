@@ -9,8 +9,23 @@ import { foreignLabelGone, redoneShapeProblem } from '../../scenarios/lifecycle/
 import { clock, context, routes } from './fake.ts';
 
 const MIN = 60_000;
-const base = { 'GET /repos/o/peer/actions/runs': { workflow_runs: [] }, 'GET /repos/o/peer/issues': [], 'GET /repos/o/peer/pulls': [], 'GET /repos/o/exec/pulls': [], 'GET /rate_limit': {} };
-const shapeRun = { id: 5, display_title: 'Nibfin · o/exec#6 · shape', status: 'completed', conclusion: 'success', created_at: '2026-11-26T10:00:30Z', name: 'Nibfin', event: 'workflow_dispatch', head_sha: 'h' };
+const base = {
+  'GET /repos/o/peer/actions/runs': { workflow_runs: [] },
+  'GET /repos/o/peer/issues': [],
+  'GET /repos/o/peer/pulls': [],
+  'GET /repos/o/exec/pulls': [],
+  'GET /rate_limit': {},
+};
+const shapeRun = {
+  id: 5,
+  display_title: 'Nibfin · o/exec#6 · shape',
+  status: 'completed',
+  conclusion: 'success',
+  created_at: '2026-11-26T10:00:30Z',
+  name: 'Nibfin',
+  event: 'workflow_dispatch',
+  head_sha: 'h',
+};
 const job = (id: number, extra: Partial<Job> = {}): Job => ({
   id,
   run_id: 5,
@@ -24,8 +39,20 @@ const job = (id: number, extra: Partial<Job> = {}): Job => ({
   completed_at: '2026-11-26T10:02:00Z',
   ...extra,
 });
-const labeled = (name: string, at: string, login: string | null) => ({ event: 'labeled', created_at: at, label: { name }, actor: login === null ? null : { login } });
-const comment = { id: 1, body: '<!-- nibfin:pending -->\nShape stopped: log in again with `claude /login`.', created_at: '', updated_at: '', user: null, html_url: 'https://github.com/o/exec/issues/6#issuecomment-1' };
+const labeled = (name: string, at: string, login: string | null) => ({
+  event: 'labeled',
+  created_at: at,
+  label: { name },
+  actor: login === null ? null : { login },
+});
+const comment = {
+  id: 1,
+  body: '<!-- nibfin:pending -->\nShape stopped: log in again with `claude /login`.',
+  created_at: '',
+  updated_at: '',
+  user: null,
+  html_url: 'https://github.com/o/exec/issues/6#issuecomment-1',
+};
 
 /** A Kit over an Issue #6 with the given labels and timeline, `woke` being when the scenario removed `pending`. */
 function setup(labels: () => string[], timeline: () => unknown[]) {
@@ -33,7 +60,9 @@ function setup(labels: () => string[], timeline: () => unknown[]) {
     ...base,
     'GET /repos/o/exec/actions/runs': { workflow_runs: [shapeRun] },
     'GET /repos/o/exec/actions/runs/5/jobs': { jobs: [job(11)] },
-    'GET /repos/o/exec/issues': () => [{ number: 6, title: 't', state: 'open', labels: labels().map((name) => ({ name })) }],
+    'GET /repos/o/exec/issues': () => [
+      { number: 6, title: 't', state: 'open', labels: labels().map((name) => ({ name })) },
+    ],
     'GET /repos/o/exec/issues/6/comments': [comment],
     'GET /repos/o/exec/issues/6/timeline': () => timeline(),
   });
@@ -49,11 +78,20 @@ function setup(labels: () => string[], timeline: () => unknown[]) {
 test('a pause another actor added ends the `shaped` wait at once, naming the label, its time, the actor and the last Nibfin comment', async () => {
   const { c, k, exit } = setup(
     () => ['scope', 'pause'],
-    () => [labeled('pending', '2026-11-26T09:50:00Z', 'nibfin-bot'), labeled('pause', '2026-11-26T10:00:20Z', 'someone-else')],
+    () => [
+      labeled('pending', '2026-11-26T09:50:00Z', 'nibfin-bot'),
+      labeled('pause', '2026-11-26T10:00:20Z', 'someone-else'),
+    ],
   );
   const started = c.now();
   await rejects(
-    k.obs.until('`shaped`', (s) => (k.labels(s, 'o/exec', 6).includes('shaped') ? true : undefined), DEADLINE.event, k.show('o/exec', 6), { gonePast: exit }),
+    k.obs.until(
+      '`shaped`',
+      (s) => (k.labels(s, 'o/exec', 6).includes('shaped') ? true : undefined),
+      DEADLINE.event,
+      k.show('o/exec', 6),
+      { gonePast: exit },
+    ),
     /^Error: gave up waiting for `shaped`: #6 gained pause at 2026-11-26T10:00:20\.000Z by someone-else, which the scenario did not add; observed: o\/exec#6 open \[scope, pause\] .*last Nibfin comment: https:\/\/github\.com\/o\/exec\/issues\/6#issuecomment-1$/,
   );
   equal(c.now() - started < STALL, true, 'it ended long before the stall limit');
@@ -67,7 +105,9 @@ test('a pause not yet on the timeline ends the wait one snapshot later, by an ac
   );
   const started = c.now();
   await rejects(
-    k.obs.until('the redone shape run to complete', () => undefined, DEADLINE.stage, k.show('o/exec', 6), { gonePast: exit }),
+    k.obs.until('the redone shape run to complete', () => undefined, DEADLINE.stage, k.show('o/exec', 6), {
+      gonePast: exit,
+    }),
     /^Error: gave up waiting for the redone shape run to complete: #6 gained pause, first seen at \S+, by an actor not yet on the timeline, which the scenario did not add; observed:/,
   );
   equal(c.now() - started < STALL, true, 'it ended long before the stall limit');
@@ -76,15 +116,21 @@ test('a pause not yet on the timeline ends the wait one snapshot later, by an ac
     () => ['scope', 'pause'],
     () => [labeled('pause', '2026-11-26T10:00:20Z', null)],
   );
-  equal(await t.foreign(await t.k.obs.fresh()), '#6 gained pause at 2026-11-26T10:00:20.000Z by unknown, which the scenario did not add');
+  equal(
+    await t.foreign(await t.k.obs.fresh()),
+    '#6 gained pause at 2026-11-26T10:00:20.000Z by unknown, which the scenario did not add',
+  );
 });
 
-test('a pending added after the re-login is named with its time and actor; an older pending keeps stageGone\'s reason', async () => {
+test("a pending added after the re-login is named with its time and actor; an older pending keeps stageGone's reason", async () => {
   const fresh = setup(
     () => ['scope', 'pending'],
     () => [labeled('pending', '2026-11-26T10:00:00Z', 'someone-else')],
   );
-  equal(await fresh.exit(await fresh.k.obs.fresh()), '#6 has pending, added at 2026-11-26T10:00:00.000Z by someone-else');
+  equal(
+    await fresh.exit(await fresh.k.obs.fresh()),
+    '#6 has pending, added at 2026-11-26T10:00:00.000Z by someone-else',
+  );
 
   const old = setup(
     () => ['scope', 'pending'],
@@ -103,8 +149,14 @@ test('R1.12 counts only a self-hosted agent job that ran on a Runner and succeed
     redoneShapeProblem(run, [hosted, notRun]),
     'the redone shape run 5 concluded success with no agent job that ran on a Runner; jobs: route (runner GitHub Actions 3, completed/success); stage (runner none, completed/skipped)',
   );
-  equal(redoneShapeProblem(run, []), 'the redone shape run 5 concluded success with no agent job that ran on a Runner; jobs: none');
-  equal(redoneShapeProblem({ id: 5, conclusion: 'failure' }, [hosted, job(12, { conclusion: 'failure' })]), 'the redone shape run 5 (failure): its agent job 12 concluded failure');
+  equal(
+    redoneShapeProblem(run, []),
+    'the redone shape run 5 concluded success with no agent job that ran on a Runner; jobs: none',
+  );
+  equal(
+    redoneShapeProblem({ id: 5, conclusion: 'failure' }, [hosted, job(12, { conclusion: 'failure' })]),
+    'the redone shape run 5 (failure): its agent job 12 concluded failure',
+  );
   equal(redoneShapeProblem(run, [hosted, job(12)]), undefined);
 });
 

@@ -1,7 +1,15 @@
 // Proposal R9.12, R9.13, R9.18, R9.20–R9.22 and R9.6: operations through the Dashboard.
 import type { Locator, Page } from 'playwright-core';
 import type { RunContext } from '../../src/types.ts';
-import { check, commandSchemaFrom, fail, fieldProblems, pauseResumePreconditions, sessionFrom, startsInWindow } from './checks.ts';
+import {
+  check,
+  commandSchemaFrom,
+  fail,
+  fieldProblems,
+  pauseResumePreconditions,
+  sessionFrom,
+  startsInWindow,
+} from './checks.ts';
 import type { SchemaInput } from './checks.ts';
 import { assertQuietSandboxes, blockedBy, ensureFixtures, readIssue, sleep, until } from './github.ts';
 import type { Fixtures } from './github.ts';
@@ -56,7 +64,11 @@ export async function setField(d: Locator, label: RegExp, value: string | boolea
   const role = await f.getAttribute('role');
   if (role === 'combobox' || tag === 'button') {
     await f.click();
-    await d.page().getByRole('option', { name: new RegExp(`^\\s*${value}\\s*$`, 'i') }).first().click();
+    await d
+      .page()
+      .getByRole('option', { name: new RegExp(`^\\s*${value}\\s*$`, 'i') })
+      .first()
+      .click();
     return;
   }
   await f.fill(value);
@@ -66,7 +78,9 @@ export async function setField(d: Locator, label: RegExp, value: string | boolea
 export async function confirmedRun(page: Page, d: Locator, rule: string, what: string): Promise<string> {
   await (await mustButton(d, PREVIEW, rule, `the ${what} dialog`)).click();
   const confirm = d.getByRole('button', { name: CONFIRM }).first();
-  await confirm.waitFor({ state: 'visible', timeout: 180_000 }).catch(() => fail(rule, `a confirm step in ${what}`, 'none after the preview'));
+  await confirm
+    .waitFor({ state: 'visible', timeout: 180_000 })
+    .catch(() => fail(rule, `a confirm step in ${what}`, 'none after the preview'));
   const preview = await d.innerText();
   check(/→|->/.test(preview), 'R9.21', `the ${what} preview to show current → next per item`, preview.slice(0, 300));
   await confirm.click();
@@ -74,9 +88,11 @@ export async function confirmedRun(page: Page, d: Locator, rule: string, what: s
   let text: string;
   for (;;) {
     text = await d.innerText().catch(() => '');
-    if (/not confirmed|unconfirmed/i.test(text)) fail('R9.22', `every ${what} item confirmed by read-back`, text.slice(-400));
+    if (/not confirmed|unconfirmed/i.test(text))
+      fail('R9.22', `every ${what} item confirmed by read-back`, text.slice(-400));
     if (/\b(read.?back|confirmed|verified)\b/i.test(text) && !/\b(applying|in progress)\b/i.test(text)) break;
-    if (/\b[a-z]+(?:_[a-z]+)+\b/.test(text) && /\b(failed|error)\b/i.test(text)) fail(rule, `${what} to apply`, text.slice(-400));
+    if (/\b[a-z]+(?:_[a-z]+)+\b/.test(text) && /\b(failed|error)\b/i.test(text))
+      fail(rule, `${what} to apply`, text.slice(-400));
     if (Date.now() > end) fail(rule, `${what} to reach the read-back step`, text.slice(-400));
     await sleep(1000);
   }
@@ -98,7 +114,12 @@ async function commandSchema(ctx: RunContext, secrets: Secrets): Promise<Map<str
       );
     const exchange = await send('POST', '/api/session', { 'X-Nibfin-Proof': dash.proof });
     const session = exchange.status >= 200 && exchange.status < 300 ? sessionFrom(exchange) : undefined;
-    if (!session) fail('R9.13 (R9.26)', 'a session from the proof exchange', `HTTP ${exchange.status}${exchange.status >= 200 && exchange.status < 300 ? ' with no session field or header' : ''}`);
+    if (!session)
+      fail(
+        'R9.13 (R9.26)',
+        'a session from the proof exchange',
+        `HTTP ${exchange.status}${exchange.status >= 200 && exchange.status < 300 ? ' with no session field or header' : ''}`,
+      );
     secrets.add(session);
     return commandSchemaFrom(await send('GET', '/api/commands', { 'X-Nibfin-Session': session }));
   } finally {
@@ -126,7 +147,12 @@ async function commandDialogs(page: Page, ctx: RunContext, schema: Map<string, S
   await open('repo', /^upgrade\b/i, 'upgrade');
   for (const c of ['pause', 'resume', 'status']) if (!schema.has(c)) problems.push(`${c}: not in /api/commands`);
   check(await button(page, /refresh/i), 'R9.12', 'a Refresh control for status', 'none');
-  check(!problems.length, 'R9.13', 'every dialog to list exactly the inputs of its command schema', problems.join('; '));
+  check(
+    !problems.length,
+    'R9.13',
+    'every dialog to list exactly the inputs of its command schema',
+    problems.join('; '),
+  );
   notes.push('every §5 command is offered; dialog fields match /api/commands');
 }
 
@@ -144,7 +170,8 @@ async function planningProgress(page: Page, ctx: RunContext, notes: string[]) {
   while (Date.now() < end) {
     const t = await d.innerText().catch(() => '');
     last = t;
-    const planning = Boolean(await button(d, /^cancel\b/i)) && !(await d.getByRole('button', { name: CONFIRM }).count());
+    const planning =
+      Boolean(await button(d, /^cancel\b/i)) && !(await d.getByRole('button', { name: CONFIRM }).count());
     if (planning && /\b\d+(?:\.\d+)?\s?s\b|\b\d+:\d{2}\b/.test(t)) sawElapsed = true;
     // A checked item with its result next to the one still being checked.
     if (planning && sawElapsed && /no change needed|→|->|✓|✔|\b(ok|done|checked|passed)\b/i.test(t)) sawResult = true;
@@ -152,7 +179,12 @@ async function planningProgress(page: Page, ctx: RunContext, notes: string[]) {
     if (!planning && (await d.getByRole('button', { name: CONFIRM }).count())) break;
     await sleep(100);
   }
-  check(sawElapsed, 'R9.6', 'the item being checked to show an elapsed time during planning', 'planning ended without one');
+  check(
+    sawElapsed,
+    'R9.6',
+    'the item being checked to show an elapsed time during planning',
+    'planning ended without one',
+  );
   check(sawResult, 'R9.6', 'checked items listed with their results while planning goes on', last.slice(0, 300));
   await (await mustButton(d, /^cancel\b/i, 'R9.6', 'the planning step')).click();
   await sleep(3000);
@@ -161,8 +193,15 @@ async function planningProgress(page: Page, ctx: RunContext, notes: string[]) {
   await closeDialog(page);
 
   const cli = await ctx.ghNibfin(['init']);
-  const progress = `${cli.stdout}\n${cli.stderr}`.split('\n').filter((l) => /\belapsed\b|\(\d+(?:\.\d+)?s\)|\bchecking\b.*\d+(?:\.\d+)?s/i.test(l));
-  check(!progress.length, 'R9.6', 'the CLI preview of init without --yes to have no planning-progress lines', progress.slice(0, 3).join(' | '));
+  const progress = `${cli.stdout}\n${cli.stderr}`
+    .split('\n')
+    .filter((l) => /\belapsed\b|\(\d+(?:\.\d+)?s\)|\bchecking\b.*\d+(?:\.\d+)?s/i.test(l));
+  check(
+    !progress.length,
+    'R9.6',
+    'the CLI preview of init without --yes to have no planning-progress lines',
+    progress.slice(0, 3).join(' | '),
+  );
 
   await (await mustButton(page, /^init\b/i, 'R9.6', 'the repo view')).click();
   d = await dialog(page);
@@ -170,20 +209,38 @@ async function planningProgress(page: Page, ctx: RunContext, notes: string[]) {
   await d.getByRole('button', { name: CONFIRM }).first().waitFor({ state: 'visible', timeout: 180_000 });
   const preview = await d.innerText();
   check(/→|->/.test(preview), 'R9.21', 'each preview item as current → next', preview.slice(0, 300));
-  check(/no change needed/i.test(preview), 'R9.21', 'items already in place marked No change needed', preview.slice(0, 300));
+  check(
+    /no change needed/i.test(preview),
+    'R9.21',
+    'items already in place marked No change needed',
+    preview.slice(0, 300),
+  );
   await closeDialog(page);
   notes.push('init planning shows progress and cancels; preview shows current → next and No change needed');
 }
 
 /** The read-only repository must be below triage for the account (and have an open Issue); otherwise a precondition, not a product failure. */
 export async function readOnlyPrecondition(ctx: RunContext, opts: { openIssue?: boolean } = {}): Promise<void> {
-  const { data } = await ctx.github.rest<{ permissions?: Record<string, boolean>; open_issues_count: number }>('GET', `/repos/${READ_ONLY_REPO}`);
+  const { data } = await ctx.github.rest<{ permissions?: Record<string, boolean>; open_issues_count: number }>(
+    'GET',
+    `/repos/${READ_ONLY_REPO}`,
+  );
   const p = data.permissions;
-  if (!p || p.admin || p.maintain || p.push || p.triage) throw new Error(`precondition: GitHub does not report the account below triage on ${READ_ONLY_REPO} (permissions ${JSON.stringify(p)}); nothing is asserted about the product`);
-  if (data.open_issues_count > READ_ONLY_MAX_OPEN) throw new Error(`precondition: ${READ_ONLY_REPO} has ${data.open_issues_count} open Issues and PRs, more than ${READ_ONLY_MAX_OPEN}; pick a smaller repository. Nothing is asserted about the product`);
+  if (!p || p.admin || p.maintain || p.push || p.triage)
+    throw new Error(
+      `precondition: GitHub does not report the account below triage on ${READ_ONLY_REPO} (permissions ${JSON.stringify(p)}); nothing is asserted about the product`,
+    );
+  if (data.open_issues_count > READ_ONLY_MAX_OPEN)
+    throw new Error(
+      `precondition: ${READ_ONLY_REPO} has ${data.open_issues_count} open Issues and PRs, more than ${READ_ONLY_MAX_OPEN}; pick a smaller repository. Nothing is asserted about the product`,
+    );
   if (opts.openIssue) {
-    const { data: open } = await ctx.github.rest<{ pull_request?: unknown }[]>('GET', `/repos/${READ_ONLY_REPO}/issues?state=open&per_page=100`);
-    if (!open.some((i) => i.pull_request === undefined)) throw new Error(`precondition: ${READ_ONLY_REPO} has no open Issue; nothing is asserted about the product`);
+    const { data: open } = await ctx.github.rest<{ pull_request?: unknown }[]>(
+      'GET',
+      `/repos/${READ_ONLY_REPO}/issues?state=open&per_page=100`,
+    );
+    if (!open.some((i) => i.pull_request === undefined))
+      throw new Error(`precondition: ${READ_ONLY_REPO} has no open Issue; nothing is asserted about the product`);
   }
 }
 
@@ -195,16 +252,32 @@ async function failedPlan(page: Page, ctx: RunContext, notes: string[]) {
   await (await mustButton(page, /^init\b/i, 'R9.21', 'the repo view')).click();
   const d = await dialog(page);
   await (await mustButton(d, PREVIEW, 'R9.21', 'the init dialog')).click();
-  const text = await until(() => d.innerText(), (t) => /\b[a-z]+(?:_[a-z]+)+\b/.test(t) || /\bfail|error\b/i.test(t), 120_000, 1000);
+  const text = await until(
+    () => d.innerText(),
+    (t) => /\b[a-z]+(?:_[a-z]+)+\b/.test(t) || /\bfail|error\b/i.test(t),
+    120_000,
+    1000,
+  );
   check(/\b[a-z]+(?:_[a-z]+)+\b/.test(text), 'R9.21', 'a failure to show its reason code', text.slice(0, 300));
-  check(/next step|try|run |ask|need|grant|permission/i.test(text), 'R9.21', 'a failure to show the next step', text.slice(0, 300));
-  check(!(await d.getByRole('button', { name: CONFIRM }).count()) && !/\b(success|succeeded|applied)\b/i.test(text), 'R9.21', 'no success or confirm step after a failure', text.slice(0, 300));
+  check(
+    /next step|try|run |ask|need|grant|permission/i.test(text),
+    'R9.21',
+    'a failure to show the next step',
+    text.slice(0, 300),
+  );
+  check(
+    !(await d.getByRole('button', { name: CONFIRM }).count()) && !/\b(success|succeeded|applied)\b/i.test(text),
+    'R9.21',
+    'no success or confirm step after a failure',
+    text.slice(0, 300),
+  );
   await closeDialog(page);
   notes.push(`init on ${READ_ONLY_REPO} fails with a code and next step`);
 }
 
 async function runnerCycle(ctx: RunContext, secrets: Secrets, notes: string[]) {
-  const regs = () => ctx.github.list<{ name: string; status: string }>(`/repos/${ctx.sandbox.execution}/actions/runners`, 'runners');
+  const regs = () =>
+    ctx.github.list<{ name: string; status: string }>(`/repos/${ctx.sandbox.execution}/actions/runners`, 'runners');
   try {
     await runnerCycleSteps(ctx, secrets, regs, notes);
   } finally {
@@ -217,7 +290,12 @@ async function runnerCycle(ctx: RunContext, secrets: Secrets, notes: string[]) {
   }
 }
 
-async function runnerCycleSteps(ctx: RunContext, secrets: Secrets, regs: () => Promise<{ name: string; status: string }[]>, notes: string[]) {
+async function runnerCycleSteps(
+  ctx: RunContext,
+  secrets: Secrets,
+  regs: () => Promise<{ name: string; status: string }[]>,
+  notes: string[],
+) {
   const before = await regs();
   let dash = await startDashboard(ctx, secrets);
   try {
@@ -231,7 +309,12 @@ async function runnerCycleSteps(ctx: RunContext, secrets: Secrets, regs: () => P
     if (await del.count()) await del.first().setChecked(false);
     await confirmedRun(page, d, 'R9.21', 'runner remove');
     const after = await until(regs, (x) => !x.some((r) => before.some((b) => b.name === r.name)), 120_000);
-    check(!after.some((r) => before.some((b) => b.name === r.name)), 'R9.22', 'the removed Runners gone from GitHub', after.map((r) => r.name).join(', '));
+    check(
+      !after.some((r) => before.some((b) => b.name === r.name)),
+      'R9.22',
+      'the removed Runners gone from GitHub',
+      after.map((r) => r.name).join(', '),
+    );
   } finally {
     await dash.stop();
   }
@@ -240,7 +323,12 @@ async function runnerCycleSteps(ctx: RunContext, secrets: Secrets, regs: () => P
   try {
     const { page } = await openPage(ctx);
     await openDashboard(page, dash);
-    check((await activeView(page)) === 'runner', 'R9.18', 'the Runner view first when the host has no Runner', String(await activeView(page)));
+    check(
+      (await activeView(page)) === 'runner',
+      'R9.18',
+      'the Runner view first when the host has no Runner',
+      String(await activeView(page)),
+    );
     const t = await bodyText(page);
     check(/runner add/i.test(t) && /\binit\b/i.test(t), 'R9.18', 'a runner add → init guide', t.slice(0, 300));
     await (await mustButton(page, RUNNER_ADD, 'R9.21', 'the Runner view')).click();
@@ -249,7 +337,12 @@ async function runnerCycleSteps(ctx: RunContext, secrets: Secrets, regs: () => P
     await setField(d, /count/i, '2');
     await confirmedRun(page, d, 'R9.21', 'runner add');
     const online = await until(regs, (x) => x.filter((r) => r.status === 'online').length >= 2, 180_000);
-    check(online.filter((r) => r.status === 'online').length === 2, 'R9.22', 'two online Runner registrations after runner add', online.map((r) => `${r.name} ${r.status}`).join(', '));
+    check(
+      online.filter((r) => r.status === 'online').length === 2,
+      'R9.22',
+      'two online Runner registrations after runner add',
+      online.map((r) => `${r.name} ${r.status}`).join(', '),
+    );
   } finally {
     await dash.stop();
   }
@@ -258,11 +351,18 @@ async function runnerCycleSteps(ctx: RunContext, secrets: Secrets, regs: () => P
   try {
     const { page } = await openPage(ctx);
     await openDashboard(page, dash);
-    check((await activeView(page)) === 'person', 'R9.18', 'the person view first when the host has Runners', String(await activeView(page)));
+    check(
+      (await activeView(page)) === 'person',
+      'R9.18',
+      'the person view first when the host has Runners',
+      String(await activeView(page)),
+    );
   } finally {
     await dash.stop();
   }
-  notes.push('runner remove and add went through preview, confirm, progress and read-back; entry view follows the Runners');
+  notes.push(
+    'runner remove and add went through preview, confirm, progress and read-back; entry view follows the Runners',
+  );
 }
 
 /** R9.20: resume and pause F without confirmation; disabled below triage. */
@@ -282,17 +382,46 @@ async function pauseResume(ctx: RunContext, secrets: Secrets, f: Fixtures, notes
     await gotoView(page, 'person');
     const from = Date.now();
     const el = issueElement(page, F.title);
-    await el.getByRole('button', { name: /^resume\b/i }).first().waitFor({ state: 'visible', timeout: 90_000 }).catch(() => {});
+    await el
+      .getByRole('button', { name: /^resume\b/i })
+      .first()
+      .waitFor({ state: 'visible', timeout: 90_000 })
+      .catch(() => {});
     await (await mustButton(el, /^resume\b/i, 'R9.20', 'fixture F')).click();
     await sleep(1500);
-    check(!(await openDialogs(page).getByRole('button', { name: CONFIRM }).filter({ visible: true }).count()), 'R9.21', 'resume without a confirmation step', 'a confirm button appeared');
-    const resumed = await until(() => readIssue(gh, F.repo, F.number), (i) => !i.labels.includes('pause') && !i.labels.includes('pending'), 60_000, 2000);
-    check(!resumed.labels.includes('pause') && !resumed.labels.includes('pending'), 'R9.20', 'resume to remove pause and pending on GitHub', `[${resumed.labels.join(', ')}]`);
+    check(
+      !(await openDialogs(page).getByRole('button', { name: CONFIRM }).filter({ visible: true }).count()),
+      'R9.21',
+      'resume without a confirmation step',
+      'a confirm button appeared',
+    );
+    const resumed = await until(
+      () => readIssue(gh, F.repo, F.number),
+      (i) => !i.labels.includes('pause') && !i.labels.includes('pending'),
+      60_000,
+      2000,
+    );
+    check(
+      !resumed.labels.includes('pause') && !resumed.labels.includes('pending'),
+      'R9.20',
+      'resume to remove pause and pending on GitHub',
+      `[${resumed.labels.join(', ')}]`,
+    );
     await page.waitForTimeout(3000);
     await (await mustButton(issueElement(page, F.title), /^pause\b/i, 'R9.20', 'fixture F after resume')).click();
     await sleep(1500);
-    check(!(await openDialogs(page).getByRole('button', { name: CONFIRM }).filter({ visible: true }).count()), 'R9.21', 'pause without a confirmation step', 'a confirm button appeared');
-    const paused = await until(() => readIssue(gh, F.repo, F.number), (i) => i.labels.includes('pause'), 60_000, 2000);
+    check(
+      !(await openDialogs(page).getByRole('button', { name: CONFIRM }).filter({ visible: true }).count()),
+      'R9.21',
+      'pause without a confirmation step',
+      'a confirm button appeared',
+    );
+    const paused = await until(
+      () => readIssue(gh, F.repo, F.number),
+      (i) => i.labels.includes('pause'),
+      60_000,
+      2000,
+    );
     check(paused.labels.includes('pause'), 'R9.20', 'pause to add pause on GitHub', `[${paused.labels.join(', ')}]`);
 
     // Below triage: disabled with an explanation. Writes nothing.
@@ -300,9 +429,18 @@ async function pauseResume(ctx: RunContext, secrets: Secrets, f: Fixtures, notes
     await gotoView(page, 'repo');
     await selectRepo(page, READ_ONLY_REPO);
     const toggles = page.getByRole('button', { name: /^(pause|resume)\b/i });
-    await toggles.first().waitFor({ state: 'attached', timeout: 60_000 }).catch(() => fail('R9.20', `pause or resume controls on ${READ_ONLY_REPO}'s Issues`, 'none'));
+    await toggles
+      .first()
+      .waitFor({ state: 'attached', timeout: 60_000 })
+      .catch(() => fail('R9.20', `pause or resume controls on ${READ_ONLY_REPO}'s Issues`, 'none'));
     const n = await toggles.count();
-    for (let i = 0; i < n; i++) check(await toggles.nth(i).isDisabled(), 'R9.20', `pause/resume disabled on ${READ_ONLY_REPO}`, 'an enabled control');
+    for (let i = 0; i < n; i++)
+      check(
+        await toggles.nth(i).isDisabled(),
+        'R9.20',
+        `pause/resume disabled on ${READ_ONLY_REPO}`,
+        'an enabled control',
+      );
     const why = `${await bodyText(page)} ${(await toggles.first().getAttribute('title')) ?? ''} ${(await toggles.first().getAttribute('aria-description')) ?? ''}`;
     check(/triage|permission/i.test(why), 'R9.20', 'an explanation that triage permission is needed', 'none');
 
@@ -310,7 +448,11 @@ async function pauseResume(ctx: RunContext, secrets: Secrets, f: Fixtures, notes
     const starts = startsInWindow(watcher.starts(), from, Date.now());
     if (starts.length) {
       const open = await gh.list<{ number: number }>(`/repos/${ctx.sandbox.execution}/pulls?state=open`);
-      fail('R4.9 via R9.20', 'no local Job after resuming fixture F (blocked by the open, undelivered A)', `${starts.length} Nibfin container start(s) at ${starts.map((s) => new Date(s.at).toISOString()).join(', ')}; open PRs: ${open.map((p) => p.number).join(', ') || 'none'}`);
+      fail(
+        'R4.9 via R9.20',
+        'no local Job after resuming fixture F (blocked by the open, undelivered A)',
+        `${starts.length} Nibfin container start(s) at ${starts.map((s) => new Date(s.at).toISOString()).join(', ')}; open PRs: ${open.map((p) => p.number).join(', ') || 'none'}`,
+      );
     }
     notes.push('F resumed and paused without confirmation and read back; no local Job; disabled below triage');
   } finally {

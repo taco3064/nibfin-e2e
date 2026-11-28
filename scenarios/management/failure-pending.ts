@@ -1,7 +1,16 @@
 import type { GitHub } from '../../src/host/github.ts';
 import type { Scenario } from '../../src/types.ts';
 import { Check, message } from '../lib/check.ts';
-import { addLabels, createIssue, deleteFile, labelsOf, putFile, registrations, removeLabel, whoami } from '../lib/github.ts';
+import {
+  addLabels,
+  createIssue,
+  deleteFile,
+  labelsOf,
+  putFile,
+  registrations,
+  removeLabel,
+  whoami,
+} from '../lib/github.ts';
 import { untilAborted } from '../../src/abort.ts';
 import type { Comment } from '../lifecycle/analysis.ts';
 import { markerOf, time } from '../lifecycle/analysis.ts';
@@ -12,7 +21,8 @@ import { sleep, waitFor } from '../lib/wait.ts';
 const comments = (gh: GitHub, repo: string, n: number) => gh.list<Comment>(`/repos/${repo}/issues/${n}/comments`);
 
 /** The latest time any comment was written or updated (Proposal R3.42: a redo may update its comment). */
-const lastWrite = (cs: Comment[]) => Math.max(0, ...cs.flatMap((x) => [Date.parse(x.created_at), Date.parse(x.updated_at)]));
+const lastWrite = (cs: Comment[]) =>
+  Math.max(0, ...cs.flatMap((x) => [Date.parse(x.created_at), Date.parse(x.updated_at)]));
 
 /** The rules of the pending resolution stage this scenario checks once the stage is delivered. */
 const RESOLUTION_RULES = ['R4.40', 'R4.41', 'R4.46', 'R4.49', 'R4.52'];
@@ -36,7 +46,13 @@ export const failurePending: Scenario = {
     try {
       // An invalid .nibfin.json makes Core refuse the Job before any agent runs (Proposal R7.2).
       await putFile(gh, repo, '.nibfin.json', '{"tools": 1}\n', 'nibfin-e2e: add an invalid .nibfin.json');
-      issue = (await createIssue(gh, repo, { title: 'e2e failure: invalid .nibfin.json', labels: ['scope'], assignees: [me.login] })).number;
+      issue = (
+        await createIssue(gh, repo, {
+          title: 'e2e failure: invalid .nibfin.json',
+          labels: ['scope'],
+          assignees: [me.login],
+        })
+      ).number;
       const n = issue;
       const failed = async () => ({ labels: await labelsOf(gh, repo, n), comments: await comments(gh, repo, n) });
 
@@ -60,12 +76,16 @@ export const failurePending: Scenario = {
         c.that(second.comments.length >= first.comments.length, 'R4.5', `#${n} lost comments between the two failures`);
       });
       await c.part('R4.6', async () => {
-        await waitFor(() => registrations(gh, repo), (rs) => rs.length > 0 && rs.every((r) => !r.busy), {
-          what: `every Runner on ${repo} to be idle after the failed Jobs`,
-          deadlineMs: 10 * 60_000,
-          signal: ctx.signal,
-          intervalMs: 15_000,
-        });
+        await waitFor(
+          () => registrations(gh, repo),
+          (rs) => rs.length > 0 && rs.every((r) => !r.busy),
+          {
+            what: `every Runner on ${repo} to be idle after the failed Jobs`,
+            deadlineMs: 10 * 60_000,
+            signal: ctx.signal,
+            intervalMs: 15_000,
+          },
+        );
       });
     } catch (error) {
       c.fail('R4.5', message(error));
@@ -79,9 +99,16 @@ export const failurePending: Scenario = {
     const summary = `#${issue}: each failed Job added pending with a comment, and removing pending dispatched it again`;
     if (gate) {
       const out = c.outcome(summary);
-      return out.status === 'passed' ? { status: 'waiting', reason: `R4.4–R4.6 passed (${summary}); ${RESOLUTION_RULES.join(', ')} wait: ${gate.reason}` } : out;
+      return out.status === 'passed'
+        ? {
+            status: 'waiting',
+            reason: `R4.4–R4.6 passed (${summary}); ${RESOLUTION_RULES.join(', ')} wait: ${gate.reason}`,
+          }
+        : out;
     }
-    return c.outcome(`${summary}; the resolution record (${found?.class ?? 'no class'}) gave next steps and kept pending`);
+    return c.outcome(
+      `${summary}; the resolution record (${found?.class ?? 'no class'}) gave next steps and kept pending`,
+    );
 
     /** Waits, without acting, for the resolution record after the first pending and checks it (R4.40, R4.41, R4.46, R4.49). */
     async function resolution(n: number): Promise<ResolutionRecord | undefined> {
@@ -103,7 +130,9 @@ export const failurePending: Scenario = {
         seen = await waitFor(
           async () => {
             const s = await read();
-            keys = s.comments.filter((x) => Math.max(time(x.created_at), time(x.updated_at)) >= pendingAt).flatMap((x) => markerOf(x.body) ?? []);
+            keys = s.comments
+              .filter((x) => Math.max(time(x.created_at), time(x.updated_at)) >= pendingAt)
+              .flatMap((x) => markerOf(x.body) ?? []);
             return s;
           },
           (s) => s.record !== undefined,
@@ -112,26 +141,49 @@ export const failurePending: Scenario = {
       } catch {
         // waitFor throws only on its deadline or an abort; its message quotes raw comment text, so it is not reported.
         ctx.signal.throwIfAborted();
-        c.fail('R4.40', `no resolution record on #${n} within 15 min after pending was added at ${since}; marker keys seen after it: ${keys.join(', ') || 'none'}`);
+        c.fail(
+          'R4.40',
+          `no resolution record on #${n} within 15 min after pending was added at ${since}; marker keys seen after it: ${keys.join(', ') || 'none'}`,
+        );
         return undefined;
       }
       const r = seen.record as ResolutionRecord;
       const brief = briefRecord(r.body);
       const count = resolutionRecords(seen.comments, pendingAt).length;
-      c.that(count === 1, 'R4.49', `#${n} has ${count} resolution records after pending was added at ${since}, not one`);
-      c.that(r.classLabel !== undefined || r.class !== undefined, 'R4.49', `the resolution record ${r.url} names no class: ${brief}`);
+      c.that(
+        count === 1,
+        'R4.49',
+        `#${n} has ${count} resolution records after pending was added at ${since}, not one`,
+      );
+      c.that(
+        r.classLabel !== undefined || r.class !== undefined,
+        'R4.49',
+        `the resolution record ${r.url} names no class: ${brief}`,
+      );
       c.that(r.cause !== undefined, 'R4.49', `the resolution record ${r.url} gives no one-sentence cause: ${brief}`);
-      c.that(r.class !== undefined, 'R4.41', `the resolution record ${r.url} names no class of the six${r.classLabel ? ` (it says "${briefRecord(r.classLabel, 80)}")` : ''}: ${brief}`);
+      c.that(
+        r.class !== undefined,
+        'R4.41',
+        `the resolution record ${r.url} names no class of the six${r.classLabel ? ` (it says "${briefRecord(r.classLabel, 80)}")` : ''}: ${brief}`,
+      );
       c.that(
         r.class === 'operations-or-manual',
         'R4.46',
         `an invalid .nibfin.json needs a repository fix by a person (維運或人為操作), but the record ${r.url} gives ${r.class ?? r.classLabel ?? 'no class'}: ${brief}`,
       );
       c.that(r.nextSteps, 'R4.46', `the resolution record ${r.url} gives no next steps: ${brief}`);
-      c.that(seen.labels.includes('pending'), 'R4.46', `#${n} lost pending by the time its resolution record was written: ${brief}`);
+      c.that(
+        seen.labels.includes('pending'),
+        'R4.46',
+        `#${n} lost pending by the time its resolution record was written: ${brief}`,
+      );
       await untilAborted(sleep(POLL_MS), ctx.signal);
       const later = await labelsOf(gh, repo, n);
-      c.that(later.includes('pending'), 'R4.46', `#${n} lost pending within ${POLL_MS / 1000} s after its resolution record was written: ${brief}`);
+      c.that(
+        later.includes('pending'),
+        'R4.46',
+        `#${n} lost pending within ${POLL_MS / 1000} s after its resolution record was written: ${brief}`,
+      );
       return r;
     }
   },

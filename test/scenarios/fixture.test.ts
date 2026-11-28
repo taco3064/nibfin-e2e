@@ -17,7 +17,13 @@ test('runnerSlot reads the slot from the registration suffix only', () => {
 
 test('localRunners resolves host-style names to both slots and fails on any other set, listing what it saw', async () => {
   const h = setup();
-  deepEqual((await localRunners(h.kit.github, EXEC)).map((r) => [r.slot, r.name]), [['claude-1', 'myhost-1a2b3c4d-claude-1'], ['claude-2', 'myhost-1a2b3c4d-claude-2']]);
+  deepEqual(
+    (await localRunners(h.kit.github, EXEC)).map((r) => [r.slot, r.name]),
+    [
+      ['claude-1', 'myhost-1a2b3c4d-claude-1'],
+      ['claude-2', 'myhost-1a2b3c4d-claude-2'],
+    ],
+  );
   const sets = {
     missing: [runner(1, 'claude-1')],
     third: [runner(1, 'claude-1'), runner(2, 'claude-2'), runner(3, 'claude-3')],
@@ -32,7 +38,8 @@ test('localRunners resolves host-style names to both slots and fails on any othe
   }
 });
 
-const runnerReads = (h: ReturnType<typeof setup>) => h.fake.reads.filter((r) => r === `/repos/${EXEC}/actions/runners`).length;
+const runnerReads = (h: ReturnType<typeof setup>) =>
+  h.fake.reads.filter((r) => r === `/repos/${EXEC}/actions/runners`).length;
 
 test('a busy or offline Runner that becomes online and idle within the quiesce deadline lets prepareFixture continue', async () => {
   for (const state of [{ busy: true }, { status: 'offline' }]) {
@@ -49,7 +56,10 @@ test('a busy or offline Runner that becomes online and idle within the quiesce d
     await prepareFixture(kit, EXEC, { files: [{ path: 'a.txt', content: 'a\n' }] });
     equal(runnerReads(h), 4, JSON.stringify(state));
     ok(h.fake.writes.length > 0);
-    ok(h.logs.some((l) => /waiting for the Runners: .*claude-2 \(registration myhost-1a2b3c4d-claude-2\)/.test(l)), h.logs.join('\n'));
+    ok(
+      h.logs.some((l) => /waiting for the Runners: .*claude-2 \(registration myhost-1a2b3c4d-claude-2\)/.test(l)),
+      h.logs.join('\n'),
+    );
   }
 });
 
@@ -57,8 +67,13 @@ test('a Runner still busy or offline when the quiesce deadline ends fails before
   for (const state of [{ busy: true }, { status: 'offline' }]) {
     const h = setup();
     h.repo(EXEC).runners = [runner(1, 'claude-1'), runner(2, 'claude-2', state)];
-    const err = await prepareFixture(h.kit, EXEC, { files: [{ path: 'a.txt', content: 'a\n' }] }).catch((e: Error) => e.message);
-    match(String(err), /^Runners not online and idle: claude-2 \(registration myhost-1a2b3c4d-claude-2\) is (offline|online and busy) \(after waiting 900 s\)$/);
+    const err = await prepareFixture(h.kit, EXEC, { files: [{ path: 'a.txt', content: 'a\n' }] }).catch(
+      (e: Error) => e.message,
+    );
+    match(
+      String(err),
+      /^Runners not online and idle: claude-2 \(registration myhost-1a2b3c4d-claude-2\) is (offline|online and busy) \(after waiting 900 s\)$/,
+    );
     equal(h.kit.now(), DEADLINE.quiesce);
     ok(runnerReads(h) > 1);
     deepEqual(h.fake.writes, []);
@@ -68,7 +83,10 @@ test('a Runner still busy or offline when the quiesce deadline ends fails before
 test('a wrong set of Runner registrations fails prepareFixture at once, without waiting or writing', async () => {
   const h = setup();
   h.repo(EXEC).runners = [runner(1, 'claude-1')];
-  await rejects(prepareFixture(h.kit, EXEC, { files: [{ path: 'a.txt', content: 'a\n' }] }), /expected exactly two runner registrations ending in -claude-1 and -claude-2/);
+  await rejects(
+    prepareFixture(h.kit, EXEC, { files: [{ path: 'a.txt', content: 'a\n' }] }),
+    /expected exactly two runner registrations ending in -claude-1 and -claude-2/,
+  );
   equal(runnerReads(h), 1);
   equal(h.kit.now(), 0);
   deepEqual(h.fake.writes, []);
@@ -85,20 +103,35 @@ test('an abort during the Runner wait ends it with the abort reason and no write
       await h.kit.sleep(ms);
     },
   };
-  await rejects(prepareFixture(kit, EXEC, { files: [{ path: 'a.txt', content: 'a\n' }] }), /^Error: harness budget of 190 min ran out$/);
+  await rejects(
+    prepareFixture(kit, EXEC, { files: [{ path: 'a.txt', content: 'a\n' }] }),
+    /^Error: harness budget of 190 min ran out$/,
+  );
   deepEqual(h.fake.writes, []);
 });
 
 test('a dirty main is rebuilt from the baseline tree, committed on the current head and fast-forwarded', async () => {
   const h = setup();
   const r = h.repo(EXEC);
-  h.fake.trees.set('dirty', new Map([...(h.fake.trees.get(BASE_TREE) ?? []), ['.nibfin.json', { mode: '100644', content: '{}' }], ['.rulesync/rules/x.md', { mode: '100644', content: 'x' }], ['e2e/probe.sh', { mode: '100644', content: 'x' }]]));
+  h.fake.trees.set(
+    'dirty',
+    new Map([
+      ...(h.fake.trees.get(BASE_TREE) ?? []),
+      ['.nibfin.json', { mode: '100644', content: '{}' }],
+      ['.rulesync/rules/x.md', { mode: '100644', content: 'x' }],
+      ['e2e/probe.sh', { mode: '100644', content: 'x' }],
+    ]),
+  );
   r.commits.set('c9', { tree: 'dirty', parents: ['c0'] });
   r.branches.set('main', 'c9');
   await prepareFixture(h.kit, EXEC, { files: [{ path: '.nibfin/skills/a.md', content: 'A\n' }] });
   const head = r.branches.get('main') as string;
   deepEqual(r.commits.get(head)?.parents, ['c9']);
-  deepEqual([...(mainFiles(h, EXEC)?.keys() ?? [])].sort(), ['.github/workflows/nibfin-issue.yml', '.nibfin/skills/a.md', 'README.md']);
+  deepEqual([...(mainFiles(h, EXEC)?.keys() ?? [])].sort(), [
+    '.github/workflows/nibfin-issue.yml',
+    '.nibfin/skills/a.md',
+    'README.md',
+  ]);
   const treeWrite = h.fake.writes.filter((w) => w.endsWith('/git/trees'));
   equal(treeWrite.length, 1);
 });
@@ -123,37 +156,59 @@ test('a symlink entry is written with mode 120000 and its target as content', as
 test('a leftover e2e- pull-request ruleset is deleted before main is written; the fixture ruleset comes after the read-back', async () => {
   const h = setup();
   const r = h.repo(EXEC);
-  (r.rulesets as { id: number; name: string; rules?: { type: string }[] }[]).push({ id: 7, name: 'e2e-approval', rules: [{ type: 'pull_request' }] }, { id: 8, name: 'owner-rule' });
+  (r.rulesets as { id: number; name: string; rules?: { type: string }[] }[]).push(
+    { id: 7, name: 'e2e-approval', rules: [{ type: 'pull_request' }] },
+    { id: 8, name: 'owner-rule' },
+  );
   await prepareFixture(h.kit, EXEC, { files: [{ path: 'a.txt', content: 'a\n' }], ruleset: approvalRuleset() });
   const w = h.fake.writes;
   const del = w.indexOf(`DELETE /repos/${EXEC}/rulesets/7`);
   const ref = w.indexOf(`PATCH /repos/${EXEC}/git/refs/heads/main`);
   const create = w.indexOf(`POST /repos/${EXEC}/rulesets`);
   ok(del >= 0 && ref > del && create > ref, w.join('\n'));
-  deepEqual((r.rulesets as { name: string }[]).map((x) => x.name), ['owner-rule', 'e2e-approval']);
+  deepEqual(
+    (r.rulesets as { name: string }[]).map((x) => x.name),
+    ['owner-rule', 'e2e-approval'],
+  );
   equal(w.includes(`DELETE /repos/${EXEC}/rulesets/8`), false);
 });
 
-test('a refused ref update fails with GitHub\'s message', async () => {
+test("a refused ref update fails with GitHub's message", async () => {
   const h = setup();
   h.fake.failures.set(`PATCH /repos/${EXEC}/git/refs/heads/main`, 422);
-  await rejects(prepareFixture(h.kit, EXEC, { files: [{ path: 'a.txt', content: 'a\n' }] }), /refs\/heads\/main returned 422: refused by fake/);
+  await rejects(
+    prepareFixture(h.kit, EXEC, { files: [{ path: 'a.txt', content: 'a\n' }] }),
+    /refs\/heads\/main returned 422: refused by fake/,
+  );
 });
 
 test('the private peer: an "Upgrade to GitHub Pro" rules API means none; other 403s fail; a fixture ruleset is refused before any write', async () => {
   const h = setup({ peerRulesets: 'upgrade' });
   await prepareFixture(h.kit, PEER, { files: [{ path: 'a.txt', content: 'a\n' }] });
-  equal(h.fake.writes.some((w) => w.includes('/rulesets')), false);
+  equal(
+    h.fake.writes.some((w) => w.includes('/rulesets')),
+    false,
+  );
   const before = h.fake.writes.length;
-  await rejects(prepareFixture(h.kit, PEER, { files: [], ruleset: approvalRuleset() }), /private peer sandbox has no rulesets/);
+  await rejects(
+    prepareFixture(h.kit, PEER, { files: [], ruleset: approvalRuleset() }),
+    /private peer sandbox has no rulesets/,
+  );
   equal(h.fake.writes.length, before);
 
   const other = setup();
   const original = other.fake.fetch;
-  const gh = createGitHub(() => 'tok', async (input, init) =>
-    new URL(String(input)).pathname === `/repos/${PEER}/rulesets` ? new Response(JSON.stringify({ message: 'Resource not accessible by personal access token' }), { status: 403 }) : original(input, init),
+  const gh = createGitHub(
+    () => 'tok',
+    async (input, init) =>
+      new URL(String(input)).pathname === `/repos/${PEER}/rulesets`
+        ? new Response(JSON.stringify({ message: 'Resource not accessible by personal access token' }), { status: 403 })
+        : original(input, init),
   );
-  await rejects(prepareFixture({ ...other.kit, github: gh }, PEER, { files: [] }), /rulesets returned 403: Resource not accessible by personal access token/);
+  await rejects(
+    prepareFixture({ ...other.kit, github: gh }, PEER, { files: [] }),
+    /rulesets returned 403: Resource not accessible by personal access token/,
+  );
 });
 
 test('preparing the peer reads the Runners from the execution sandbox only', async () => {
@@ -168,11 +223,17 @@ test('library variables converge to the fixture before the content write; other 
   const r = h.repo(EXEC);
   r.variables.push('NIBFIN_CONTAINER_LIMITS', 'NIBFIN_MODEL', 'NIBFIN_INIT_OWNED');
   r.variableValues.set('NIBFIN_MODEL', 'opus');
-  await prepareFixture(h.kit, EXEC, { files: [{ path: 'a.txt', content: 'a\n' }], variables: { NIBFIN_MODEL: 'haiku', NIBFIN_MEMORY: '1024g' } });
+  await prepareFixture(h.kit, EXEC, {
+    files: [{ path: 'a.txt', content: 'a\n' }],
+    variables: { NIBFIN_MODEL: 'haiku', NIBFIN_MEMORY: '1024g' },
+  });
   deepEqual([...r.variables].sort(), ['NIBFIN_INIT_OWNED', 'NIBFIN_MEMORY', 'NIBFIN_MODEL']);
   deepEqual([r.variableValues.get('NIBFIN_MODEL'), r.variableValues.get('NIBFIN_MEMORY')], ['haiku', '1024g']);
   const w = h.fake.writes;
-  ok(w.indexOf(`DELETE /repos/${EXEC}/actions/variables/NIBFIN_CONTAINER_LIMITS`) < w.indexOf(`PATCH /repos/${EXEC}/git/refs/heads/main`));
+  ok(
+    w.indexOf(`DELETE /repos/${EXEC}/actions/variables/NIBFIN_CONTAINER_LIMITS`) <
+      w.indexOf(`PATCH /repos/${EXEC}/git/refs/heads/main`),
+  );
 });
 
 test('open Issues are closed as not planned; running Job containers are waited for on events', async () => {
@@ -182,7 +243,13 @@ test('open Issues are closed as not planned; running Job containers are waited f
   for (let i = 0; i < 50 && !h.calls.some((c) => c.argv[1] === 'ps'); i++) await new Promise((r) => setImmediate(r));
   h.events.emit(JSON.stringify({ Status: 'died', ID: 'abc123', Type: 'container' }));
   await done;
-  deepEqual(h.repo(EXEC).issues.map((i) => [i.number, i.state, i.state_reason]), [[4, 'closed', 'not_planned'], [5, 'closed', undefined]]);
+  deepEqual(
+    h.repo(EXEC).issues.map((i) => [i.number, i.state, i.state_reason]),
+    [
+      [4, 'closed', 'not_planned'],
+      [5, 'closed', undefined],
+    ],
+  );
   const events = h.events.argvs[0] ?? [];
   ok(events.includes(`label=io.github.taco3064.nibfin.repo=${EXEC}`));
   equal(h.events.open, 0);
@@ -191,7 +258,11 @@ test('open Issues are closed as not planned; running Job containers are waited f
 });
 
 test('order independence: each fixture gets the same writes and tree whichever ran before it', async () => {
-  const a: FixtureState = { files: [{ path: '.nibfin.json', content: '{"tools":{}}\n' }], variables: { NIBFIN_MODEL: 'haiku' }, ruleset: approvalRuleset() };
+  const a: FixtureState = {
+    files: [{ path: '.nibfin.json', content: '{"tools":{}}\n' }],
+    variables: { NIBFIN_MODEL: 'haiku' },
+    ruleset: approvalRuleset(),
+  };
   const b: FixtureState = { files: [], variables: { NIBFIN_CONTAINER_LIMITS: 'off' } };
   const result = async (order: FixtureState[]) => {
     const h = setup();

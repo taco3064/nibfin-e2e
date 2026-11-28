@@ -18,18 +18,21 @@ export function createHostContext(host: HostServices, platform: string = process
     sandbox: { ...SANDBOX },
     signal: NEVER,
     executionDir,
-    ghNibfin: (args, options = {}) => host.exec(['gh', 'nibfin', ...args], { ...options, cwd: executionDir, ghToken: host.sandboxToken() }),
+    ghNibfin: (args, options = {}) =>
+      host.exec(['gh', 'nibfin', ...args], { ...options, cwd: executionDir, ghToken: host.sandboxToken() }),
     gh: (args, options = {}) => host.exec(['gh', ...args], { ...options, ghToken: host.sandboxToken() }),
     workPath: (...parts) => join(host.workDir(), ...parts),
     claudeSettings: async () => (await readClaudeSettings(host.exec)).settings,
     github: host.github,
-    startGhNibfin: (args, options = {}) => host.start(['gh', 'nibfin', ...args], { cwd: executionDir, ghToken: host.sandboxToken(), path: options.path }),
+    startGhNibfin: (args, options = {}) =>
+      host.start(['gh', 'nibfin', ...args], { cwd: executionDir, ghToken: host.sandboxToken(), path: options.path }),
     start: (argv) => host.start(argv),
     exec: (argv, options = {}) => host.exec(argv, { cwd: options.cwd, input: options.input, env: options.env }),
     workDir: () => host.workDir(),
     browserEnv: () => childEnv(host.env),
     peer() {
-      if (!host.peer) throw new Error('the collaborator is not prepared: the collaborator provisioning step did not pass');
+      if (!host.peer)
+        throw new Error('the collaborator is not prepared: the collaborator provisioning step did not pass');
       return host.peer;
     },
     async withExecutionVisibility(visibility, fn) {

@@ -218,11 +218,13 @@ const BARE_RE = /ghcr\.io\/taco3064\/nibfin(?![\w@:/.-])/;
  * A line that only assigns the bare image name to a key or variable, `NAME: <bare>` or
  * `NAME=<bare>`, quoted or not; keys that run or pull an image are not names.
  */
-const BARE_ASSIGNMENT = /^\s*(?:-\s+)?(?:export\s+)?([A-Za-z_][\w-]*)\s*(?::\s+|=)(["']?)ghcr\.io\/taco3064\/nibfin\2\s*(?:#.*)?$/;
+const BARE_ASSIGNMENT =
+  /^\s*(?:-\s+)?(?:export\s+)?([A-Za-z_][\w-]*)\s*(?::\s+|=)(["']?)ghcr\.io\/taco3064\/nibfin\2\s*(?:#.*)?$/;
 const RUNS_IMAGE = new Set(['image', 'container', 'uses', 'run', 'default']);
 
 /** A shell test that only compares two plain values, `[ "$a" != "$b" ]` or `[[ … == … ]]`. */
-const COMPARISON = /\[\[?\s+(?:"\$\{?[A-Za-z_]\w*\}?"|\$\{?[A-Za-z_]\w*\}?|"[^"$`\\]*"|'[^']*')\s*(?:!=|==|=)\s*(?:"\$\{?[A-Za-z_]\w*\}?"|\$\{?[A-Za-z_]\w*\}?|"[^"$`\\]*"|'[^']*')\s+\]\]?/g;
+const COMPARISON =
+  /\[\[?\s+(?:"\$\{?[A-Za-z_]\w*\}?"|\$\{?[A-Za-z_]\w*\}?|"[^"$`\\]*"|'[^']*')\s*(?:!=|==|=)\s*(?:"\$\{?[A-Za-z_]\w*\}?"|\$\{?[A-Za-z_]\w*\}?|"[^"$`\\]*"|'[^']*')\s+\]\]?/g;
 
 /**
  * Why a workflow's bare image name may be run, or undefined when it cannot be. The bare
@@ -260,7 +262,11 @@ function bareUse(text: string, callerTexts: string[]): string | undefined {
  * (see `bareUse`): so it is never pulled, run or created by podman, directly or through
  * its variable, nor used as an `image:`, `container:` or `docker://` image.
  */
-export function unpinnedImages(text: string, digest: string, callerTexts: string[] = []): { ref: string; why?: string }[] {
+export function unpinnedImages(
+  text: string,
+  digest: string,
+  callerTexts: string[] = [],
+): { ref: string; why?: string }[] {
   const pinned = `${BARE}@${digest}`;
   const out: { ref: string; why?: string }[] = [];
   const refs = new Set(readWorkflow(text).images);

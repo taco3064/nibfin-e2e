@@ -1,6 +1,11 @@
 import { deepEqual, equal, match } from 'node:assert/strict';
 import { test } from 'node:test';
-import { behindProblems, conflictProblems, mergeMethod, notExercisedWhy } from '../../scenarios/lifecycle/review-rebase.ts';
+import {
+  behindProblems,
+  conflictProblems,
+  mergeMethod,
+  notExercisedWhy,
+} from '../../scenarios/lifecycle/review-rebase.ts';
 import type { RebaseEvidence } from '../../scenarios/lifecycle/review-rebase.ts';
 
 const AT = Date.parse('2026-11-27T10:00:00Z');
@@ -30,13 +35,19 @@ test('mergeMethod prefers rebase, then squash, then a merge commit', () => {
 });
 
 test('behindProblems passes a behind PR that merged without a Deliver, force push or rebase', () => {
-  deepEqual(behindProblems(evidence({ runs: [{ id: 3, stage: 'review', created_at: iso(5) }], forced: [force(-40)] })), []);
+  deepEqual(
+    behindProblems(evidence({ runs: [{ id: 3, stage: 'review', created_at: iso(5) }], forced: [force(-40)] })),
+    [],
+  );
 });
 
 test('behindProblems names each Deliver, force push and rebase after main advanced', () => {
   const problems = behindProblems(
     evidence({
-      delivers: [{ id: 1, started_at: iso(-30) }, { id: 2, started_at: iso(0), reason: 'rebase' }],
+      delivers: [
+        { id: 1, started_at: iso(-30) },
+        { id: 2, started_at: iso(0), reason: 'rebase' },
+      ],
       forced: [force(10)],
       descends: true,
       delivered: false,
@@ -55,8 +66,14 @@ test('behindProblems needs a merged PR', () => {
 
 test('conflictProblems passes review, then Deliver, a force push and a merged head over the commit', () => {
   const ok = evidence({
-    delivers: [{ id: 1, started_at: iso(-30) }, { id: 2, started_at: iso(12) }],
-    runs: [{ id: 3, stage: 'review', created_at: iso(-20) }, { id: 4, stage: 'review', created_at: iso(5) }],
+    delivers: [
+      { id: 1, started_at: iso(-30) },
+      { id: 2, started_at: iso(12) },
+    ],
+    runs: [
+      { id: 3, stage: 'review', created_at: iso(-20) },
+      { id: 4, stage: 'review', created_at: iso(5) },
+    ],
     forced: [force(20)],
     descends: true,
   });
@@ -66,11 +83,18 @@ test('conflictProblems passes review, then Deliver, a force push and a merged he
 test('conflictProblems requires a review run between the conflict and the Deliver', () => {
   const late = evidence({
     delivers: [{ id: 2, started_at: iso(12) }],
-    runs: [{ id: 3, stage: 'review', created_at: iso(-20) }, { id: 4, stage: 'review', created_at: iso(15) }],
+    runs: [
+      { id: 3, stage: 'review', created_at: iso(-20) },
+      { id: 4, stage: 'review', created_at: iso(15) },
+    ],
     forced: [force(20)],
     descends: true,
   });
-  deepEqual(conflictProblems(late), ['no review or finish run of o/exec#7 was created between the conflicting commit and deliver job 2 (REASON unknown, started ' + iso(12) + '); stage runs in that window: none']);
+  deepEqual(conflictProblems(late), [
+    'no review or finish run of o/exec#7 was created between the conflicting commit and deliver job 2 (REASON unknown, started ' +
+      iso(12) +
+      '); stage runs in that window: none',
+  ]);
 });
 
 test('conflictProblems names a missing Deliver, force push, descent and delivery', () => {
@@ -83,13 +107,19 @@ test('conflictProblems names a missing Deliver, force push, descent and delivery
 });
 
 test('notExercisedWhy: a PR that merged before main advanced never counts', () => {
-  const early = evidence({ merged: { number: 8, head: 'b'.repeat(40), merged_at: iso(-1) }, runs: [{ id: 3, stage: 'review', created_at: iso(5) }] });
+  const early = evidence({
+    merged: { number: 8, head: 'b'.repeat(40), merged_at: iso(-1) },
+    runs: [{ id: 3, stage: 'review', created_at: iso(5) }],
+  });
   match(notExercisedWhy('behind', early) ?? '', /PR #8 merged at .* before main advanced/);
   match(notExercisedWhy('conflict', early) ?? '', /before main advanced/);
 });
 
 test('notExercisedWhy: the behind half needs a review run after main advanced', () => {
-  match(notExercisedWhy('behind', evidence({ runs: [{ id: 3, stage: 'review', created_at: iso(-5) }] })) ?? '', /no review run of o\/exec#7 was created after main advanced/);
+  match(
+    notExercisedWhy('behind', evidence({ runs: [{ id: 3, stage: 'review', created_at: iso(-5) }] })) ?? '',
+    /no review run of o\/exec#7 was created after main advanced/,
+  );
   equal(notExercisedWhy('behind', evidence({ runs: [{ id: 3, stage: 'review', created_at: iso(0) }] })), undefined);
   equal(notExercisedWhy('conflict', evidence()), undefined);
 });
@@ -98,11 +128,30 @@ const conflicted = (runs: RebaseEvidence['runs'], reason?: string) =>
   evidence({ delivers: [{ id: 2, started_at: iso(12), reason }], runs, forced: [force(20)], descends: true });
 
 test('conflictProblems counts a finish run in the window as the Review stage (R5.72, R5.74)', () => {
-  deepEqual(conflictProblems(conflicted([{ id: 3, stage: 'review', created_at: iso(-20) }, { id: 5, stage: 'finish', created_at: iso(6) }], 'rebase')), []);
+  deepEqual(
+    conflictProblems(
+      conflicted(
+        [
+          { id: 3, stage: 'review', created_at: iso(-20) },
+          { id: 5, stage: 'finish', created_at: iso(6) },
+        ],
+        'rebase',
+      ),
+    ),
+    [],
+  );
 });
 
 test('conflictProblems still passes with only a review run in the window', () => {
-  deepEqual(conflictProblems(conflicted([{ id: 4, stage: 'review', created_at: iso(5) }, { id: 6, stage: 'finish', created_at: iso(15) }])), []);
+  deepEqual(
+    conflictProblems(
+      conflicted([
+        { id: 4, stage: 'review', created_at: iso(5) },
+        { id: 6, stage: 'finish', created_at: iso(15) },
+      ]),
+    ),
+    [],
+  );
 });
 
 test('conflictProblems fails with only a route run in the window and names it and the Deliver REASON', () => {
@@ -117,10 +166,16 @@ test('conflictProblems fails with only a route run in the window and names it an
     ),
   );
   deepEqual(problems, [
-    'no review or finish run of o/exec#7 was created between the conflicting commit and deliver job 2 (REASON rebase, started ' + iso(12) + '); stage runs in that window: 9 route ' + iso(4),
+    'no review or finish run of o/exec#7 was created between the conflicting commit and deliver job 2 (REASON rebase, started ' +
+      iso(12) +
+      '); stage runs in that window: 9 route ' +
+      iso(4),
   ]);
 });
 
 test('notExercisedWhy: a finish run alone does not exercise the behind half', () => {
-  match(notExercisedWhy('behind', evidence({ runs: [{ id: 5, stage: 'finish', created_at: iso(5) }] })) ?? '', /no review run of o\/exec#7 was created after main advanced/);
+  match(
+    notExercisedWhy('behind', evidence({ runs: [{ id: 5, stage: 'finish', created_at: iso(5) }] })) ?? '',
+    /no review run of o\/exec#7 was created after main advanced/,
+  );
 });

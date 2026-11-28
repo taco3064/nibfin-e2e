@@ -86,17 +86,21 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
   const usage: string[] = [];
   const planPath = values.plan;
   if (values.all && hasSelection) usage.push('use either --all or --rule/--section, not both');
-  if (planPath !== undefined && (values.all || hasSelection)) usage.push('use either --plan or --all/--rule/--section, not both');
+  if (planPath !== undefined && (values.all || hasSelection))
+    usage.push('use either --plan or --all/--rule/--section, not both');
   if (values.list && values.uncovered) usage.push('use either --list or --uncovered, not both');
   const commit = values['gh-nibfin-commit'];
   const budgetArg = values['budget-minutes'];
-  const budgetMinutes = budgetArg === undefined ? DEFAULT_BUDGET_MINUTES : /^\d+$/.test(budgetArg) ? Number(budgetArg) : NaN;
+  const budgetMinutes =
+    budgetArg === undefined ? DEFAULT_BUDGET_MINUTES : /^\d+$/.test(budgetArg) ? Number(budgetArg) : NaN;
   if (report) {
     if (commit !== undefined) usage.push('--gh-nibfin-commit is only for execution');
     if (budgetArg !== undefined) usage.push('--budget-minutes is only for execution');
   } else {
-    if (!(budgetMinutes > TEARDOWN_RESERVE_MINUTES)) usage.push(`--budget-minutes must be an integer above the teardown reserve of ${TEARDOWN_RESERVE_MINUTES}`);
-    if (!values.all && !hasSelection && planPath === undefined) usage.push('execution needs --all or a --rule/--section selection');
+    if (!(budgetMinutes > TEARDOWN_RESERVE_MINUTES))
+      usage.push(`--budget-minutes must be an integer above the teardown reserve of ${TEARDOWN_RESERVE_MINUTES}`);
+    if (!values.all && !hasSelection && planPath === undefined)
+      usage.push('execution needs --all or a --rule/--section selection');
     if (commit === undefined || !COMMIT.test(commit)) usage.push('--gh-nibfin-commit must be a full 40-hex commit sha');
   }
   const platform = detectPlatform(deps.nodePlatform);
@@ -125,7 +129,12 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
       selection,
       rules: selectedRules,
       excluded: selected.excluded,
-      scenarios: selected.scenarios.map(({ id, rules: r, platforms, requires }) => ({ id, rules: r, platforms, requires: requires ?? [] })),
+      scenarios: selected.scenarios.map(({ id, rules: r, platforms, requires }) => ({
+        id,
+        rules: r,
+        platforms,
+        requires: requires ?? [],
+      })),
     });
     return 0;
   }
@@ -164,7 +173,10 @@ function isStringArray(value: unknown): value is string[] {
 }
 
 /** Reads the selection and the waiting rules from the gate's plan; the selection is still validated by `select()`. */
-export function readPlan(path: string, readFile: (path: string) => string): { selection: Selection; waiting: WaitingRule[] } | { error: string } {
+export function readPlan(
+  path: string,
+  readFile: (path: string) => string,
+): { selection: Selection; waiting: WaitingRule[] } | { error: string } {
   let raw: unknown;
   try {
     raw = JSON.parse(readFile(path));

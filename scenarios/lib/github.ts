@@ -31,7 +31,14 @@ export interface NibfinFacts {
 /** The facts of the `nibfin` provisioning step; it passed, so they are complete. */
 export function nibfinFacts(ctx: RunContext): NibfinFacts {
   const f = ctx.facts('nibfin') as Partial<NibfinFacts> | undefined;
-  if (!f || !Array.isArray(f.commands) || typeof f.imageDigest !== 'string' || typeof f.executionPr !== 'number' || typeof f.peerPr !== 'number' || !f.hostBefore) {
+  if (
+    !f ||
+    !Array.isArray(f.commands) ||
+    typeof f.imageDigest !== 'string' ||
+    typeof f.executionPr !== 'number' ||
+    typeof f.peerPr !== 'number' ||
+    !f.hostBefore
+  ) {
     throw new Error('the nibfin provisioning step left no complete facts');
   }
   return f as NibfinFacts;
@@ -44,19 +51,34 @@ export async function whoami(gh: GitHub): Promise<{ login: string; id: number }>
   return { login: data.login, id: data.id };
 }
 
-export const registrations = (gh: GitHub, repo: string) => gh.list<Registration>(`/repos/${repo}/actions/runners`, 'runners');
+export const registrations = (gh: GitHub, repo: string) =>
+  gh.list<Registration>(`/repos/${repo}/actions/runners`, 'runners');
 
 export async function labelsOf(gh: GitHub, repo: string, n: number): Promise<string[]> {
   return (await gh.list<{ name: string }>(`/repos/${repo}/issues/${n}/labels`)).map((l) => l.name).sort();
 }
 
-export async function createIssue(gh: GitHub, repo: string, body: { title: string; body?: string; labels?: string[]; assignees?: string[] }): Promise<Issue> {
+export async function createIssue(
+  gh: GitHub,
+  repo: string,
+  body: { title: string; body?: string; labels?: string[]; assignees?: string[] },
+): Promise<Issue> {
   const { data } = await gh.rest<Issue>('POST', `/repos/${repo}/issues`, { body: 'nibfin-e2e fixture', ...body });
   return data;
 }
 
-export async function readFile(gh: GitHub, repo: string, file: string, ref = 'main'): Promise<{ sha: string; text: string } | undefined> {
-  const r = await gh.rest<{ sha: string; content: string }>('GET', `/repos/${repo}/contents/${path(file)}?ref=${encodeURIComponent(ref)}`, undefined, [404]);
+export async function readFile(
+  gh: GitHub,
+  repo: string,
+  file: string,
+  ref = 'main',
+): Promise<{ sha: string; text: string } | undefined> {
+  const r = await gh.rest<{ sha: string; content: string }>(
+    'GET',
+    `/repos/${repo}/contents/${path(file)}?ref=${encodeURIComponent(ref)}`,
+    undefined,
+    [404],
+  );
   if (r.status === 404) return undefined;
   return { sha: r.data.sha, text: Buffer.from(r.data.content, 'base64').toString('utf8') };
 }
@@ -79,7 +101,10 @@ export async function deleteFile(gh: GitHub, repo: string, file: string, message
   await gh.rest('DELETE', `/repos/${repo}/contents/${path(file)}`, { message, sha: existing.sha, branch: 'main' });
 }
 
-export const openPulls = (gh: GitHub, repo: string) => gh.list<{ number: number; merged_at: string | null; head: { sha: string; ref: string } }>(`/repos/${repo}/pulls?state=open`);
+export const openPulls = (gh: GitHub, repo: string) =>
+  gh.list<{ number: number; merged_at: string | null; head: { sha: string; ref: string } }>(
+    `/repos/${repo}/pulls?state=open`,
+  );
 
 export async function addLabels(gh: GitHub, repo: string, n: number, labels: string[]): Promise<void> {
   await gh.rest('POST', `/repos/${repo}/issues/${n}/labels`, { labels });

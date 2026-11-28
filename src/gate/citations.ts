@@ -16,7 +16,10 @@ export type ShapeLine =
  * (format set by nibfin-core's `.nibfin/proposal-rules-shape.md`).
  */
 export function parseShapeLine(body: string): ShapeLine {
-  const lines = body.split('\n').map((l) => l.replace(/\r$/, '')).filter((l) => l.startsWith(PREFIX));
+  const lines = body
+    .split('\n')
+    .map((l) => l.replace(/\r$/, ''))
+    .filter((l) => l.startsWith(PREFIX));
   if (lines.length === 0) return { state: 'missing-line' };
   if (lines.length > 1) return { state: 'malformed-line', text: lines.join('\n') };
   const line = lines[0] as string;

@@ -26,7 +26,13 @@ export function decisionBody(slug: string): string {
 /** The product-decision fixture (shared with the Dashboard resolution scenario): `scope`, the Owner as Assignee. */
 export async function decisionFixture(k: Kit, scenario: string): Promise<FixtureSpec> {
   const owner = await k.owner();
-  return { scenario, title: 'Add roundHalf', body: decisionBody(k.slug('round')), labels: ['scope'], assignees: [owner.login] };
+  return {
+    scenario,
+    title: 'Add roundHalf',
+    body: decisionBody(k.slug('round')),
+    labels: ['scope'],
+    assignees: [owner.login],
+  };
 }
 
 /**
@@ -45,7 +51,10 @@ export async function awaitDecisionStop(k: Kit, n: number, show: (s: Snapshot) =
     DEADLINE.stage,
     show,
     {
-      gonePast: async (s) => (k.labels(s, k.exec, n).includes('shaped') ? `#${n}: Shape was published without stopping: the agent chose the rounding itself` : gone(s)),
+      gonePast: async (s) =>
+        k.labels(s, k.exec, n).includes('shaped')
+          ? `#${n}: Shape was published without stopping: the agent chose the rounding itself`
+          : gone(s),
     },
   );
 }
@@ -59,7 +68,9 @@ export function optionProblems(r: ResolutionRecord): string[] {
   if (os.length < 2 || os.length > 4) out.push(`the record has ${os.length} numbered options, not 2–4`);
   const rec = os.filter((o) => o.recommended).length;
   if (rec !== 1) out.push(`${rec} options are marked as recommended, not exactly one`);
-  for (const o of os) if (withoutRecommendation(o.text).replace(/[\s\p{P}\p{S}]/gu, '').length < 2) out.push(`option ${o.n} has no text beyond its number`);
+  for (const o of os)
+    if (withoutRecommendation(o.text).replace(/[\s\p{P}\p{S}]/gu, '').length < 2)
+      out.push(`option ${o.n} has no text beyond its number`);
   const nums = os.map((o) => o.n);
   const dup = [...new Set(nums.filter((x, i) => nums.indexOf(x) !== i))];
   if (dup.length) out.push(`option numbers repeat: ${dup.join(', ')}`);
@@ -70,7 +81,10 @@ export type RuleName = 'half-even' | 'half-away' | 'half-up' | 'half-down';
 
 /** Terms that each name exactly one way of rounding halves. General rounding words are deliberately absent. */
 export const ROUNDING_RULES: { id: RuleName; terms: RegExp[] }[] = [
-  { id: 'half-even', terms: [/\bhalf[- ]to[- ]even\b/i, /\bround half even\b/i, /\beven\b/i, /\bbanker/i, /偶數/, /五成雙/, /銀行家/] },
+  {
+    id: 'half-even',
+    terms: [/\bhalf[- ]to[- ]even\b/i, /\bround half even\b/i, /\beven\b/i, /\bbanker/i, /偶數/, /五成雙/, /銀行家/],
+  },
   { id: 'half-away', terms: [/\baway from zero\b/i, /遠離零/, /遠離 ?0/] },
   { id: 'half-up', terms: [/\bhalf[- ]up\b/i, /\btowards? (\+|positive) ?infinity\b/i, /正無窮/] },
   { id: 'half-down', terms: [/\bhalf[- ]down\b/i, /\btowards? zero\b/i, /向零/] },
@@ -113,7 +127,10 @@ const termsOf = (rule: RuleName) => ROUNDING_RULES.find((r) => r.id === rule)?.t
  * The option the harness decides on: the first non-recommended option that resolves to
  * one rule with a term not in `oldBody`, else the recommended one if it qualifies.
  */
-export function chooseOption(r: ResolutionRecord, oldBody: string): { option: ResolutionOption; rule: RuleName } | undefined {
+export function chooseOption(
+  r: ResolutionRecord,
+  oldBody: string,
+): { option: ResolutionOption; rule: RuleName } | undefined {
   const ok = r.options.flatMap((option) => {
     const rule = optionRule(option.text);
     return rule && termsOf(rule).some((t) => !t.test(oldBody)) ? [{ option, rule }] : [];
@@ -191,7 +208,10 @@ async function decide(k: Kit, filed: (n: number) => void): Promise<Outcome> {
 
   // The resolution record (R4.49), read without acting.
   let keys: string[] = [];
-  const markerKeys = (cs: Comment[]) => cs.filter((x) => Math.max(time(x.created_at), time(x.updated_at)) >= pendingAt).flatMap((x) => markerOf(x.body) ?? []);
+  const markerKeys = (cs: Comment[]) =>
+    cs
+      .filter((x) => Math.max(time(x.created_at), time(x.updated_at)) >= pendingAt)
+      .flatMap((x) => markerOf(x.body) ?? []);
   const closed = k.stageGone(exec, n, 'shape', { since: pendingAt - MIN, allowPending: true, jobs: false });
   let seen: { r: ResolutionRecord; s: Snapshot };
   try {
@@ -207,36 +227,75 @@ async function decide(k: Kit, filed: (n: number) => void): Promise<Outcome> {
       (s) => `#${n} labels: ${k.labels(s, exec, n).join(', ') || 'none'}`,
       {
         quiet: true,
-        gonePast: async (s) => (k.issue(s, exec, n) && !k.labels(s, exec, n).includes('pending') ? `#${n} lost pending before a resolution record appeared` : closed(s)),
+        gonePast: async (s) =>
+          k.issue(s, exec, n) && !k.labels(s, exec, n).includes('pending')
+            ? `#${n} lost pending before a resolution record appeared`
+            : closed(s),
       },
     );
   } catch (error) {
-    c.fail('R4.45', `no resolution record on #${n} after pending was added at ${since} (${message(error)}); marker keys seen after it: ${keys.join(', ') || 'none'}`);
+    c.fail(
+      'R4.45',
+      `no resolution record on #${n} after pending was added at ${since} (${message(error)}); marker keys seen after it: ${keys.join(', ') || 'none'}`,
+    );
     return c.outcome('');
   }
   const { r } = seen;
   const brief = briefRecord(r.body);
-  c.check('R4.45', r.class === 'product-decision', `the resolution record ${r.url} is classed ${r.class ?? (r.classLabel ? `"${briefRecord(r.classLabel, 80)}"` : 'nothing')}, not 產品決策: ${brief}`);
-  c.none('R4.45', optionProblems(r).map((p) => `${p} (${r.url}): ${brief}`));
-  c.check('R4.45', k.labels(seen.s, exec, n).includes('pending'), `#${n} lost pending by the time its resolution record was seen: ${brief}`);
-  c.check('R4.45', bodyUnchanged(stopBody, k.issue(seen.s, exec, n)?.body ?? ''), `#${n}'s body changed between pending and the resolution record: ${briefRecord(k.issue(seen.s, exec, n)?.body ?? '')}`);
+  c.check(
+    'R4.45',
+    r.class === 'product-decision',
+    `the resolution record ${r.url} is classed ${r.class ?? (r.classLabel ? `"${briefRecord(r.classLabel, 80)}"` : 'nothing')}, not 產品決策: ${brief}`,
+  );
+  c.none(
+    'R4.45',
+    optionProblems(r).map((p) => `${p} (${r.url}): ${brief}`),
+  );
+  c.check(
+    'R4.45',
+    k.labels(seen.s, exec, n).includes('pending'),
+    `#${n} lost pending by the time its resolution record was seen: ${brief}`,
+  );
+  c.check(
+    'R4.45',
+    bodyUnchanged(stopBody, k.issue(seen.s, exec, n)?.body ?? ''),
+    `#${n}'s body changed between pending and the resolution record: ${briefRecord(k.issue(seen.s, exec, n)?.body ?? '')}`,
+  );
   const later = await k.obs.fresh();
-  c.check('R4.45', k.labels(later, exec, n).includes('pending'), `#${n} lost pending one interval after its resolution record was seen: ${brief}`);
+  c.check(
+    'R4.45',
+    k.labels(later, exec, n).includes('pending'),
+    `#${n} lost pending one interval after its resolution record was seen: ${brief}`,
+  );
   const blockers = await k.obs.blockedBy(exec, n);
-  c.check('R4.45', blockers.length === 0, `#${n} got a native Blocked by ${blockers.map((b) => `#${b.number}`).join(', ')} after pending`);
+  c.check(
+    'R4.45',
+    blockers.length === 0,
+    `#${n} got a native Blocked by ${blockers.map((b) => `#${b.number}`).join(', ')} after pending`,
+  );
 
   // The decision (R4.51): one option number alone, then pending removed.
   const pick = chooseOption(r, filedBody);
   if (!r.options.length || !pick) {
-    c.notExercised('R4.51', `${r.options.length ? 'no option resolves to exactly one rounding rule new to the Issue' : 'the record has no numbered options'}: ${brief}`);
+    c.notExercised(
+      'R4.51',
+      `${r.options.length ? 'no option resolves to exactly one rounding rule new to the Issue' : 'the record has no numbered options'}: ${brief}`,
+    );
     return c.outcome('');
   }
   const { data: before } = await k.gh.rest<Issue>('GET', `/repos/${exec}/issues/${n}`);
-  c.check('R4.45', bodyUnchanged(stopBody, before.body ?? ''), `#${n}'s body changed after pending, before the decision: ${briefRecord(before.body ?? '')}`);
+  c.check(
+    'R4.45',
+    bodyUnchanged(stopBody, before.body ?? ''),
+    `#${n}'s body changed after pending, before the decision: ${briefRecord(before.body ?? '')}`,
+  );
   const answer = String(pick.option.n);
   const { data: posted } = await k.gh.rest<Comment>('POST', `/repos/${exec}/issues/${n}/comments`, { body: answer });
   const { data: back } = await k.gh.rest<Comment>('GET', `/repos/${exec}/issues/comments/${posted.id}`);
-  if (back.body !== answer) throw new Error(`the decision comment ${posted.id} on #${n} reads back "${briefRecord(back.body ?? '', 40)}", expected "${answer}"`);
+  if (back.body !== answer)
+    throw new Error(
+      `the decision comment ${posted.id} on #${n} reads back "${briefRecord(back.body ?? '', 40)}", expected "${answer}"`,
+    );
   await k.removeLabel(exec, n, 'pending');
   const removedAt = k.now();
   const chosen = `option ${answer} (${pick.rule}): "${briefRecord(pick.option.text, 120)}"`;
@@ -245,8 +304,20 @@ async function decide(k: Kit, filed: (n: number) => void): Promise<Outcome> {
   const shapeGone = k.stageGone(exec, n, 'shape', { since: removedAt - MIN, publishes: 'shaped' });
   const gonePast = async (s: Snapshot) => (await shapeGone(s)) ?? unexpectedStage(k, s, n, removedAt);
   try {
-    await k.obs.until(`a new shape run on #${n} after pending was removed`, (s) => k.stages(s, exec, n, ['shape']).find((x) => time(x.created_at) >= removedAt), DEADLINE.stage, show, { gonePast });
-    await k.obs.until(`#${n} to get shaped after the decision`, (s) => (k.labels(s, exec, n).includes('shaped') ? true : undefined), DEADLINE.stage, show, { gonePast });
+    await k.obs.until(
+      `a new shape run on #${n} after pending was removed`,
+      (s) => k.stages(s, exec, n, ['shape']).find((x) => time(x.created_at) >= removedAt),
+      DEADLINE.stage,
+      show,
+      { gonePast },
+    );
+    await k.obs.until(
+      `#${n} to get shaped after the decision`,
+      (s) => (k.labels(s, exec, n).includes('shaped') ? true : undefined),
+      DEADLINE.stage,
+      show,
+      { gonePast },
+    );
   } catch (error) {
     c.fail('R4.51', `after deciding ${chosen}: ${message(error)}`);
     return c.outcome('');
@@ -254,15 +325,29 @@ async function decide(k: Kit, filed: (n: number) => void): Promise<Outcome> {
   const { data: after } = await k.gh.rest<Issue>('GET', `/repos/${exec}/issues/${n}`);
   const body = after.body ?? '';
   const term = reflectedTerm(filedBody, body, pick.rule);
-  c.check('R4.51', !bodyUnchanged(filedBody, body), `#${n} was shaped after deciding ${chosen}, but its body is unchanged`);
-  c.check('R4.51', term !== undefined, `#${n}'s new body does not newly name ${pick.rule} after deciding ${chosen}: ${briefRecord(body)}`);
-  return c.outcome(`#${n} stopped with a 產品決策 record of ${r.options.length} options; deciding ${chosen} made the next Shape write "${term ?? ''}" into the Issue and publish`);
+  c.check(
+    'R4.51',
+    !bodyUnchanged(filedBody, body),
+    `#${n} was shaped after deciding ${chosen}, but its body is unchanged`,
+  );
+  c.check(
+    'R4.51',
+    term !== undefined,
+    `#${n}'s new body does not newly name ${pick.rule} after deciding ${chosen}: ${briefRecord(body)}`,
+  );
+  return c.outcome(
+    `#${n} stopped with a 產品決策 record of ${r.options.length} options; deciding ${chosen} made the next Shape write "${term ?? ''}" into the Issue and publish`,
+  );
 }
 
 /** Why the wait for the next Shape can no longer succeed: another agent stage ran before any new shape run. */
 function unexpectedStage(k: Kit, s: Snapshot, n: number, removedAt: number): string | undefined {
   const runs = k.stages(s, k.exec, n, AGENT_STAGES).filter((r) => time(r.created_at) >= removedAt);
   const firstShape = runs.filter((r) => r.stage === 'shape').sort((a, b) => time(a.created_at) - time(b.created_at))[0];
-  const other = runs.find((r) => r.stage !== 'shape' && (!firstShape || time(r.created_at) < time(firstShape.created_at)));
-  return other ? `after pending was removed, a ${other.stage} run ${other.id} started (created ${other.created_at}) before any new shape run` : undefined;
+  const other = runs.find(
+    (r) => r.stage !== 'shape' && (!firstShape || time(r.created_at) < time(firstShape.created_at)),
+  );
+  return other
+    ? `after pending was removed, a ${other.stage} run ${other.id} started (created ${other.created_at}) before any new shape run`
+    : undefined;
 }

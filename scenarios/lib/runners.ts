@@ -23,12 +23,22 @@ export const SLOTS = ['claude-1', 'claude-2'] as const;
  * claude-1 and claude-2 must be present; any other set fails and lists what was seen.
  */
 export async function localRunners(gh: GitHub, execution: string): Promise<LocalRunner[]> {
-  const all = await gh.list<{ name: string; status: string; busy?: boolean }>(`/repos/${execution}/actions/runners`, 'runners');
+  const all = await gh.list<{ name: string; status: string; busy?: boolean }>(
+    `/repos/${execution}/actions/runners`,
+    'runners',
+  );
   const seen = () => all.map((r) => `${r.name} (${r.status}${r.busy ? ', busy' : ''})`).join(', ') || 'none';
-  const out: LocalRunner[] = all.map((r) => ({ slot: runnerSlot(r.name) ?? '', name: r.name, status: r.status, busy: r.busy === true }));
+  const out: LocalRunner[] = all.map((r) => ({
+    slot: runnerSlot(r.name) ?? '',
+    name: r.name,
+    status: r.status,
+    busy: r.busy === true,
+  }));
   const slots = out.map((r) => r.slot).sort();
   if (out.length !== SLOTS.length || slots.join(' ') !== [...SLOTS].join(' ')) {
-    throw new Error(`${execution}: expected exactly two runner registrations ending in -claude-1 and -claude-2; saw ${seen()}`);
+    throw new Error(
+      `${execution}: expected exactly two runner registrations ending in -claude-1 and -claude-2; saw ${seen()}`,
+    );
   }
   return out.sort((a, b) => (a.slot < b.slot ? -1 : 1));
 }

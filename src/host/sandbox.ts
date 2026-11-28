@@ -27,7 +27,9 @@ export function readTemplate(dir: string): TemplateFile[] {
 }
 
 function gitObject(type: string, body: Buffer): Buffer {
-  return createHash('sha1').update(Buffer.concat([Buffer.from(`${type} ${body.length}\0`), body])).digest();
+  return createHash('sha1')
+    .update(Buffer.concat([Buffer.from(`${type} ${body.length}\0`), body]))
+    .digest();
 }
 
 /** The git tree sha of the files as regular (100644) blobs, computed locally so a clean sandbox needs no write. */
@@ -82,7 +84,12 @@ export const planHasNoRulesets = (message: string): boolean => /Upgrade to GitHu
 
 /** Rulesets of the repository; a private repository on a plan without rulesets has none (Proposal R3.55). */
 export async function rulesets(gh: GitHub, repo: string): Promise<Ruleset[]> {
-  const r = await gh.rest<Ruleset[] | { message?: string }>('GET', `/repos/${repo}/rulesets?per_page=100`, undefined, [403]);
+  const r = await gh.rest<Ruleset[] | { message?: string }>(
+    'GET',
+    `/repos/${repo}/rulesets?per_page=100`,
+    undefined,
+    [403],
+  );
   if (r.status === 403) {
     const message = (r.data as { message?: string }).message ?? '';
     if (planHasNoRulesets(message)) return [];
@@ -96,7 +103,11 @@ export async function rulesets(gh: GitHub, repo: string): Promise<Ruleset[]> {
  * 404 for an unprotected branch (Proposal R4.39), and 403 "Upgrade to GitHub Pro" on a
  * private repository whose plan has no branch protection.
  */
-export async function branchProtection(gh: GitHub, repo: string, branch = 'main'): Promise<Record<string, unknown> | undefined> {
+export async function branchProtection(
+  gh: GitHub,
+  repo: string,
+  branch = 'main',
+): Promise<Record<string, unknown> | undefined> {
   const path = `/repos/${repo}/branches/${ref(branch)}/protection`;
   const r = await gh.rest<Record<string, unknown>>('GET', path, undefined, [403, 404]);
   if (r.status === 404) return undefined;
@@ -158,7 +169,9 @@ async function read(gh: GitHub, repo: string): Promise<State> {
     mainCommit: main?.commit,
     mainTree: main?.tree,
     // matching-refs returns every match in one answer (it is not paginated).
-    tags: (await gh.rest<{ ref: string }[]>('GET', `${r}/git/matching-refs/tags`)).data.map((t) => t.ref.replace(/^refs\/tags\//, '')),
+    tags: (await gh.rest<{ ref: string }[]>('GET', `${r}/git/matching-refs/tags`)).data.map((t) =>
+      t.ref.replace(/^refs\/tags\//, ''),
+    ),
   };
 }
 
@@ -175,7 +188,8 @@ export function differences(repo: string, state: State, visibility: Visibility, 
     out.push(`${repo}: ${k} is ${JSON.stringify(state.settings[k])}, expected ${JSON.stringify(v)}`);
   }
   if (state.mainTree === undefined) out.push(`${repo}: branch main does not exist`);
-  else if (state.mainTree !== tree) out.push(`${repo}: main's tree is ${state.mainTree}, expected the template tree ${tree}`);
+  else if (state.mainTree !== tree)
+    out.push(`${repo}: main's tree is ${state.mainTree}, expected the template tree ${tree}`);
   for (const p of state.pulls) out.push(`${repo}: pull request #${p.number} is open`);
   for (const b of state.branches) if (b !== 'main') out.push(`${repo}: branch ${b} exists`);
   for (const i of state.issues) out.push(`${repo}: Issue #${i.number} exists`);
@@ -206,16 +220,31 @@ export async function createTree(gh: GitHub, repo: string, entries: TreeEntry[],
 }
 
 /** Commits the tree on `parent` and fast-forwards main to it (`force: false`, so a moved main is refused). */
-export async function commitOnMain(gh: GitHub, repo: string, tree: string, parent: string, message: string): Promise<string> {
+export async function commitOnMain(
+  gh: GitHub,
+  repo: string,
+  tree: string,
+  parent: string,
+  message: string,
+): Promise<string> {
   const r = `/repos/${repo}`;
-  const { data: commit } = await gh.rest<{ sha: string }>('POST', `${r}/git/commits`, { message, tree, parents: [parent] });
+  const { data: commit } = await gh.rest<{ sha: string }>('POST', `${r}/git/commits`, {
+    message,
+    tree,
+    parents: [parent],
+  });
   await gh.rest('PATCH', `${r}/git/refs/heads/main`, { sha: commit.sha, force: false });
   return commit.sha;
 }
 
 /** main's head commit and its tree, or undefined when main does not exist. */
 export async function mainHead(gh: GitHub, repo: string): Promise<{ commit: string; tree: string } | undefined> {
-  const main = await gh.rest<{ commit: { sha: string; commit: { tree: { sha: string } } } }>('GET', `/repos/${repo}/branches/main`, undefined, [404]);
+  const main = await gh.rest<{ commit: { sha: string; commit: { tree: { sha: string } } } }>(
+    'GET',
+    `/repos/${repo}/branches/main`,
+    undefined,
+    [404],
+  );
   return main.status === 404 ? undefined : { commit: main.data.commit.sha, tree: main.data.commit.commit.tree.sha };
 }
 
@@ -258,7 +287,12 @@ async function unfinishedRuns(gh: GitHub, repo: string): Promise<Run[]> {
 /** Sends a cancel (or force-cancel) for the run and logs it; a 409 (already finished) is accepted. */
 async function cancelRun(deps: SandboxDeps, repo: string, run: Run, force: boolean): Promise<void> {
   const kind = force ? 'force-cancel' : 'cancel';
-  const r = await deps.github.rest<{ message?: string }>('POST', `/repos/${repo}/actions/runs/${run.id}/${kind}`, undefined, [409]);
+  const r = await deps.github.rest<{ message?: string }>(
+    'POST',
+    `/repos/${repo}/actions/runs/${run.id}/${kind}`,
+    undefined,
+    [409],
+  );
   const answer = r.status === 409 ? `; GitHub answered 409: ${String(r.data?.message ?? '')}` : '';
   deps.log(`${repo}: ${kind} requested for workflow run ${run.id} (${run.name}, ${run.status})${answer}`);
 }
@@ -267,7 +301,10 @@ async function cancelRun(deps: SandboxDeps, repo: string, run: Run, force: boole
 async function holder(gh: GitHub, repo: string, runner: Runner): Promise<string> {
   for (const run of await unfinishedRuns(gh, repo)) {
     if (run.status !== 'in_progress') continue;
-    const jobs = await gh.list<{ name: string; status: string; runner_name: string | null; html_url: string }>(`/repos/${repo}/actions/runs/${run.id}/jobs`, 'jobs');
+    const jobs = await gh.list<{ name: string; status: string; runner_name: string | null; html_url: string }>(
+      `/repos/${repo}/actions/runs/${run.id}/jobs`,
+      'jobs',
+    );
     const job = jobs.find((j) => j.status === 'in_progress' && j.runner_name === runner.name);
     if (job) return `held by job "${job.name}" (${job.html_url}) of workflow run ${run.id} (${run.name})`;
   }
@@ -313,24 +350,31 @@ async function releaseRunners(deps: SandboxDeps, repo: string, initial: Runner[]
     }
     waited = now() - start;
     const busy = runners.filter((rn) => rn.busy).map((rn) => rn.name);
-    log(`${repo}: waited ${Math.round(waited / 1000)}s for runner(s) ${waitedFor.join(', ')} to be released; ${busy.length ? `still busy: ${busy.join(', ')}` : 'released'}`);
+    log(
+      `${repo}: waited ${Math.round(waited / 1000)}s for runner(s) ${waitedFor.join(', ')} to be released; ${busy.length ? `still busy: ${busy.join(', ')}` : 'released'}`,
+    );
   }
 
   const refused: { runner: Runner; error: GitHubError }[] = [];
   for (const rn of runners) {
     const path = `/repos/${repo}/actions/runners/${rn.id}`;
     const r = await gh.rest<{ message?: string }>('DELETE', path, undefined, [422]);
-    if (r.status === 422) refused.push({ runner: rn, error: new GitHubError('DELETE', path, 422, String(r.data?.message ?? '')) });
+    if (r.status === 422)
+      refused.push({ runner: rn, error: new GitHubError('DELETE', path, 422, String(r.data?.message ?? '')) });
   }
   if (!refused.length) return;
 
   const parts: string[] = [];
   for (const { runner, error } of refused) {
-    parts.push(`${repo}: runner registration ${runner.name} (id ${runner.id}) could not be deleted: ${error.message}; ${await holder(gh, repo, runner)}`);
+    parts.push(
+      `${repo}: runner registration ${runner.name} (id ${runner.id}) could not be deleted: ${error.message}; ${await holder(gh, repo, runner)}`,
+    );
   }
   parts.push(`cancel requested for runs ${ids(cancelled)}; force-cancel for ${ids(forced)}`);
   parts.push(`waited ${Math.round(waited / 1000)}s of ${WAIT_MS / 1000}s`);
-  parts.push('the runner must finish its job, or its job must be cancelled or the runner released on GitHub, before the sandboxes can be reset; then rerun the sandboxes step');
+  parts.push(
+    'the runner must finish its job, or its job must be cancelled or the runner released on GitHub, before the sandboxes can be reset; then rerun the sandboxes step',
+  );
   throw new Error(parts.join('; '), { cause: refused[0]?.error });
 }
 
@@ -344,7 +388,8 @@ export async function resetSandbox(deps: SandboxDeps, repo: string, visibility: 
   const r = `/repos/${repo}`;
   const tree = treeSha(deps.template);
   const s = await read(gh, repo);
-  if (s.mainCommit === undefined) throw new Error(`${repo}: branch main does not exist; the sandbox must have a main branch`);
+  if (s.mainCommit === undefined)
+    throw new Error(`${repo}: branch main does not exist; the sandbox must have a main branch`);
 
   const settings = settingsDiff(s, visibility);
   if (Object.keys(settings).length) {
@@ -357,7 +402,9 @@ export async function resetSandbox(deps: SandboxDeps, repo: string, visibility: 
   for (const p of s.pulls) await gh.rest('PATCH', `${r}/pulls/${p.number}`, { state: 'closed' });
   for (const b of s.branches) if (b !== 'main') await gh.rest('DELETE', `${r}/git/refs/heads/${ref(b)}`);
   for (const i of s.issues) {
-    await gh.graphql('mutation($id: ID!) { deleteIssue(input: {issueId: $id}) { clientMutationId } }', { id: i.node_id });
+    await gh.graphql('mutation($id: ID!) { deleteIssue(input: {issueId: $id}) { clientMutationId } }', {
+      id: i.node_id,
+    });
   }
   for (const l of s.labels) await gh.rest('DELETE', `${r}/labels/${encodeURIComponent(l)}`);
   for (const name of s.secrets) await gh.rest('DELETE', `${r}/actions/secrets/${encodeURIComponent(name)}`);
@@ -370,7 +417,8 @@ export async function resetSandbox(deps: SandboxDeps, repo: string, visibility: 
     log(`${repo}: main's tree differs from the template; adding a commit`);
     const entries = deps.template.map((f): TreeEntry => {
       const content = f.content.toString('utf8');
-      if (!Buffer.from(content, 'utf8').equals(f.content)) throw new Error(`sandbox template: ${f.path} is not UTF-8 text`);
+      if (!Buffer.from(content, 'utf8').equals(f.content))
+        throw new Error(`sandbox template: ${f.path} is not UTF-8 text`);
       return { path: f.path, mode: '100644', content };
     });
     const created = await createTree(gh, repo, entries);
@@ -391,5 +439,6 @@ export async function onlineRunners(gh: GitHub, repo: string): Promise<string[]>
 export async function setVisibility(gh: GitHub, repo: string, visibility: Visibility): Promise<void> {
   await gh.rest('PATCH', `/repos/${repo}`, { visibility });
   const { data } = await gh.rest<{ visibility?: string }>('GET', `/repos/${repo}`);
-  if (data.visibility !== visibility) throw new Error(`${repo}: visibility reads back ${String(data.visibility)}, expected ${visibility}`);
+  if (data.visibility !== visibility)
+    throw new Error(`${repo}: visibility reads back ${String(data.visibility)}, expected ${visibility}`);
 }

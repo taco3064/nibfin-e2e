@@ -57,7 +57,13 @@ function hexBytes(hex: string): Uint8Array<ArrayBuffer> {
 async function signatureValid(header: string | null, raw: Uint8Array<ArrayBuffer>, secret: string): Promise<boolean> {
   const m = header === null ? null : /^sha256=([0-9a-f]{64})$/.exec(header);
   if (!m?.[1]) return false;
-  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['verify'],
+  );
   return crypto.subtle.verify('HMAC', key, hexBytes(m[1]), raw);
 }
 
@@ -92,7 +98,12 @@ export async function handle(request: Request, env: Env, deps: Deps): Promise<Re
     // Bootstrap: Notion sends the verification token only to the endpoint, so the
     // Owner reads it here with `wrangler tail` and stores it as the secret.
     const body = parseJson(raw);
-    if (isObject(body) && Object.keys(body).length === 1 && typeof body.verification_token === 'string' && body.verification_token) {
+    if (
+      isObject(body) &&
+      Object.keys(body).length === 1 &&
+      typeof body.verification_token === 'string' &&
+      body.verification_token
+    ) {
       deps.log(`verification_token: ${body.verification_token}`);
       return reply(200);
     }
@@ -140,7 +151,10 @@ export async function handle(request: Request, env: Env, deps: Deps): Promise<Re
 export default {
   fetch(request: Request, env: Env): Promise<Response> {
     return handle(request, env, {
-      dispatch: createDispatch(() => env.GITHUB_TOKEN ?? '', (input, init) => fetch(input, init)),
+      dispatch: createDispatch(
+        () => env.GITHUB_TOKEN ?? '',
+        (input, init) => fetch(input, init),
+      ),
       log: (line) => console.log(line),
     });
   },

@@ -7,7 +7,10 @@ const POOL = /\bpools?\b/i;
 
 /** The lines of `text` that say Pool, trimmed. */
 export function poolLines(text: string): string[] {
-  return text.split(/\r?\n/).filter((l) => POOL.test(l)).map((l) => l.trim().slice(0, 120));
+  return text
+    .split(/\r?\n/)
+    .filter((l) => POOL.test(l))
+    .map((l) => l.trim().slice(0, 120));
 }
 
 export const wording: Scenario = {
@@ -20,11 +23,19 @@ export const wording: Scenario = {
     const help = await allHelp((args) => ctx.ghNibfin(args));
     for (const [path, text] of help) {
       const hits = poolLines(text);
-      c.that(!hits.length, 'R5.19', `gh nibfin ${path ? path + ' ' : ''}--help says Pool: ${hits.slice(0, 3).join(' | ')}`);
+      c.that(
+        !hits.length,
+        'R5.19',
+        `gh nibfin ${path ? path + ' ' : ''}--help says Pool: ${hits.slice(0, 3).join(' | ')}`,
+      );
     }
     for (const cmd of nibfinFacts(ctx).commands) {
       const hits = poolLines(cmd.stdout + '\n' + cmd.stderr);
-      c.that(!hits.length, 'R5.19', `the output of gh nibfin ${cmd.args.join(' ')} says Pool: ${hits.slice(0, 3).join(' | ')}`);
+      c.that(
+        !hits.length,
+        'R5.19',
+        `the output of gh nibfin ${cmd.args.join(' ')} says Pool: ${hits.slice(0, 3).join(' | ')}`,
+      );
     }
     return c.outcome(`no Pool in the help of ${help.size} commands or in the output of runner add and init`);
   },

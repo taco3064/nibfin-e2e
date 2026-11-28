@@ -35,12 +35,16 @@ export function specFixOrder(t: SpecFixTimes): string[] {
   const out: string[] = [];
   const corrections = [...t.edits, ...t.blockedByAdded].filter((x) => x >= t.pendingAt).sort((a, b) => a - b);
   const first = corrections[0];
-  if (first === undefined) out.push(`no body edit or Blocked by was added at or after pending was added at ${iso(t.pendingAt)}`);
+  if (first === undefined)
+    out.push(`no body edit or Blocked by was added at or after pending was added at ${iso(t.pendingAt)}`);
   if (t.recordAt === undefined) out.push(`no resolution record was written at or after ${iso(t.pendingAt)}`);
   if (t.unpendedAt === undefined) out.push(`pending, added at ${iso(t.pendingAt)}, was not removed`);
-  if (first !== undefined && t.recordAt !== undefined && first > t.recordAt) out.push(`the first correction at ${iso(first)} came after the resolution record at ${iso(t.recordAt)}`);
-  if (t.recordAt !== undefined && t.unpendedAt !== undefined && t.recordAt > t.unpendedAt) out.push(`the resolution record at ${iso(t.recordAt)} came after pending was removed at ${iso(t.unpendedAt)}`);
-  if (first !== undefined && t.unpendedAt !== undefined && first > t.unpendedAt) out.push(`the first correction at ${iso(first)} came after pending was removed at ${iso(t.unpendedAt)}`);
+  if (first !== undefined && t.recordAt !== undefined && first > t.recordAt)
+    out.push(`the first correction at ${iso(first)} came after the resolution record at ${iso(t.recordAt)}`);
+  if (t.recordAt !== undefined && t.unpendedAt !== undefined && t.recordAt > t.unpendedAt)
+    out.push(`the resolution record at ${iso(t.recordAt)} came after pending was removed at ${iso(t.unpendedAt)}`);
+  if (first !== undefined && t.unpendedAt !== undefined && first > t.unpendedAt)
+    out.push(`the first correction at ${iso(first)} came after pending was removed at ${iso(t.unpendedAt)}`);
   return out;
 }
 
@@ -72,7 +76,14 @@ export function skillPathsOf(config: string | undefined): string[] {
 
 export type Settings = Record<string, string | boolean | null>;
 
-const SETTING_KEYS = ['allow_rebase_merge', 'allow_squash_merge', 'allow_merge_commit', 'delete_branch_on_merge', 'default_branch', 'visibility'] as const;
+const SETTING_KEYS = [
+  'allow_rebase_merge',
+  'allow_squash_merge',
+  'allow_merge_commit',
+  'delete_branch_on_merge',
+  'default_branch',
+  'visibility',
+] as const;
 
 /** The repository settings this harness reads, and each ruleset's `name:enforcement`, sorted. */
 export function settingsOf(repo: Record<string, unknown>, sets: { name: string; enforcement?: string }[]): Settings {
@@ -128,7 +139,10 @@ export function codeChangesIn(i: CodeChangeInput): string[] {
   for (const key of new Set([...Object.keys(i.settingsBefore), ...Object.keys(i.settingsAfter)])) {
     const b = i.settingsBefore[key];
     const a = i.settingsAfter[key];
-    if (b !== a) out.push(`repository setting ${key} changed from ${String(b)} to ${String(a)} around the resolution window ${win}`);
+    if (b !== a)
+      out.push(
+        `repository setting ${key} changed from ${String(b)} to ${String(a)} around the resolution window ${win}`,
+      );
   }
   return out;
 }
@@ -137,8 +151,11 @@ const FIXTURE = '_This Issue is an automated nibfin-e2e fixture._';
 const BEHAVIOUR = '`Hello, ${name}!`';
 const CHANGE_WORD = /改|修正|更正|chang|correct|replac|edit|fix/i;
 
-const unlabeled = (events: { event: string; created_at: string; label?: { name: string } }[], label: string, after: number) =>
-  events.find((e) => e.event === 'unlabeled' && e.label?.name === label && time(e.created_at) >= after);
+const unlabeled = (
+  events: { event: string; created_at: string; label?: { name: string } }[],
+  label: string,
+  after: number,
+) => events.find((e) => e.event === 'unlabeled' && e.label?.name === label && time(e.created_at) >= after);
 
 async function readSettings(k: Kit): Promise<Settings> {
   const { data } = await k.gh.rest<Record<string, unknown>>('GET', `/repos/${k.exec}`);
@@ -147,8 +164,11 @@ async function readSettings(k: Kit): Promise<Settings> {
 
 async function bodyEdits(k: Kit, n: number): Promise<number[]> {
   const [owner, name] = k.exec.split('/');
-  const q = 'query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:$name){issue(number:$n){userContentEdits(first:50){nodes{editedAt}}}}}';
-  const d = await k.gh.graphql<{ repository: { issue: { userContentEdits: { nodes: { editedAt: string }[] } } | null } }>(q, { owner, name, n });
+  const q =
+    'query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:$name){issue(number:$n){userContentEdits(first:50){nodes{editedAt}}}}}';
+  const d = await k.gh.graphql<{
+    repository: { issue: { userContentEdits: { nodes: { editedAt: string }[] } } | null };
+  }>(q, { owner, name, n });
   return (d.repository.issue?.userContentEdits.nodes ?? []).map((e) => time(e.editedAt));
 }
 
@@ -202,10 +222,18 @@ export const resolutionSpecFix = lifecycle({
       try {
         await k.obs.until(
           `#${num} to stop with pending`,
-          async (s) => (k.labels(s, exec, num).includes('pending') || (await k.labeledAt(exec, num, 'pending')) !== undefined ? true : undefined),
+          async (s) =>
+            k.labels(s, exec, num).includes('pending') || (await k.labeledAt(exec, num, 'pending')) !== undefined
+              ? true
+              : undefined,
           DEADLINE.stage,
           show,
-          { gonePast: async (s) => (k.labels(s, exec, num).includes('shaped') ? `#${num} has shaped: Shape published without stopping, so the fixture did not need a correction` : shapeGone(s)) },
+          {
+            gonePast: async (s) =>
+              k.labels(s, exec, num).includes('shaped')
+                ? `#${num} has shaped: Shape published without stopping, so the fixture did not need a correction`
+                : shapeGone(s),
+          },
         );
       } catch (error) {
         c.fail('R4.44', message(error));
@@ -229,7 +257,12 @@ export const resolutionSpecFix = lifecycle({
               const i = k.issue(s, exec, num);
               if (i?.state === 'closed') return `#${num} is closed (${String(i.state_reason)})`;
               const r = resolutionRecord(await k.obs.comments(exec, num), pendingAt);
-              if (r && r.class !== 'issue-correction' && k.labels(s, exec, num).includes('pending') && s.at - r.at >= PUBLISH_GRACE) {
+              if (
+                r &&
+                r.class !== 'issue-correction' &&
+                k.labels(s, exec, num).includes('pending') &&
+                s.at - r.at >= PUBLISH_GRACE
+              ) {
                 return `the resolution record ${r.url} gives ${r.class ?? r.classLabel ?? 'no class'}, not Issue 規格需修正, and pending stayed ${Math.floor((s.at - r.at) / 60_000)} min: ${briefRecord(r.body)}`;
               }
               return undefined;
@@ -243,7 +276,10 @@ export const resolutionSpecFix = lifecycle({
 
       // 3. One read of what happened in the window.
       const events = await k.gh.list<{ event: string; created_at: string }>(`/repos/${exec}/issues/${num}/timeline`);
-      const blockedByAdded = events.filter((e) => e.event === 'blocked_by_added').map((e) => time(e.created_at)).filter((t) => t >= pendingAt);
+      const blockedByAdded = events
+        .filter((e) => e.event === 'blocked_by_added')
+        .map((e) => time(e.created_at))
+        .filter((t) => t >= pendingAt);
       const comments = await k.gh.list<Comment>(`/repos/${exec}/issues/${num}/comments`);
       found = resolutionRecord(comments, pendingAt);
       const edits = (await bodyEdits(k, num)).filter((t) => t >= pendingAt);
@@ -255,15 +291,43 @@ export const resolutionSpecFix = lifecycle({
         if (!found) c.fail('R4.44', `no resolution record on #${num} after pending was added at ${iso(pendingAt)}`);
         else {
           const brief = briefRecord(found.body);
-          c.check('R4.44', found.class === 'issue-correction', `the resolution record ${found.url} gives ${found.class ?? found.classLabel ?? 'no class'}, not Issue 規格需修正: ${brief}`);
-          const says = found.body.includes(right) || (found.body.includes(wrong) && CHANGE_WORD.test(found.body)) || (blockedByAdded.length > 0 && /blocked\s*by/i.test(found.body));
-          c.check('R4.44', says, `the resolution record ${found.url} does not say what it changed (neither ${right}, nor ${wrong} with a change word): ${brief}`);
+          c.check(
+            'R4.44',
+            found.class === 'issue-correction',
+            `the resolution record ${found.url} gives ${found.class ?? found.classLabel ?? 'no class'}, not Issue 規格需修正: ${brief}`,
+          );
+          const says =
+            found.body.includes(right) ||
+            (found.body.includes(wrong) && CHANGE_WORD.test(found.body)) ||
+            (blockedByAdded.length > 0 && /blocked\s*by/i.test(found.body));
+          c.check(
+            'R4.44',
+            says,
+            `the resolution record ${found.url} does not say what it changed (neither ${right}, nor ${wrong} with a change word): ${brief}`,
+          );
         }
-        c.none('R4.44', specFixOrder({ pendingAt, edits, blockedByAdded, recordAt: found?.at, unpendedAt }).map((p) => `${p} (read: GraphQL userContentEdits, timeline, comments)`));
-        c.check('R4.44', edits.length > 0, `#${num}'s body was not edited after ${iso(pendingAt)} (GraphQL userContentEdits), but its wrong path only a body edit corrects`);
+        c.none(
+          'R4.44',
+          specFixOrder({ pendingAt, edits, blockedByAdded, recordAt: found?.at, unpendedAt }).map(
+            (p) => `${p} (read: GraphQL userContentEdits, timeline, comments)`,
+          ),
+        );
+        c.check(
+          'R4.44',
+          edits.length > 0,
+          `#${num}'s body was not edited after ${iso(pendingAt)} (GraphQL userContentEdits), but its wrong path only a body edit corrects`,
+        );
         // The filed body names the meant file once (where greet is defined); the correction names it where the wrong path was.
-        c.check('R4.44', body.split(right).length - 1 >= 2, `#${num}'s body does not name ${right} where ${wrong} was (it names ${right} ${body.split(right).length - 1} time(s), as filed: 1)`);
-        c.check('R4.44', body.includes(BEHAVIOUR) && body.includes('greet'), `#${num}'s body no longer asks greet to return ${BEHAVIOUR}: the correction changed the requested behaviour`);
+        c.check(
+          'R4.44',
+          body.split(right).length - 1 >= 2,
+          `#${num}'s body does not name ${right} where ${wrong} was (it names ${right} ${body.split(right).length - 1} time(s), as filed: 1)`,
+        );
+        c.check(
+          'R4.44',
+          body.includes(BEHAVIOUR) && body.includes('greet'),
+          `#${num}'s body no longer asks greet to return ${BEHAVIOUR}: the correction changed the requested behaviour`,
+        );
       }
 
       // 5. R4.48: no branch, protected-path or setting change in the window.
@@ -274,12 +338,28 @@ export const resolutionSpecFix = lifecycle({
       const files = new Map<number, string[]>();
       for (const a of activity) {
         const at = time(a.timestamp);
-        if (!BRANCH_WRITES.has(a.activity_type) || at < window.start || at > window.end || a.ref.replace(/^refs\/heads\//, '') !== defaultBranch || /^0+$/.test(a.before)) continue;
-        const { data } = await k.gh.rest<{ files?: { filename: string }[] }>('GET', `/repos/${exec}/compare/${a.before}...${a.after}`);
-        files.set(a.id, (data.files ?? []).map((f) => f.filename));
+        if (
+          !BRANCH_WRITES.has(a.activity_type) ||
+          at < window.start ||
+          at > window.end ||
+          a.ref.replace(/^refs\/heads\//, '') !== defaultBranch ||
+          /^0+$/.test(a.before)
+        )
+          continue;
+        const { data } = await k.gh.rest<{ files?: { filename: string }[] }>(
+          'GET',
+          `/repos/${exec}/compare/${a.before}...${a.after}`,
+        );
+        files.set(
+          a.id,
+          (data.files ?? []).map((f) => f.filename),
+        );
       }
       const settingsAfter = await readSettings(k);
-      c.none('R4.48', codeChangesIn({ activity, window, n: num, defaultBranch, files, skillPaths, settingsBefore, settingsAfter }));
+      c.none(
+        'R4.48',
+        codeChangesIn({ activity, window, n: num, defaultBranch, files, skillPaths, settingsBefore, settingsAfter }),
+      );
 
       // 6. The Issue continues on its own: a Shape after pending was removed.
       if (unpendedAt !== undefined) {
@@ -290,7 +370,13 @@ export const resolutionSpecFix = lifecycle({
             async (s) => {
               if (!k.labels(s, exec, num).includes('shaped')) return undefined;
               const cs = await k.obs.comments(exec, num);
-              return cs.some((x) => SHAPE_MARKER.test(markerOf(x.body) ?? '') && Math.max(time(x.created_at), time(x.updated_at)) >= since) ? true : undefined;
+              return cs.some(
+                (x) =>
+                  SHAPE_MARKER.test(markerOf(x.body) ?? '') &&
+                  Math.max(time(x.created_at), time(x.updated_at)) >= since,
+              )
+                ? true
+                : undefined;
             },
             DEADLINE.stage,
             show,
@@ -305,7 +391,11 @@ export const resolutionSpecFix = lifecycle({
     } finally {
       await k.pauseOpen(exec, [n]);
     }
-    const read = window ? `window ${iso(window.start)}–${iso(window.end)} read from repository activity, compare, the repository and its rulesets` : 'no window';
-    return c.outcome(`#${n}: the resolution record (${found?.class ?? 'no class'}) said it corrected ${wrong} to ${right}, pending was removed after the edit and the Issue was shaped; no branch, protected-path or setting change in the ${read}`);
+    const read = window
+      ? `window ${iso(window.start)}–${iso(window.end)} read from repository activity, compare, the repository and its rulesets`
+      : 'no window';
+    return c.outcome(
+      `#${n}: the resolution record (${found?.class ?? 'no class'}) said it corrected ${wrong} to ${right}, pending was removed after the edit and the Issue was shaped; no branch, protected-path or setting change in the ${read}`,
+    );
   },
 });

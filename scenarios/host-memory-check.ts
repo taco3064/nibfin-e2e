@@ -18,19 +18,49 @@ export function hostMemoryCheck(kitFor: KitFor): Scenario {
       const repo = kit.sandbox.execution;
       const c = new Checks(kit.secrets());
       // No .nibfin.json, so no config or tool step can stop the Job first.
-      await prepareFixture(kit, repo, { files: [], variables: { NIBFIN_CONTAINER_LIMITS: 'off', NIBFIN_MEMORY: '1024g' } });
+      await prepareFixture(kit, repo, {
+        files: [],
+        variables: { NIBFIN_CONTAINER_LIMITS: 'off', NIBFIN_MEMORY: '1024g' },
+      });
       let n: number | undefined;
       try {
-        const job = await runFirstJob(kit, repo, { title: 'e2e host memory check: add double(n)', file: 'host-memory-check', deadlineMs: DEADLINE.rejected, stage: 'memory-checked', onOpen: (i) => (n = i) });
+        const job = await runFirstJob(kit, repo, {
+          title: 'e2e host memory check: add double(n)',
+          file: 'host-memory-check',
+          deadlineMs: DEADLINE.rejected,
+          stage: 'memory-checked',
+          onOpen: (i) => (n = i),
+        });
         n = job.issue;
         const p = job.projection;
-        c.hold('R6.1', 'a labelled Podman container ran the Job', true, p ? `image ${p.imageName}` : 'started and ended before it could be inspected');
-        if (p) c.hold('R6.3', 'with limits off the container has no memory or CPU limit', p.memory === 0 && p.nanoCpus === 0 && p.cpuQuota === 0, JSON.stringify({ memory: p.memory, nanoCpus: p.nanoCpus, cpuQuota: p.cpuQuota }));
+        c.hold(
+          'R6.1',
+          'a labelled Podman container ran the Job',
+          true,
+          p ? `image ${p.imageName}` : 'started and ended before it could be inspected',
+        );
+        if (p)
+          c.hold(
+            'R6.3',
+            'with limits off the container has no memory or CPU limit',
+            p.memory === 0 && p.nanoCpus === 0 && p.cpuQuota === 0,
+            JSON.stringify({ memory: p.memory, nanoCpus: p.nanoCpus, cpuQuota: p.cpuQuota }),
+          );
         const l = await labels(kit, repo, n);
         const comment = (await comments(kit, repo, n)).map((x) => x.body).join('\n');
         c.hold('R6.3', 'the Issue gets pending', l.includes('pending'), l.join(', '));
-        c.hold('R6.3', 'a comment explains the host memory shortage with a cause code', /memory/i.test(comment) && causeCodes(comment).length > 0, excerpt(comment, 300, kit.secrets()) || 'no comment');
-        c.hold('R6.3', 'no agent ran', job.log !== undefined && initEvents(job.log.text).length === 0 && !l.includes('shaped'), job.logError ?? 'checked the Job log');
+        c.hold(
+          'R6.3',
+          'a comment explains the host memory shortage with a cause code',
+          /memory/i.test(comment) && causeCodes(comment).length > 0,
+          excerpt(comment, 300, kit.secrets()) || 'no comment',
+        );
+        c.hold(
+          'R6.3',
+          'no agent ran',
+          job.log !== undefined && initEvents(job.log.text).length === 0 && !l.includes('shaped'),
+          job.logError ?? 'checked the Job log',
+        );
       } finally {
         if (n !== undefined) await close(kit, repo, n).catch(() => {});
       }

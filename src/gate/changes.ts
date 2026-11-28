@@ -84,7 +84,8 @@ export function affectedScenarios(index: ScenarioIndex, path: string): string[] 
     }
   }
   const out: string[] = [];
-  for (const file of [...seen].sort()) for (const id of index.defines.get(file) ?? []) if (!out.includes(id)) out.push(id);
+  for (const file of [...seen].sort())
+    for (const id of index.defines.get(file) ?? []) if (!out.includes(id)) out.push(id);
   return out;
 }
 
@@ -115,7 +116,12 @@ export interface ChangeImpact {
  * pull requests are the ones from the Issue's delivery branch `nibfin/issue-<n>` (Proposal
  * R3.16) and its CD fix branches `nibfin/issue-<n>-cd-<k>`, merged into the default branch.
  */
-export async function readChanges(gh: GitHub, ref: IssueRef, scenarios: Scenario[], sources: () => SourceFile[]): Promise<ChangeImpact> {
+export async function readChanges(
+  gh: GitHub,
+  ref: IssueRef,
+  scenarios: Scenario[],
+  sources: () => SourceFile[],
+): Promise<ChangeImpact> {
   const name = `${ref.repo}#${ref.number}`;
   const owner = ref.repo.split('/')[0] as string;
   const branch = `nibfin/issue-${ref.number}`;
@@ -128,10 +134,16 @@ export async function readChanges(gh: GitHub, ref: IssueRef, scenarios: Scenario
     if (!found.length) break;
     pulls.push(...found);
   }
-  const merged = pulls.filter((p) => p.merged_at && p.base?.ref !== undefined && p.base.ref === p.base.repo?.default_branch);
+  const merged = pulls.filter(
+    (p) => p.merged_at && p.base?.ref !== undefined && p.base.ref === p.base.repo?.default_branch,
+  );
   const urls = merged.map((p) => p.html_url ?? `https://github.com/${ref.repo}/pull/${p.number}`);
   if (!merged.length) {
-    decisions.push({ subject: name, decision: 'no change selected', reason: `no merged PR on ${branch}: only the Shape line or Authority selects` });
+    decisions.push({
+      subject: name,
+      decision: 'no change selected',
+      reason: `no merged PR on ${branch}: only the Shape line or Authority selects`,
+    });
     return { pulls: [], ids: [], all: false, decisions };
   }
 
@@ -154,33 +166,62 @@ export async function readChanges(gh: GitHub, ref: IssueRef, scenarios: Scenario
 
   const all = harness.length > 0 || truncated.length > 0;
   if (truncated.length) {
-    decisions.push({ subject: name, decision: 'selected every rule', reason: `${truncated.join(', ')} lists ${MAX_PR_FILES} files, so the list may be truncated` });
+    decisions.push({
+      subject: name,
+      decision: 'selected every rule',
+      reason: `${truncated.join(', ')} lists ${MAX_PR_FILES} files, so the list may be truncated`,
+    });
   }
   if (harness.length) {
-    decisions.push({ subject: name, decision: 'selected every rule', reason: `harness, provisioning or sandbox template changed: ${harness.join(', ')}` });
+    decisions.push({
+      subject: name,
+      decision: 'selected every rule',
+      reason: `harness, provisioning or sandbox template changed: ${harness.join(', ')}`,
+    });
   }
 
   const ids: RuleId[] = [];
   if (scenarioPaths.length) {
-    const index = indexScenarios(sources(), scenarios.map((s) => s.id));
+    const index = indexScenarios(
+      sources(),
+      scenarios.map((s) => s.id),
+    );
     const byId = new Map(scenarios.map((s) => [s.id, s]));
     for (const path of scenarioPaths) {
       const affected = affectedScenarios(index, path);
       const rules: RuleId[] = [];
-      for (const id of affected) for (const rule of byId.get(id)?.rules ?? []) if (!rules.includes(rule)) rules.push(rule);
+      for (const id of affected)
+        for (const rule of byId.get(id)?.rules ?? []) if (!rules.includes(rule)) rules.push(rule);
       for (const rule of rules) if (!ids.includes(rule)) ids.push(rule);
       decisions.push(
         affected.length
-          ? { subject: path, decision: 'selected from the changed scenario file', reason: `scenarios: ${affected.join(', ')}; rules: ${rules.join(', ') || 'none'}` }
-          : { subject: path, decision: 'no scenario selected', reason: 'the file defines no registry scenario and no file that does imports it' },
+          ? {
+              subject: path,
+              decision: 'selected from the changed scenario file',
+              reason: `scenarios: ${affected.join(', ')}; rules: ${rules.join(', ') || 'none'}`,
+            }
+          : {
+              subject: path,
+              decision: 'no scenario selected',
+              reason: 'the file defines no registry scenario and no file that does imports it',
+            },
       );
     }
   }
   if (other.length) {
-    decisions.push({ subject: name, decision: 'nothing selected from these files', reason: `only docs, tests, gate code or configuration: ${other.join(', ')}` });
+    decisions.push({
+      subject: name,
+      decision: 'nothing selected from these files',
+      reason: `only docs, tests, gate code or configuration: ${other.join(', ')}`,
+    });
   }
   if (!all && !ids.length) {
-    decisions.push({ subject: name, decision: 'no change selected', reason: 'the merged PRs changed no harness, provisioning, sandbox template or scenario file that defines a scenario' });
+    decisions.push({
+      subject: name,
+      decision: 'no change selected',
+      reason:
+        'the merged PRs changed no harness, provisioning, sandbox template or scenario file that defines a scenario',
+    });
   }
   return { pulls: urls, ids, all, decisions };
 }

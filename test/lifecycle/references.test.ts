@@ -4,7 +4,14 @@ import { findListing, refersToIssue } from '../../scenarios/lifecycle/analysis.t
 import type { Comment } from '../../scenarios/lifecycle/analysis.ts';
 
 const repo = 'o/exec';
-const comment = (body: string, id = 1): Comment => ({ id, body, created_at: '', updated_at: '', user: null, html_url: '' });
+const comment = (body: string, id = 1): Comment => ({
+  id,
+  body,
+  created_at: '',
+  updated_at: '',
+  user: null,
+  html_url: '',
+});
 
 test('refersToIssue accepts a URL listing', () => {
   equal(refersToIssue('- a: https://github.com/o/exec/issues/12', repo, 12), true);
@@ -47,11 +54,17 @@ test('refersToIssue on an Origin: line matches only the exact request', () => {
 });
 
 test('findListing needs a marked comment that references every Issue', () => {
-  const urls = comment('<!-- nibfin:scope-request -->\nIssues:\n- a: https://github.com/o/exec/issues/12\n- b: https://github.com/o/exec/issues/13', 2);
+  const urls = comment(
+    '<!-- nibfin:scope-request -->\nIssues:\n- a: https://github.com/o/exec/issues/12\n- b: https://github.com/o/exec/issues/13',
+    2,
+  );
   equal(findListing([comment('hello'), urls], repo, [12, 13]), urls);
   const refs = comment('<!-- nibfin:scope-request -->\n- #12\n- o/exec#13', 3);
   equal(findListing([refs], repo, [12, 13]), refs);
-  equal(findListing([comment('<!-- nibfin:scope-request -->\n- https://github.com/o/exec/issues/12')], repo, [12, 13]), undefined);
+  equal(
+    findListing([comment('<!-- nibfin:scope-request -->\n- https://github.com/o/exec/issues/12')], repo, [12, 13]),
+    undefined,
+  );
   equal(findListing([comment('- #12\n- #13')], repo, [12, 13]), undefined);
   equal(findListing([comment('<!-- nibfin:scope-request -->\n- #123\n- other/r#13')], repo, [12, 13]), undefined);
 });

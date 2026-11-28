@@ -17,7 +17,8 @@ export async function tagDigest(tag: string, fetchFn: typeof fetch = fetch): Pro
     method: 'HEAD',
     headers: {
       Authorization: `Bearer ${token}`,
-      Accept: 'application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json',
+      Accept:
+        'application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json',
     },
   });
   if (res.status === 404) return undefined;
@@ -42,7 +43,10 @@ export async function mainDigest(fetchFn: typeof fetch = fetch): Promise<string>
  * Undefined when GHCR `:main` is still the digest `init` resolved; otherwise a
  * "precondition not reached" failure naming both: a newer image makes a PR correct.
  */
-export async function requireCurrentImage(imageDigest: string, fetchFn: typeof fetch = fetch): Promise<Outcome | undefined> {
+export async function requireCurrentImage(
+  imageDigest: string,
+  fetchFn: typeof fetch = fetch,
+): Promise<Outcome | undefined> {
   const current = await mainDigest(fetchFn);
   if (current === imageDigest) return undefined;
   return precondition(`GHCR :main is ${current}, init resolved ${imageDigest}; a newer main image appeared after init`);
@@ -73,6 +77,7 @@ export function oldCandidates(chain: CommitImage[], dNew: string, max = 3): OldC
     if (c.digest === undefined || c.digest === dNew || older.some((o) => o.digest === c.digest)) continue;
     older.push({ sha: c.sha, digest: c.digest });
   }
-  if (!older.length) return { reason: `no nibfin-core main commit older than ${current.sha} has an image other than ${dNew}` };
+  if (!older.length)
+    return { reason: `no nibfin-core main commit older than ${current.sha} has an image other than ${dNew}` };
   return { current, older };
 }

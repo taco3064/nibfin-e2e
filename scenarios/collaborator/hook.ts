@@ -46,7 +46,10 @@ export function createProber(ctx: RunContext, clock: Clock = realClock) {
       .then((x) => x.data.number));
 
   async function main(): Promise<{ sha: string; tree: string }> {
-    const { data } = await gh.rest<{ commit: { sha: string; commit: { tree: { sha: string } } } }>('GET', `${r}/branches/main`);
+    const { data } = await gh.rest<{ commit: { sha: string; commit: { tree: { sha: string } } } }>(
+      'GET',
+      `${r}/branches/main`,
+    );
     return { sha: data.commit.sha, tree: data.commit.commit.tree.sha };
   }
 
@@ -61,9 +64,14 @@ export function createProber(ctx: RunContext, clock: Clock = realClock) {
     let tree = base.tree;
     if (files.length) {
       const entries = files.map((f) => ({ path: f.path, mode: '100644', type: 'blob', content: f.content }));
-      tree = (await gh.rest<{ sha: string }>('POST', `${r}/git/trees`, { base_tree: base.tree, tree: entries })).data.sha;
+      tree = (await gh.rest<{ sha: string }>('POST', `${r}/git/trees`, { base_tree: base.tree, tree: entries })).data
+        .sha;
     }
-    const { data: commit } = await gh.rest<{ sha: string }>('POST', `${r}/git/commits`, { message: `nibfin-e2e hook probe ${name}`, tree, parents: [base.sha] });
+    const { data: commit } = await gh.rest<{ sha: string }>('POST', `${r}/git/commits`, {
+      message: `nibfin-e2e hook probe ${name}`,
+      tree,
+      parents: [base.sha],
+    });
     await gh.rest('POST', `${r}/git/refs`, { ref: `refs/heads/${name}`, sha: commit.sha });
     return commit.sha;
   }
@@ -72,7 +80,9 @@ export function createProber(ctx: RunContext, clock: Clock = realClock) {
     return until(
       `a ${workflowPath} run for ${query}`,
       async () => {
-        const found = (await runs(gh, repo, query, since)).filter((x) => x.path.startsWith(workflowPath) && !known.has(x.id) && Date.parse(x.created_at) >= since - 60_000);
+        const found = (await runs(gh, repo, query, since)).filter(
+          (x) => x.path.startsWith(workflowPath) && !known.has(x.id) && Date.parse(x.created_at) >= since - 60_000,
+        );
         const run = found.sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))[0];
         return { value: run?.id, state: `${found.length} new runs` };
       },
@@ -86,10 +96,14 @@ export function createProber(ctx: RunContext, clock: Clock = realClock) {
     const query = `event=workflow_dispatch&branch=${encodeURIComponent(ref)}`;
     const since = clock.now();
     const known = new Set((await runs(gh, repo, query, since)).map((x) => x.id));
-    const res = await gh.rest<{ workflow_run_id?: number } | undefined>('POST', `${r}/actions/workflows/nibfin-shared-runner.yml/dispatches`, {
-      ref,
-      inputs: { repo, issue: String(issue), stage: 'shape', assignee: String(peer.id) },
-    });
+    const res = await gh.rest<{ workflow_run_id?: number } | undefined>(
+      'POST',
+      `${r}/actions/workflows/nibfin-shared-runner.yml/dispatches`,
+      {
+        ref,
+        inputs: { repo, issue: String(issue), stage: 'shape', assignee: String(peer.id) },
+      },
+    );
     const id = res.data?.workflow_run_id;
     return typeof id === 'number' ? id : findRun(query, SHARED, known, since);
   }
@@ -102,7 +116,9 @@ export function createProber(ctx: RunContext, clock: Clock = realClock) {
       async () => {
         const all = await jobs(gh, repo, runId);
         const mine = all.find((j) => j.labels.includes(label));
-        const state = all.map((j) => `${j.id} [${j.labels.join(',')}] ${j.status}/${String(j.conclusion)}`).join('; ') || 'no jobs yet';
+        const state =
+          all.map((j) => `${j.id} [${j.labels.join(',')}] ${j.status}/${String(j.conclusion)}`).join('; ') ||
+          'no jobs yet';
         return { value: mine?.status === 'completed' ? mine : undefined, state };
       },
       25 * 60_000,
@@ -125,12 +141,17 @@ export function createProber(ctx: RunContext, clock: Clock = realClock) {
         try {
           runId = await findRun(query, ROGUE, new Set(), since);
         } catch (error) {
-          throw new Error(`rogue run did not start (creating the branch through the API may not run its on: push workflow): ${message(error)}`, { cause: error });
+          throw new Error(
+            `rogue run did not start (creating the branch through the API may not run its on: push workflow): ${message(error)}`,
+            { cause: error },
+          );
         }
         return await settle(c, ref, runId, ['Nibfin image:', `e2e-rogue-step-${nonce}`]);
       }
-      if (c === 'template') await branchFrom(ref, [{ path: SHARED, content: tamperTemplate(await readMain(SHARED), nonce) }]);
-      if (c === 'digest') await branchFrom(ref, [{ path: JOB, content: replaceDigest(await readMain(JOB), unsignedDigest(nonce)) }]);
+      if (c === 'template')
+        await branchFrom(ref, [{ path: SHARED, content: tamperTemplate(await readMain(SHARED), nonce) }]);
+      if (c === 'digest')
+        await branchFrom(ref, [{ path: JOB, content: replaceDigest(await readMain(JOB), unsignedDigest(nonce)) }]);
       if (c === 'control') await branchFrom(ref, []);
       return await settle(c, ref, await dispatch(ref), ['Nibfin image:']);
     } catch (error) {
@@ -142,7 +163,8 @@ export function createProber(ctx: RunContext, clock: Clock = realClock) {
   async function cancelActive(): Promise<void> {
     for (const id of started) {
       const { data } = await gh.rest<{ status: string }>('GET', `${r}/actions/runs/${id}`, undefined, [404]);
-      if (data?.status && data.status !== 'completed') await gh.rest('POST', `${r}/actions/runs/${id}/cancel`, undefined, [409]);
+      if (data?.status && data.status !== 'completed')
+        await gh.rest('POST', `${r}/actions/runs/${id}/cancel`, undefined, [409]);
     }
   }
 

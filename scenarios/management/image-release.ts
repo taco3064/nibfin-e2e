@@ -15,11 +15,23 @@ export const imageDigest: Scenario = {
     const { imageDigest: digest } = nibfinFacts(ctx);
     // No image release record exists yet, so init must use the newest signed main image.
     const moved = await requireCurrentImage(digest);
-    const v = await ctx.gh(['attestation', 'verify', `oci://ghcr.io/taco3064/nibfin@${digest}`, '--repo', 'taco3064/nibfin-core']);
-    c.that(v.code === 0, 'R8.7', `gh attestation verify of ghcr.io/taco3064/nibfin@${digest} exited ${v.code}: ${tail(v, 400)}`);
+    const v = await ctx.gh([
+      'attestation',
+      'verify',
+      `oci://ghcr.io/taco3064/nibfin@${digest}`,
+      '--repo',
+      'taco3064/nibfin-core',
+    ]);
+    c.that(
+      v.code === 0,
+      'R8.7',
+      `gh attestation verify of ghcr.io/taco3064/nibfin@${digest} exited ${v.code}: ${tail(v, 400)}`,
+    );
     // A newer main image after init makes a different digest correct: report the precondition, not a product mismatch.
     if (moved) return { status: 'failed', reason: [moved.reason, ...c.problems].join('; ') };
-    return c.outcome(`init pinned ${digest}, the current GHCR :main digest, and its attestation verifies against nibfin-core`);
+    return c.outcome(
+      `init pinned ${digest}, the current GHCR :main digest, and its attestation verifies against nibfin-core`,
+    );
   },
 };
 
@@ -35,7 +47,11 @@ function installedBinaries(dir: string): string[] {
 export function releaseSteps(text: string): string[] {
   return text
     .split(/\r?\n/)
-    .filter((l) => /\bgh\s+release\b|action-gh-release|goreleaser/i.test(l) || /\/releases(?!\/download\/)(?!\/latest\/download\/)\b/.test(l))
+    .filter(
+      (l) =>
+        /\bgh\s+release\b|action-gh-release|goreleaser/i.test(l) ||
+        /\/releases(?!\/download\/)(?!\/latest\/download\/)\b/.test(l),
+    )
     .map((l) => l.trim());
 }
 
@@ -56,13 +72,30 @@ export const extensionReleases: Scenario = {
       return r.stdout;
     };
     if (/\bnibfin\b/.test(await list())) {
-      return { status: 'failed', reason: 'precondition not reached: the isolated gh extension directory already lists nibfin, so XDG_DATA_HOME did not isolate it' };
+      return {
+        status: 'failed',
+        reason:
+          'precondition not reached: the isolated gh extension directory already lists nibfin, so XDG_DATA_HOME did not isolate it',
+      };
     }
-    const latest = await ctx.github.rest<{ tag_name?: string }>('GET', '/repos/taco3064/gh-nibfin/releases/latest', undefined, [404]);
+    const latest = await ctx.github.rest<{ tag_name?: string }>(
+      'GET',
+      '/repos/taco3064/gh-nibfin/releases/latest',
+      undefined,
+      [404],
+    );
     if (latest.status === 404) {
       const r = await ctx.gh(['extension', 'install', 'taco3064/gh-nibfin'], { env });
-      c.that(r.code !== 0, 'R8.9', `gh extension install taco3064/gh-nibfin succeeded although gh-nibfin has no Release: ${tail(r, 300)}`);
-      c.that(!/\bnibfin\b/.test(await list()), 'R8.9', 'gh extension list shows nibfin after an install without a Release');
+      c.that(
+        r.code !== 0,
+        'R8.9',
+        `gh extension install taco3064/gh-nibfin succeeded although gh-nibfin has no Release: ${tail(r, 300)}`,
+      );
+      c.that(
+        !/\bnibfin\b/.test(await list()),
+        'R8.9',
+        'gh extension list shows nibfin after an install without a Release',
+      );
       const bins = installedBinaries(home);
       c.that(!bins.length, 'R8.9', `an install without a Release left ${bins.join(', ')}`);
     } else {
@@ -71,7 +104,11 @@ export const extensionReleases: Scenario = {
       c.that(r.code === 0, 'R8.9', `gh extension install taco3064/gh-nibfin exited ${r.code}: ${tail(r, 300)}`);
       c.that((await list()).includes(tag), 'R8.9', `gh extension list does not show the latest Release ${tag}`);
       const u = await ctx.gh(['extension', 'upgrade', 'nibfin'], { env });
-      c.that(u.code === 0 && (await list()).includes(tag), 'R8.9', `gh extension upgrade nibfin left ${tag} (exit ${u.code}: ${tail(u, 200)})`);
+      c.that(
+        u.code === 0 && (await list()).includes(tag),
+        'R8.9',
+        `gh extension upgrade nibfin left ${tag} (exit ${u.code}: ${tail(u, 200)})`,
+      );
     }
     const wf = ctx.workPath('gh-nibfin', '.github', 'workflows');
     const files = existsSync(wf) ? readdirSync(wf).filter((f) => /\.ya?ml$/.test(f)) : [];
@@ -80,7 +117,10 @@ export const extensionReleases: Scenario = {
       const hits = releaseSteps(readFileSync(join(wf, f), 'utf8'));
       c.that(!hits.length, 'R8.9', `gh-nibfin CI ${f} publishes Releases: ${hits.slice(0, 3).join(' | ')}`);
     }
-    const how = latest.status === 404 ? 'without a Release gh extension install fails and installs nothing' : 'install and upgrade use the latest Release';
+    const how =
+      latest.status === 404
+        ? 'without a Release gh extension install fails and installs nothing'
+        : 'install and upgrade use the latest Release';
     return c.outcome(`${how}; gh-nibfin CI (${files.join(', ')}) does not publish Releases`);
   },
 };

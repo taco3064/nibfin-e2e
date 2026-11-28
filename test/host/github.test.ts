@@ -7,21 +7,37 @@ test('download follows the redirect without the Authorization header and keeps i
   const fetchFn: typeof fetch = async (input, init) => {
     const url = String(input);
     seen.push({ url, auth: new Headers(init?.headers).get('authorization'), redirect: init?.redirect });
-    if (url.startsWith('https://api.example/')) return new Response(null, { status: 302, headers: { Location: 'https://logs.example/signed?sig=abc' } });
+    if (url.startsWith('https://api.example/'))
+      return new Response(null, { status: 302, headers: { Location: 'https://logs.example/signed?sig=abc' } });
     if (url.includes('sig=abc')) return new Response('2026-11-26T00:00:00Z hello\n', { status: 200 });
     return new Response('gone', { status: 410 });
   };
   const gh = createGitHub(() => 'tok', fetchFn, 'https://api.example');
   deepEqual(await gh.download('/repos/o/r/actions/jobs/1/logs'), { status: 200, text: '2026-11-26T00:00:00Z hello\n' });
-  deepEqual(seen.map((s) => [s.auth, s.redirect]), [['Bearer tok', 'manual'], [null, undefined]]);
+  deepEqual(
+    seen.map((s) => [s.auth, s.redirect]),
+    [
+      ['Bearer tok', 'manual'],
+      [null, undefined],
+    ],
+  );
 
-  const failing = createGitHub(() => 'tok', async (input) =>
-    String(input).startsWith('https://api.example/') ? new Response(null, { status: 302, headers: { Location: 'https://logs.example/x?sig=secret' } }) : new Response('no', { status: 403 }),
-  'https://api.example');
+  const failing = createGitHub(
+    () => 'tok',
+    async (input) =>
+      String(input).startsWith('https://api.example/')
+        ? new Response(null, { status: 302, headers: { Location: 'https://logs.example/x?sig=secret' } })
+        : new Response('no', { status: 403 }),
+    'https://api.example',
+  );
   const err = await failing.download('/repos/o/r/actions/jobs/1/logs').catch((e: Error) => e.message);
   equal(String(err).includes('sig=secret'), false);
   equal(String(err).includes('403'), true);
-  const allowed = createGitHub(() => 'tok', async () => new Response('{"message":"Not Found"}', { status: 404 }), 'https://api.example');
+  const allowed = createGitHub(
+    () => 'tok',
+    async () => new Response('{"message":"Not Found"}', { status: 404 }),
+    'https://api.example',
+  );
   equal((await allowed.download('/x', [404])).status, 404);
   await rejects(allowed.download('/x'), /GET \/x returned 404/);
 });
@@ -34,7 +50,12 @@ function waitHarness(maxWaitMs?: number) {
   return {
     slept,
     lines,
-    wait: { log: (l: string) => lines.push(l), maxWaitMs, sleep: async (ms: number) => void slept.push(ms), now: () => NOW },
+    wait: {
+      log: (l: string) => lines.push(l),
+      maxWaitMs,
+      sleep: async (ms: number) => void slept.push(ms),
+      now: () => NOW,
+    },
   };
 }
 
@@ -92,7 +113,10 @@ test('a reset beyond the wait limit fails at once and says so', async () => {
   const err = await gh.rest('GET', '/x').catch((e: unknown) => e);
   ok(err instanceof GitHubError);
   equal(err.status, 403);
-  match(err.message, /^GitHub GET \/x returned 403: API rate limit exceeded.*; rate limit resets in 3601 s, beyond the 600 s wait limit$/);
+  match(
+    err.message,
+    /^GitHub GET \/x returned 403: API rate limit exceeded.*; rate limit resets in 3601 s, beyond the 600 s wait limit$/,
+  );
   deepEqual(h.slept, []);
   equal(f.calls.length, 1);
 });
@@ -166,7 +190,11 @@ test('a status listed in allow is returned, not waited', async () => {
 test('download waits out a rate-limited API response and still drops the token on the redirect', async () => {
   const h = waitHarness();
   const auth: (string | null)[] = [];
-  const responses = [primary(2), new Response(null, { status: 302, headers: { Location: 'https://logs.example/signed?sig=abc' } }), new Response('log\n')];
+  const responses = [
+    primary(2),
+    new Response(null, { status: 302, headers: { Location: 'https://logs.example/signed?sig=abc' } }),
+    new Response('log\n'),
+  ];
   const fetchFn: typeof fetch = async (_input, init) => {
     auth.push(new Headers(init?.headers).get('authorization'));
     const next = responses.shift();
@@ -177,12 +205,18 @@ test('download waits out a rate-limited API response and still drops the token o
   deepEqual(await gh.download('/repos/o/r/actions/jobs/1/logs'), { status: 200, text: 'log\n' });
   deepEqual(auth, ['Bearer tok', 'Bearer tok', null]);
   deepEqual(h.slept, [3_000]);
-  equal(h.lines.some((l) => l.includes('sig=')), false);
+  equal(
+    h.lines.some((l) => l.includes('sig=')),
+    false,
+  );
 });
 
 test('download never waits on the redirected response', async () => {
   const h = waitHarness();
-  const f = sequence(new Response(null, { status: 302, headers: { Location: 'https://logs.example/x?sig=secret' } }), primary(2));
+  const f = sequence(
+    new Response(null, { status: 302, headers: { Location: 'https://logs.example/x?sig=secret' } }),
+    primary(2),
+  );
   const gh = createGitHub(() => 'tok', f.fetchFn, 'https://api.example', h.wait);
   const err = await gh.download('/logs').catch((e: Error) => e.message);
   equal(err, 'GitHub GET /logs returned 403: the redirected download failed');
@@ -192,6 +226,9 @@ test('download never waits on the redirected response', async () => {
 test('a client created without the wait option fails at once on a rate limit', async () => {
   const f = sequence(primary(5));
   const gh = createGitHub(() => 'tok', f.fetchFn, 'https://api.example');
-  await rejects(gh.rest('GET', '/x'), (e: unknown) => e instanceof GitHubError && e.status === 403 && !e.message.includes('wait'));
+  await rejects(
+    gh.rest('GET', '/x'),
+    (e: unknown) => e instanceof GitHubError && e.status === 403 && !e.message.includes('wait'),
+  );
   equal(f.calls.length, 1);
 });

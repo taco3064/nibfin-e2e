@@ -10,8 +10,20 @@ import { clock, context, routes } from './fake.ts';
 
 const T0 = Date.parse('2026-11-26T10:00:00Z');
 const iso = (ms: number) => new Date(T0 + ms).toISOString();
-const base = { 'GET /repos/o/peer/actions/runs': { workflow_runs: [] }, 'GET /repos/o/peer/issues': [], 'GET /repos/o/peer/pulls': [], 'GET /repos/o/exec/pulls': [], 'GET /rate_limit': {} };
-const run = (id: number, stage: string, status: string, created: string, conclusion: string | null = status === 'completed' ? 'success' : null) => ({
+const base = {
+  'GET /repos/o/peer/actions/runs': { workflow_runs: [] },
+  'GET /repos/o/peer/issues': [],
+  'GET /repos/o/peer/pulls': [],
+  'GET /repos/o/exec/pulls': [],
+  'GET /rate_limit': {},
+};
+const run = (
+  id: number,
+  stage: string,
+  status: string,
+  created: string,
+  conclusion: string | null = status === 'completed' ? 'success' : null,
+) => ({
   id,
   display_title: `Nibfin · o/exec#6 · ${stage}`,
   status,
@@ -23,7 +35,12 @@ const run = (id: number, stage: string, status: string, created: string, conclus
 });
 const issue = { number: 6, title: 't', state: 'open', labels: [{ name: 'scope' }] };
 /** A self-hosted job (by default job 11 of shape run 5) that is queued until `from`, in progress until `to`, then completed. */
-const timedJob = (now: () => number, from: number, to: number, ids: { id: number; run: number } = { id: 11, run: 5 }): Job => {
+const timedJob = (
+  now: () => number,
+  from: number,
+  to: number,
+  ids: { id: number; run: number } = { id: 11, run: 5 },
+): Job => {
   const t = now() - T0;
   const status = t < from ? 'queued' : t < to ? 'in_progress' : 'completed';
   return {
@@ -39,7 +56,8 @@ const timedJob = (now: () => number, from: number, to: number, ids: { id: number
     completed_at: status === 'completed' ? iso(to) : null,
   };
 };
-const direct = (calls: string[], runId: number) => calls.filter((c) => c.startsWith(`GET /repos/o/exec/actions/runs/${runId}/jobs?filter=latest`));
+const direct = (calls: string[], runId: number) =>
+  calls.filter((c) => c.startsWith(`GET /repos/o/exec/actions/runs/${runId}/jobs?filter=latest`));
 
 test('a shape job in progress for less than one snapshot interval is found by the direct reads', async () => {
   const c = clock(T0);
@@ -50,7 +68,11 @@ test('a shape job in progress for less than one snapshot interval is found by th
     'GET /repos/o/exec/issues': [issue],
   });
   const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
-  const j = await stageJobRunning(k, 6, 'shape', { desc: 'P\'s shape job to run', deadlineMs: DEADLINE.stage, show: k.show('o/exec', 6) });
+  const j = await stageJobRunning(k, 6, 'shape', {
+    desc: "P's shape job to run",
+    deadlineMs: DEADLINE.stage,
+    show: k.show('o/exec', 6),
+  });
   deepEqual([j.id, j.status, j.stage, j.run.id], [11, 'in_progress', 'shape', 5]);
   equal(c.now() - T0 < 100_000, true, 'found while it was running');
   equal(direct(f.calls, 5).length >= 7, true, 'read directly every 10 s');
@@ -59,7 +81,10 @@ test('a shape job in progress for less than one snapshot interval is found by th
 
 test('a shape job that completed before any read saw it running ends the wait at once with its own reason', async () => {
   const c = clock(T0);
-  const runs = () => [run(5, 'shape', c.now() - T0 < 67_000 ? 'in_progress' : 'completed', iso(30_000)), ...(c.now() - T0 >= 66_000 ? [run(7, 'deliver', 'in_progress', iso(66_000))] : [])];
+  const runs = () => [
+    run(5, 'shape', c.now() - T0 < 67_000 ? 'in_progress' : 'completed', iso(30_000)),
+    ...(c.now() - T0 >= 66_000 ? [run(7, 'deliver', 'in_progress', iso(66_000))] : []),
+  ];
   const f = routes({
     ...base,
     'GET /repos/o/exec/actions/runs': () => ({ workflow_runs: runs() }),
@@ -69,7 +94,11 @@ test('a shape job that completed before any read saw it running ends the wait at
   });
   const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
   await rejects(
-    stageJobRunning(k, 6, 'shape', { desc: 'P\'s shape job to run', deadlineMs: DEADLINE.stage, show: k.show('o/exec', 6) }),
+    stageJobRunning(k, 6, 'shape', {
+      desc: "P's shape job to run",
+      deadlineMs: DEADLINE.stage,
+      show: k.show('o/exec', 6),
+    }),
     new RegExp(
       `^Error: gave up waiting for P's shape job to run: P's shape job 11 \\(run 5\\) completed \\(success\\) before the wait saw it running: started ${iso(62_000)}, completed ${iso(65_000)}; the wait last read it at ${iso(60_000)} \\(queued\\); observed: o/exec#6 open`,
     ),
@@ -83,38 +112,55 @@ test('a shape run that ended without running its job is left for a newer shape r
   const cancelled: Job = { ...timedJob(c.now, 0, 0), conclusion: 'cancelled', started_at: null };
   const f = routes({
     ...base,
-    'GET /repos/o/exec/actions/runs': { workflow_runs: [run(5, 'shape', 'completed', iso(10_000), 'cancelled'), run(8, 'shape', 'in_progress', iso(40_000))] },
+    'GET /repos/o/exec/actions/runs': {
+      workflow_runs: [
+        run(5, 'shape', 'completed', iso(10_000), 'cancelled'),
+        run(8, 'shape', 'in_progress', iso(40_000)),
+      ],
+    },
     'GET /repos/o/exec/actions/runs/5/jobs': { jobs: [cancelled] },
-    'GET /repos/o/exec/actions/runs/8/jobs': () => ({ jobs: [{ ...timedJob(c.now, 20_000, 50_000), id: 12, run_id: 8 }] }),
+    'GET /repos/o/exec/actions/runs/8/jobs': () => ({
+      jobs: [{ ...timedJob(c.now, 20_000, 50_000), id: 12, run_id: 8 }],
+    }),
     'GET /repos/o/exec/issues': [issue],
   });
   const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
-  const j = await stageJobRunning(k, 6, 'shape', { desc: 'P\'s shape job to run', deadlineMs: DEADLINE.stage });
+  const j = await stageJobRunning(k, 6, 'shape', { desc: "P's shape job to run", deadlineMs: DEADLINE.stage });
   deepEqual([j.id, j.run.id], [12, 8]);
   equal(direct(f.calls, 5).length, 1, 'the cancelled run is read once');
 });
 
 // A's deliver wait in the delivery journey uses the same direct reads (Issue #567, Proposal R4.35).
-test('a deliver job in progress for less than one snapshot interval is found by A\'s deliver wait', async () => {
+test("a deliver job in progress for less than one snapshot interval is found by A's deliver wait", async () => {
   const c = clock(T0);
   const f = routes({
     ...base,
-    'GET /repos/o/exec/actions/runs': { workflow_runs: [run(5, 'shape', 'completed', iso(0)), run(9, 'deliver', 'in_progress', iso(30_000))] },
+    'GET /repos/o/exec/actions/runs': {
+      workflow_runs: [run(5, 'shape', 'completed', iso(0)), run(9, 'deliver', 'in_progress', iso(30_000))],
+    },
     'GET /repos/o/exec/actions/runs/9/jobs': () => ({ jobs: [timedJob(c.now, 70_000, 100_000, { id: 21, run: 9 })] }),
     'GET /repos/o/exec/issues': [issue],
   });
   const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
-  const j = await stageJobRunning(k, 6, 'deliver', { desc: 'A\'s deliver job to run', deadlineMs: DEADLINE.delivery, show: k.show('o/exec', 6), who: 'A' });
+  const j = await stageJobRunning(k, 6, 'deliver', {
+    desc: "A's deliver job to run",
+    deadlineMs: DEADLINE.delivery,
+    show: k.show('o/exec', 6),
+    who: 'A',
+  });
   deepEqual([j.id, j.status, j.stage, j.run.id], [21, 'in_progress', 'deliver', 9]);
   equal(c.now() - T0 < 100_000, true, 'found while it was running');
   equal(direct(f.calls, 9).length >= 7, true, 'read directly every 10 s');
   equal(direct(f.calls, 5).length, 0, 'other stages are not read');
 });
 
-test('a deliver job that completed before any read saw it running ends A\'s deliver wait at once with its own reason', async () => {
+test("a deliver job that completed before any read saw it running ends A's deliver wait at once with its own reason", async () => {
   const c = clock(T0);
   // Deliver completes and Review follows, which alone would end the wait through stageGone.
-  const runs = () => [run(9, 'deliver', c.now() - T0 < 67_000 ? 'in_progress' : 'completed', iso(30_000)), ...(c.now() - T0 >= 66_000 ? [run(10, 'review', 'in_progress', iso(66_000))] : [])];
+  const runs = () => [
+    run(9, 'deliver', c.now() - T0 < 67_000 ? 'in_progress' : 'completed', iso(30_000)),
+    ...(c.now() - T0 >= 66_000 ? [run(10, 'review', 'in_progress', iso(66_000))] : []),
+  ];
   const f = routes({
     ...base,
     'GET /repos/o/exec/actions/runs': () => ({ workflow_runs: runs() }),
@@ -124,7 +170,12 @@ test('a deliver job that completed before any read saw it running ends A\'s deli
   });
   const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
   await rejects(
-    stageJobRunning(k, 6, 'deliver', { desc: 'A\'s deliver job to run', deadlineMs: DEADLINE.delivery, show: k.show('o/exec', 6), who: 'A' }),
+    stageJobRunning(k, 6, 'deliver', {
+      desc: "A's deliver job to run",
+      deadlineMs: DEADLINE.delivery,
+      show: k.show('o/exec', 6),
+      who: 'A',
+    }),
     new RegExp(
       `^Error: gave up waiting for A's deliver job to run: A's deliver job 21 \\(run 9\\) completed \\(success\\) before the wait saw it running: started ${iso(62_000)}, completed ${iso(65_000)}; the wait last read it at ${iso(60_000)} \\(queued\\); observed: o/exec#6 open`,
     ),

@@ -3,7 +3,22 @@
 import { randomBytes } from 'node:crypto';
 import type { GitHub } from '../../src/host/github.ts';
 import type { Outcome, RunContext, Scenario } from '../../src/types.ts';
-import { AGENT_STAGES, STAGES, describeJob, githubHosted, hostedOnlyProblems, issueKey, jobWindow, markerOf, parseStageTitle, parseWakeTitle, selfHosted, stageRuns, time, windowAt } from './analysis.ts';
+import {
+  AGENT_STAGES,
+  STAGES,
+  describeJob,
+  githubHosted,
+  hostedOnlyProblems,
+  issueKey,
+  jobWindow,
+  markerOf,
+  parseStageTitle,
+  parseWakeTitle,
+  selfHosted,
+  stageRuns,
+  time,
+  windowAt,
+} from './analysis.ts';
 import type { Issue, Job, Run, Stage, Window } from './analysis.ts';
 import { Observer } from './observe.ts';
 import type { Snapshot } from './observe.ts';
@@ -66,9 +81,18 @@ export type WindowedJob = Job & { stage: Stage; run: Run; window: Window | undef
 export type FinishJob = WindowedJob;
 
 /** The finish job whose window contains `t`; with `hostedOnly`, only GitHub-hosted ones count (Proposal R5.72, R5.74). */
-export function finishAt(jobs: FinishJob[], t: number, hostedOnly = true): (FinishJob & { window: Window }) | undefined {
-  const ran = jobs.filter((j): j is FinishJob & { window: Window } => j.window !== undefined && (!hostedOnly || githubHosted(j)));
-  return windowAt(t, ran.map((j) => ({ ...j.window, job: j })))?.job;
+export function finishAt(
+  jobs: FinishJob[],
+  t: number,
+  hostedOnly = true,
+): (FinishJob & { window: Window }) | undefined {
+  const ran = jobs.filter(
+    (j): j is FinishJob & { window: Window } => j.window !== undefined && (!hostedOnly || githubHosted(j)),
+  );
+  return windowAt(
+    t,
+    ran.map((j) => ({ ...j.window, job: j })),
+  )?.job;
 }
 
 /** R5.70, R5.72, R5.74: problems of every route or finish run among the jobs, each run judged by `hostedOnlyProblems`. */
@@ -85,7 +109,10 @@ export function hostedRunProblems(jobs: WindowedJob[], sandboxRunners: string[])
 /** The runs and jobs of `stage` seen, for failure messages. */
 export function stageSeen(jobs: WindowedJob[], stage: 'route' | 'finish' = 'finish'): string {
   if (!jobs.length) return `no ${stage} job was seen`;
-  const win = (j: WindowedJob) => (j.window ? ` window ${new Date(j.window.start).toISOString()}–${j.window.end === Infinity ? 'running' : new Date(j.window.end).toISOString()}` : ' no window');
+  const win = (j: WindowedJob) =>
+    j.window
+      ? ` window ${new Date(j.window.start).toISOString()}–${j.window.end === Infinity ? 'running' : new Date(j.window.end).toISOString()}`
+      : ' no window';
   return `${stage} jobs seen: ${jobs.map((j) => `${describeJob(j.run, j)}${win(j)}`).join('; ')}`;
 }
 
@@ -143,7 +170,15 @@ export class Kit {
     this.start = now() - MIN;
     this.sleep = opts.sleep;
     this.tag = opts.tag ?? `r${randomBytes(3).toString('hex')}`;
-    this.obs = new Observer(this.gh, [this.exec, this.peer], { since: this.start, now, sleep: opts.sleep, intervalMs: opts.intervalMs, log: ctx.log, signal: ctx.signal, stallMs: opts.stallMs ?? STALL });
+    this.obs = new Observer(this.gh, [this.exec, this.peer], {
+      since: this.start,
+      now,
+      sleep: opts.sleep,
+      intervalMs: opts.intervalMs,
+      log: ctx.log,
+      signal: ctx.signal,
+      stallMs: opts.stallMs ?? STALL,
+    });
   }
 
   now(): number {
@@ -195,7 +230,8 @@ export class Kit {
       if (n === undefined) continue;
       try {
         const { data } = await this.gh.rest<Issue>('GET', `/repos/${repo}/issues/${n}`);
-        if (data.state === 'open' && !data.labels.some((l) => l.name === 'pause')) await this.addLabels(repo, n, ['pause']);
+        if (data.state === 'open' && !data.labels.some((l) => l.name === 'pause'))
+          await this.addLabels(repo, n, ['pause']);
       } catch (error) {
         this.ctx.log(`could not pause ${repo}#${n}: ${message(error)}`);
       }
@@ -204,10 +240,14 @@ export class Kit {
 
   /** Adds native `Blocked by` edges and reads them back. */
   async blockBy(repo: string, n: number, blockers: Issue[]): Promise<void> {
-    for (const b of blockers) await this.gh.rest('POST', `/repos/${repo}/issues/${n}/dependencies/blocked_by`, { issue_id: b.id });
-    const got = (await this.gh.list<Issue>(`/repos/${repo}/issues/${n}/dependencies/blocked_by`)).map((i) => i.number).sort();
+    for (const b of blockers)
+      await this.gh.rest('POST', `/repos/${repo}/issues/${n}/dependencies/blocked_by`, { issue_id: b.id });
+    const got = (await this.gh.list<Issue>(`/repos/${repo}/issues/${n}/dependencies/blocked_by`))
+      .map((i) => i.number)
+      .sort();
     const want = blockers.map((b) => b.number).sort();
-    if (JSON.stringify(got) !== JSON.stringify(want)) throw new Error(`${repo}#${n} is blocked by ${got.join(', ') || 'nothing'}, expected ${want.join(', ')}`);
+    if (JSON.stringify(got) !== JSON.stringify(want))
+      throw new Error(`${repo}#${n} is blocked by ${got.join(', ') || 'nothing'}, expected ${want.join(', ')}`);
   }
 
   /** Appends rules to `E2E_CI_RULES` or `E2E_CD_RULES` of the execution sandbox (serialized read-modify-write) and reads them back. */
@@ -221,7 +261,8 @@ export class Kit {
       if (cur.status === 404) await this.gh.rest('POST', path, { name, value });
       else await this.gh.rest('PATCH', `${path}/${name}`, { name, value });
       const { data } = await this.gh.rest<{ value: string }>('GET', `${path}/${name}`);
-      if (data.value !== value) throw new Error(`${this.exec} variable ${name} reads back ${data.value}, expected ${value}`);
+      if (data.value !== value)
+        throw new Error(`${this.exec} variable ${name} reads back ${data.value}, expected ${value}`);
     };
     const next = this.lock.then(run, run);
     this.lock = next.catch(() => undefined);
@@ -231,26 +272,46 @@ export class Kit {
   /** A fast-forward commit on the branch adding or replacing files (Git Data API). */
   async commitFiles(repo: string, branch: string, files: Record<string, string>, msg: string): Promise<string> {
     const r = `/repos/${repo}`;
-    const { data: head } = await this.gh.rest<{ object: { sha: string } }>('GET', `${r}/git/ref/heads/${branch.split('/').map(encodeURIComponent).join('/')}`);
-    const { data: parent } = await this.gh.rest<{ tree: { sha: string } }>('GET', `${r}/git/commits/${head.object.sha}`);
+    const { data: head } = await this.gh.rest<{ object: { sha: string } }>(
+      'GET',
+      `${r}/git/ref/heads/${branch.split('/').map(encodeURIComponent).join('/')}`,
+    );
+    const { data: parent } = await this.gh.rest<{ tree: { sha: string } }>(
+      'GET',
+      `${r}/git/commits/${head.object.sha}`,
+    );
     const { data: tree } = await this.gh.rest<{ sha: string }>('POST', `${r}/git/trees`, {
       base_tree: parent.tree.sha,
       tree: Object.entries(files).map(([path, content]) => ({ path, mode: '100644', type: 'blob', content })),
     });
-    const { data: commit } = await this.gh.rest<{ sha: string }>('POST', `${r}/git/commits`, { message: msg, tree: tree.sha, parents: [head.object.sha] });
-    await this.gh.rest('PATCH', `${r}/git/refs/heads/${branch.split('/').map(encodeURIComponent).join('/')}`, { sha: commit.sha, force: false });
+    const { data: commit } = await this.gh.rest<{ sha: string }>('POST', `${r}/git/commits`, {
+      message: msg,
+      tree: tree.sha,
+      parents: [head.object.sha],
+    });
+    await this.gh.rest('PATCH', `${r}/git/refs/heads/${branch.split('/').map(encodeURIComponent).join('/')}`, {
+      sha: commit.sha,
+      force: false,
+    });
     return commit.sha;
   }
 
   async fileOn(repo: string, ref: string, path: string): Promise<string | undefined> {
-    const got = await this.gh.rest<{ content: string }>('GET', `/repos/${repo}/contents/${path}?ref=${encodeURIComponent(ref)}`, undefined, [404]);
+    const got = await this.gh.rest<{ content: string }>(
+      'GET',
+      `/repos/${repo}/contents/${path}?ref=${encodeURIComponent(ref)}`,
+      undefined,
+      [404],
+    );
     return got.status === 404 ? undefined : Buffer.from(got.data.content, 'base64').toString('utf8');
   }
 
   /** Creates a ruleset on the default branch unless one of that name exists; returns its id. */
   async ruleset(name: string, rules: unknown[]): Promise<number> {
     const r = `/repos/${this.exec}/rulesets`;
-    const existing = (await this.gh.rest<{ id: number; name: string }[]>('GET', `${r}?per_page=100`)).data.find((x) => x.name === name);
+    const existing = (await this.gh.rest<{ id: number; name: string }[]>('GET', `${r}?per_page=100`)).data.find(
+      (x) => x.name === name,
+    );
     if (existing) return existing.id;
     const { data } = await this.gh.rest<{ id: number }>('POST', r, {
       name,
@@ -277,18 +338,34 @@ export class Kit {
    */
   baseline(): Promise<void> {
     return this.once('baseline', async () => {
-      const config = JSON.stringify({ skills: { deliver: { mode: 'extend', path: 'docs/agent/deliver.md' } } }, null, 2) + '\n';
+      const config =
+        JSON.stringify({ skills: { deliver: { mode: 'extend', path: 'docs/agent/deliver.md' } } }, null, 2) + '\n';
       const skill = 'Keep each change as small as the Issue allows.\n';
-      if ((await this.fileOn(this.exec, 'main', '.nibfin.json')) !== config || (await this.fileOn(this.exec, 'main', 'docs/agent/deliver.md')) !== skill) {
-        await this.commitFiles(this.exec, 'main', { '.nibfin.json': config, 'docs/agent/deliver.md': skill }, 'Extend the deliver Skill for the e2e baseline');
+      if (
+        (await this.fileOn(this.exec, 'main', '.nibfin.json')) !== config ||
+        (await this.fileOn(this.exec, 'main', 'docs/agent/deliver.md')) !== skill
+      ) {
+        await this.commitFiles(
+          this.exec,
+          'main',
+          { '.nibfin.json': config, 'docs/agent/deliver.md': skill },
+          'Extend the deliver Skill for the e2e baseline',
+        );
       }
-      await this.ruleset('e2e-ci', [{ type: 'required_status_checks', parameters: { strict_required_status_checks_policy: false, required_status_checks: [{ context: 'test' }] } }]);
+      await this.ruleset('e2e-ci', [
+        {
+          type: 'required_status_checks',
+          parameters: { strict_required_status_checks_policy: false, required_status_checks: [{ context: 'test' }] },
+        },
+      ]);
       const v = `/repos/${this.exec}/actions/variables`;
       const cur = await this.gh.rest<{ value: string }>('GET', `${v}/NIBFIN_PROVIDER`, undefined, [404]);
       if (cur.status === 404) await this.gh.rest('POST', v, { name: 'NIBFIN_PROVIDER', value: 'codex' });
-      else if (cur.data.value !== 'codex') await this.gh.rest('PATCH', `${v}/NIBFIN_PROVIDER`, { name: 'NIBFIN_PROVIDER', value: 'codex' });
+      else if (cur.data.value !== 'codex')
+        await this.gh.rest('PATCH', `${v}/NIBFIN_PROVIDER`, { name: 'NIBFIN_PROVIDER', value: 'codex' });
       const back = await this.gh.rest<{ value: string }>('GET', `${v}/NIBFIN_PROVIDER`);
-      if (back.data.value !== 'codex') throw new Error(`${this.exec} variable NIBFIN_PROVIDER reads back ${back.data.value}`);
+      if (back.data.value !== 'codex')
+        throw new Error(`${this.exec} variable NIBFIN_PROVIDER reads back ${back.data.value}`);
     });
   }
 
@@ -312,15 +389,24 @@ export class Kit {
   }
 
   /** Jobs of the Issue's runs of these stages, each with its stage. */
-  async stageJobs(s: Snapshot, repo: string, n: number, stages: readonly Stage[] = AGENT_STAGES): Promise<(Job & { stage: Stage; run: Run })[]> {
+  async stageJobs(
+    s: Snapshot,
+    repo: string,
+    n: number,
+    stages: readonly Stage[] = AGENT_STAGES,
+  ): Promise<(Job & { stage: Stage; run: Run })[]> {
     const out: (Job & { stage: Stage; run: Run })[] = [];
-    for (const run of this.stages(s, repo, n, stages)) for (const j of await this.obs.jobs(this.exec, run.id)) out.push({ ...j, stage: run.stage, run });
+    for (const run of this.stages(s, repo, n, stages))
+      for (const j of await this.obs.jobs(this.exec, run.id)) out.push({ ...j, stage: run.stage, run });
     return out;
   }
 
   /** Jobs of the Issue's runs of these stages, each with its window (`undefined` when no runner took it). */
   async windowedJobs(s: Snapshot, repo: string, n: number, stages: readonly Stage[]): Promise<WindowedJob[]> {
-    return (await this.stageJobs(s, repo, n, stages)).map((j) => ({ ...j, window: jobWindow(j, issueKey(repo, n), j.stage) }));
+    return (await this.stageJobs(s, repo, n, stages)).map((j) => ({
+      ...j,
+      window: jobWindow(j, issueKey(repo, n), j.stage),
+    }));
   }
 
   /** Jobs of the Issue's finish runs, each with its window (`undefined` when no runner took it). */
@@ -329,7 +415,12 @@ export class Kit {
   }
 
   /** The agent job (self-hosted) of the Issue's runs of these stages. */
-  async agentJobs(s: Snapshot, repo: string, n: number, stages: readonly Stage[] = AGENT_STAGES): Promise<(Job & { stage: Stage; run: Run })[]> {
+  async agentJobs(
+    s: Snapshot,
+    repo: string,
+    n: number,
+    stages: readonly Stage[] = AGENT_STAGES,
+  ): Promise<(Job & { stage: Stage; run: Run })[]> {
     return (await this.stageJobs(s, repo, n, stages)).filter((j) => AGENT_STAGES.includes(j.stage) && selfHosted(j));
   }
 
@@ -372,7 +463,12 @@ export class Kit {
    * or, with `publishes`, a job of the stage succeeded and the Issue still lacks that
    * label `PUBLISH_GRACE` after the job completed.
    */
-  stageGone(repo: string, n: number, stage: Stage, opts: GoneOptions = {}): (s: Snapshot) => Promise<string | undefined> {
+  stageGone(
+    repo: string,
+    n: number,
+    stage: Stage,
+    opts: GoneOptions = {},
+  ): (s: Snapshot) => Promise<string | undefined> {
     const since = opts.since ?? this.now() - MIN;
     const name = repo === this.exec ? `#${n}` : `${repo}#${n}`;
     return async (s) => {
@@ -380,23 +476,28 @@ export class Kit {
         const i = this.issue(s, repo, n);
         if (i?.state === 'closed') {
           const delivered = i.labels.some((l) => l.name === 'delivered');
-          if (delivered || !(s.at - time(i.closed_at) < CLOSE_GRACE)) return `${name} is closed (${i.state_reason ?? 'no reason'})${delivered ? ' with delivered' : ' without delivered'}`;
+          if (delivered || !(s.at - time(i.closed_at) < CLOSE_GRACE))
+            return `${name} is closed (${i.state_reason ?? 'no reason'})${delivered ? ' with delivered' : ' without delivered'}`;
         }
-        if (!opts.allowPending && i?.labels.some((l) => l.name === 'pending')) return `${name} has pending${fullQuote(await this.lastComment(repo, n))}`;
+        if (!opts.allowPending && i?.labels.some((l) => l.name === 'pending'))
+          return `${name} has pending${fullQuote(await this.lastComment(repo, n))}`;
         if (opts.jobs === false) return undefined;
         const later = this.stages(s, repo, n, AGENT_STAGES).filter((r) => r.stage !== stage);
         for (const j of await this.agentJobs(s, repo, n, [stage])) {
           if (j.status !== 'completed' || time(j.created_at ?? j.run.created_at) < since) continue;
           const next = later.find((r) => time(r.created_at) > time(j.completed_at));
-          if (next) return `${name}'s ${stage} job ${j.id} completed (run ${j.run.id}, ${String(j.conclusion)}) and a ${next.stage} run ${next.id} followed`;
+          if (next)
+            return `${name}'s ${stage} job ${j.id} completed (run ${j.run.id}, ${String(j.conclusion)}) and a ${next.stage} run ${next.id} followed`;
         }
         const label = opts.publishes;
         const labels = i?.labels.map((l) => l.name) ?? [];
         if (label === undefined || labels.includes(label)) return undefined;
         for (const j of await this.agentJobs(s, repo, n, [stage])) {
-          if (j.status !== 'completed' || j.conclusion !== 'success' || time(j.created_at ?? j.run.created_at) < since) continue;
+          if (j.status !== 'completed' || j.conclusion !== 'success' || time(j.created_at ?? j.run.created_at) < since)
+            continue;
           const after = s.at - time(j.completed_at);
-          if (after >= PUBLISH_GRACE) return `${name}'s ${stage} job ${j.id} completed (run ${j.run.id}, success) and ${name} has no ${label} ${Math.floor(after / MIN)} min later (labels: ${labels.join(', ') || 'none'})`;
+          if (after >= PUBLISH_GRACE)
+            return `${name}'s ${stage} job ${j.id} completed (run ${j.run.id}, success) and ${name} has no ${label} ${Math.floor(after / MIN)} min later (labels: ${labels.join(', ') || 'none'})`;
         }
         return undefined;
       })();
@@ -417,7 +518,13 @@ export class Kit {
     try {
       const c = (await this.obs.comments(repo, n)).filter((x) => markerOf(x.body)).at(-1);
       if (!c) return undefined;
-      const text = redact((c.body ?? '').replace(/<!--[\s\S]*?-->/g, '').replace(/\s+/g, ' ').trim(), this.ctx.secretValues());
+      const text = redact(
+        (c.body ?? '')
+          .replace(/<!--[\s\S]*?-->/g, '')
+          .replace(/\s+/g, ' ')
+          .trim(),
+        this.ctx.secretValues(),
+      );
       return { text, url: c.html_url ?? '' };
     } catch {
       return undefined;
@@ -436,7 +543,9 @@ export class Kit {
 
   /** When a label was first added after `after`, from the Issue's timeline. */
   async labeledAt(repo: string, n: number, label: string, after = 0): Promise<number | undefined> {
-    const ev = (await this.obs.timeline(repo, n)).find((e) => e.event === 'labeled' && e.label?.name === label && time(e.created_at) >= after);
+    const ev = (await this.obs.timeline(repo, n)).find(
+      (e) => e.event === 'labeled' && e.label?.name === label && time(e.created_at) >= after,
+    );
     return ev ? time(ev.created_at) : undefined;
   }
 
@@ -453,7 +562,10 @@ export class Kit {
       .map((r) => `${r.stage} ${r.status}${r.conclusion ? `/${r.conclusion}` : ''}`);
     const comment = await this.lastComment(repo, n);
     const last = opts.full ? fullQuote(comment) : shortQuote(comment);
-    return redact(`${repo}#${n} ${i.state}${i.state_reason ? ` (${i.state_reason})` : ''} [${i.labels.map((l) => l.name).join(', ')}] runs: ${runs.join(', ') || 'none'}${last}`, this.ctx.secretValues());
+    return redact(
+      `${repo}#${n} ${i.state}${i.state_reason ? ` (${i.state_reason})` : ''} [${i.labels.map((l) => l.name).join(', ')}] runs: ${runs.join(', ') || 'none'}${last}`,
+      this.ctx.secretValues(),
+    );
   }
 
   show(repo: string, ...numbers: number[]): (s: Snapshot) => Promise<string> {

@@ -29,7 +29,11 @@ export function fakeStream() {
   };
   /** Streams whose filters select this repository and Issue. */
   const watching = (repo: string, issue: number) =>
-    [...open].filter((e) => e.argv.includes(`label=io.github.taco3064.nibfin.repo=${repo}`) && e.argv.includes(`label=io.github.taco3064.nibfin.issue=${issue}`));
+    [...open].filter(
+      (e) =>
+        e.argv.includes(`label=io.github.taco3064.nibfin.repo=${repo}`) &&
+        e.argv.includes(`label=io.github.taco3064.nibfin.issue=${issue}`),
+    );
   return {
     stream,
     argvs,
@@ -42,12 +46,28 @@ export function fakeStream() {
   };
 }
 
-export const runner = (id: number, slot: string, extra: { status?: string; busy?: boolean } = {}) => ({ id, name: `myhost-1a2b3c4d-${slot}`, status: extra.status ?? 'online', busy: extra.busy ?? false });
+export const runner = (id: number, slot: string, extra: { status?: string; busy?: boolean } = {}) => ({
+  id,
+  name: `myhost-1a2b3c4d-${slot}`,
+  status: extra.status ?? 'online',
+  busy: extra.busy ?? false,
+});
 
 /** Two clean sandboxes whose main is the baseline tree, two idle Runners, and a kit over them. */
-export function setup(opts: { respond?: (argv: string[], o: ExecOptions) => Partial<ExecResult> | undefined; peerRulesets?: 'upgrade' } = {}) {
+export function setup(
+  opts: {
+    respond?: (argv: string[], o: ExecOptions) => Partial<ExecResult> | undefined;
+    peerRulesets?: 'upgrade';
+  } = {},
+) {
   const fake = new FakeGitHub();
-  fake.trees.set(BASE_TREE, new Map([['README.md', { mode: '100644', content: 'sandbox\n' }], ['.github/workflows/nibfin-issue.yml', { mode: '100644', content: 'on: issues\n' }]]));
+  fake.trees.set(
+    BASE_TREE,
+    new Map([
+      ['README.md', { mode: '100644', content: 'sandbox\n' }],
+      ['.github/workflows/nibfin-issue.yml', { mode: '100644', content: 'on: issues\n' }],
+    ]),
+  );
   for (const name of [EXEC, PEER]) {
     const repo = cleanRepo(name === EXEC ? 'public' : 'private', BASE_TREE);
     repo.commits.set('c0', { tree: BASE_TREE, parents: [] });
@@ -69,7 +89,14 @@ export function setup(opts: { respond?: (argv: string[], o: ExecOptions) => Part
     workDir: join(tmpdir(), 'nibfin-e2e-test-work'),
     env: { HOME: '/tmp/none' },
     log: (m) => logs.push(m),
-    facts: (id) => (id === 'nibfin' ? { executionBaseline: { commit: 'c0', tree: BASE_TREE }, peerBaseline: { commit: 'c0', tree: BASE_TREE }, imageDigest: 'sha256:' + 'd'.repeat(64) } : undefined),
+    facts: (id) =>
+      id === 'nibfin'
+        ? {
+            executionBaseline: { commit: 'c0', tree: BASE_TREE },
+            peerBaseline: { commit: 'c0', tree: BASE_TREE },
+            imageDigest: 'sha256:' + 'd'.repeat(64),
+          }
+        : undefined,
     secrets: () => ['sandbox-token-value', 'claude-token-value'],
     ghToken: () => 'sandbox-token-value',
     now: () => clock,
@@ -87,7 +114,10 @@ export function setup(opts: { respond?: (argv: string[], o: ExecOptions) => Part
 }
 
 /** main's files in the fake, by path. */
-export function mainFiles(h: ReturnType<typeof setup>, name: string): Map<string, { mode: string; content: string }> | undefined {
+export function mainFiles(
+  h: ReturnType<typeof setup>,
+  name: string,
+): Map<string, { mode: string; content: string }> | undefined {
   const r = h.repo(name);
   const tree = r.commits.get(r.branches.get('main') ?? '')?.tree ?? '';
   return h.fake.trees.get(tree);

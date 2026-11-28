@@ -40,7 +40,8 @@ export interface WindowsHostState {
 
 export type HostState = LinuxHostState | WindowsHostState;
 
-const fail = (argv: string[], r: ExecResult) => new Error(`${argv.slice(0, 3).join(' ')} exited ${r.code}: ${(r.stderr.trim() || r.stdout.trim()).slice(-2000)}`);
+const fail = (argv: string[], r: ExecResult) =>
+  new Error(`${argv.slice(0, 3).join(' ')} exited ${r.code}: ${(r.stderr.trim() || r.stdout.trim()).slice(-2000)}`);
 
 async function must(run: HostRun, argv: string[], env?: Record<string, string>): Promise<string> {
   const r = await run(argv, env);
@@ -100,7 +101,10 @@ export function parseJsonList(stdout: string): string[] {
  * The user manager's runtime directory: `XDG_RUNTIME_DIR`, or `/run/user/<uid>` when the
  * shell does not set it (a hosted job's shell may not). `systemctl --user` needs it.
  */
-export function userRuntimeDir(env: Record<string, string | undefined> = process.env, uid: number | undefined = process.getuid?.()): string | undefined {
+export function userRuntimeDir(
+  env: Record<string, string | undefined> = process.env,
+  uid: number | undefined = process.getuid?.(),
+): string | undefined {
   if (env.XDG_RUNTIME_DIR) return env.XDG_RUNTIME_DIR;
   return uid === undefined ? undefined : `/run/user/${uid}`;
 }
@@ -134,7 +138,10 @@ export function pathDirectories(path: string | undefined): string[] {
  * `${XDG_CONFIG_HOME:-~/.config}/systemd/user/<unit>.wants|.requires/`, which is what
  * `systemctl --user enable` creates there.
  */
-export function userEnabledUnits(env: Record<string, string | undefined> = process.env, home: string = homedir()): string[] {
+export function userEnabledUnits(
+  env: Record<string, string | undefined> = process.env,
+  home: string = homedir(),
+): string[] {
   const dir = join(env.XDG_CONFIG_HOME || join(home, '.config'), 'systemd', 'user');
   if (!existsSync(dir)) return [];
   const names = new Set<string>();
@@ -178,7 +185,11 @@ export async function readLinuxHostState(run: HostRun, options: LinuxReadOptions
   const listed = await run(unitsArgv, env);
   let units: { name: string; state: string }[];
   if (listed.code === 0) units = parseUnitFiles(listed.stdout);
-  else if (!hasUserManager(runtime, exists)) units = await offlineUserUnits(run, (options.userEnabled ?? (() => userEnabledUnits(options.env ?? process.env)))());
+  else if (!hasUserManager(runtime, exists))
+    units = await offlineUserUnits(
+      run,
+      (options.userEnabled ?? (() => userEnabledUnits(options.env ?? process.env)))(),
+    );
   else throw fail(unitsArgv, listed);
 
   const lingerArgv = ['loginctl', 'show-user', user, '-p', 'Linger', '--value'];
@@ -189,7 +200,14 @@ export async function readLinuxHostState(run: HostRun, options: LinuxReadOptions
   else throw fail(lingerArgv, shown);
 
   const systemFiles = (options.systemFiles ?? (() => listFiles('/etc/systemd/system')))();
-  return { platform: 'linux', units, linger, systemFiles, readAt, pathDirs: pathDirectories((options.env ?? process.env).PATH) };
+  return {
+    platform: 'linux',
+    units,
+    linger,
+    systemFiles,
+    readAt,
+    pathDirs: pathDirectories((options.env ?? process.env).PATH),
+  };
 }
 
 /** `powercfg /requestsoverride`, recorded rather than thrown when it fails. */
@@ -197,14 +215,24 @@ export async function readRequestsOverride(run: HostRun): Promise<{ ok: boolean;
   try {
     const r = await run(['powercfg', '/requestsoverride']);
     if (r.code === 0) return { ok: true, output: r.stdout };
-    return { ok: false, output: `powercfg /requestsoverride exited ${r.code}: ${(r.stderr.trim() || r.stdout.trim()).slice(-2000)}` };
+    return {
+      ok: false,
+      output: `powercfg /requestsoverride exited ${r.code}: ${(r.stderr.trim() || r.stdout.trim()).slice(-2000)}`,
+    };
   } catch (error) {
-    return { ok: false, output: `powercfg /requestsoverride: ${error instanceof Error ? error.message : String(error)}` };
+    return {
+      ok: false,
+      output: `powercfg /requestsoverride: ${error instanceof Error ? error.message : String(error)}`,
+    };
   }
 }
 
 /** The host state the always-on setup changes (Proposal R5.13, R5.15, R5.16, R5.28), read without any product name. */
-export async function readHostState(run: HostRun, platform: Platform, linux: LinuxReadOptions = {}): Promise<HostState> {
+export async function readHostState(
+  run: HostRun,
+  platform: Platform,
+  linux: LinuxReadOptions = {},
+): Promise<HostState> {
   if (platform === 'linux') return readLinuxHostState(run, linux);
   if (platform === 'windows') {
     const path = wslconfigPath();
@@ -246,7 +274,12 @@ const TASK =
 export async function readTask(run: HostRun, fullName: string): Promise<TaskDetail> {
   const cut = fullName.lastIndexOf('\\') + 1;
   const env = { NIBFIN_E2E_TASK_PATH: fullName.slice(0, cut), NIBFIN_E2E_TASK_NAME: fullName.slice(cut) };
-  return parseTask(JSON.parse(await must(run, ['powershell', '-NoProfile', '-NonInteractive', '-Command', TASK], env)) as Record<string, unknown>);
+  return parseTask(
+    JSON.parse(await must(run, ['powershell', '-NoProfile', '-NonInteractive', '-Command', TASK], env)) as Record<
+      string,
+      unknown
+    >,
+  );
 }
 
 /** A task read's JSON: missing lists are empty, and a null repetition is unset (`''`). */
@@ -276,7 +309,8 @@ export interface Periodic {
 }
 
 /** Prints exactly one marker: whether a `crontab` command exists. */
-export const CRONTAB_PROBE = 'if command -v crontab >/dev/null 2>&1; then echo nibfin-e2e:crontab=present; else echo nibfin-e2e:crontab=absent; fi';
+export const CRONTAB_PROBE =
+  'if command -v crontab >/dev/null 2>&1; then echo nibfin-e2e:crontab=present; else echo nibfin-e2e:crontab=absent; fi';
 
 /** One fixed read: fixed words, or the constant probe script. */
 export type PeriodicCommand = { readonly words: readonly string[] } | { readonly script: string };
@@ -294,9 +328,12 @@ export type PeriodicRun = (command: PeriodicCommand) => Promise<ExecResult>;
 
 export const CRON_UNITS = ['cron.service', 'crond.service'];
 
-const describeCommand = (command: PeriodicCommand) => ('words' in command ? command.words.join(' ') : 'the crontab probe');
-const outputOf = (r: ExecResult) => [r.stdout.trim(), r.stderr.trim()].filter(Boolean).join(' | ').slice(-2000) || 'no output';
-const readFailed = (command: PeriodicCommand, r: ExecResult, why = `exited ${r.code}`) => new Error(`${describeCommand(command)} ${why}: ${outputOf(r)}`);
+const describeCommand = (command: PeriodicCommand) =>
+  'words' in command ? command.words.join(' ') : 'the crontab probe';
+const outputOf = (r: ExecResult) =>
+  [r.stdout.trim(), r.stderr.trim()].filter(Boolean).join(' | ').slice(-2000) || 'no output';
+const readFailed = (command: PeriodicCommand, r: ExecResult, why = `exited ${r.code}`) =>
+  new Error(`${describeCommand(command)} ${why}: ${outputOf(r)}`);
 
 /** The timers `list-timers` shows: the first token of each line that ends in `.timer`; any other line throws. */
 export function parseTimerList(stdout: string): string[] {
@@ -313,7 +350,10 @@ export function parseTimerList(stdout: string): string[] {
 
 /** The probe's answer; anything but exit 0 with exactly one marker line throws. */
 export function parseCrontabProbe(r: ExecResult): 'present' | 'absent' {
-  const lines = r.stdout.split('\n').map((l) => l.trim()).filter(Boolean);
+  const lines = r.stdout
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
   const m = lines.length === 1 ? /^nibfin-e2e:crontab=(present|absent)$/.exec(lines[0] as string) : null;
   if (r.code !== 0) throw readFailed(PERIODIC_COMMANDS.probe, r);
   if (!m) throw readFailed(PERIODIC_COMMANDS.probe, r, 'printed no single marker');
@@ -322,7 +362,11 @@ export function parseCrontabProbe(r: ExecResult): 'present' | 'absent' {
 
 /** `crontab -l`: its non-comment lines; `no crontab for <user>` is an empty crontab; any other failure throws. */
 export function parseCrontab(r: ExecResult): string[] {
-  if (r.code === 0) return r.stdout.split('\n').map((l) => l.trim()).filter((l) => l !== '' && !l.startsWith('#'));
+  if (r.code === 0)
+    return r.stdout
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l !== '' && !l.startsWith('#'));
   if (/no crontab for /i.test(`${r.stderr}\n${r.stdout}`)) return [];
   throw readFailed(PERIODIC_COMMANDS.crontab, r);
 }
@@ -345,7 +389,10 @@ export async function readCron(run: PeriodicRun): Promise<CronState> {
   const r = await run(PERIODIC_COMMANDS.cronUnits);
   const found = parseCronUnits(r);
   if (found.length) throw new Error(`there is no crontab command, but the service unit files list ${found.join(', ')}`);
-  return { available: false, evidence: `no crontab command (nibfin-e2e:crontab=absent) and no ${CRON_UNITS.join('/')} among ${parseUnitFiles(r.stdout).length} service unit files` };
+  return {
+    available: false,
+    evidence: `no crontab command (nibfin-e2e:crontab=absent) and no ${CRON_UNITS.join('/')} among ${parseUnitFiles(r.stdout).length} service unit files`,
+  };
 }
 
 /**
@@ -356,7 +403,8 @@ export async function readCron(run: PeriodicRun): Promise<CronState> {
  */
 export async function readPeriodic(run: PeriodicRun, options: { noManagerOk: boolean }): Promise<Periodic> {
   const listed = await run(PERIODIC_COMMANDS.units);
-  if (listed.code !== 0 && options.noManagerOk) return { units: [], timers: [], cron: await readCron(run), manager: false };
+  if (listed.code !== 0 && options.noManagerOk)
+    return { units: [], timers: [], cron: await readCron(run), manager: false };
   if (listed.code !== 0) throw readFailed(PERIODIC_COMMANDS.units, listed);
   const units = parseUnitFiles(listed.stdout);
   const t = await run(PERIODIC_COMMANDS.timers);
@@ -376,7 +424,8 @@ export function hostPeriodicRun(run: HostRun, runtime: string | undefined = user
  */
 export function vmCommand(command: PeriodicCommand): string {
   if (!('words' in command)) return command.script;
-  for (const w of command.words) if (!/^[A-Za-z0-9._/=@+-]+$/.test(w)) throw new Error(`vmCommand: ${JSON.stringify(w)} is not a shell-safe word`);
+  for (const w of command.words)
+    if (!/^[A-Za-z0-9._/=@+-]+$/.test(w)) throw new Error(`vmCommand: ${JSON.stringify(w)} is not a shell-safe word`);
   return command.words.join(' ');
 }
 

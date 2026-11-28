@@ -2,15 +2,41 @@ import { deepEqual, equal, match, rejects, throws } from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseIni, parseUnitFiles, readLinuxHostState, userEnabledUnits, userRuntimeDir } from '../../src/host/hoststate.ts';
+import {
+  parseIni,
+  parseUnitFiles,
+  readLinuxHostState,
+  userEnabledUnits,
+  userRuntimeDir,
+} from '../../src/host/hoststate.ts';
 import type { HostRun } from '../../src/host/hoststate.ts';
 import { Check, precondition, redact, tail } from '../../scenarios/lib/check.ts';
 import { isNibfinRunFor, leafCommands, parseHelp, parseRemaining } from '../../scenarios/lib/gh.ts';
 import { mainDigest, requireCurrentImage } from '../../scenarios/lib/image.ts';
 import { schemaValidator } from '../../scenarios/lib/schema.ts';
 import { waitFor } from '../../scenarios/lib/wait.ts';
-import { guideTail, GUIDE_LINE, loginGuide, loginRefusal, PASTE_PROMPT, statusRunners, SUCCESS_LINE, volumeContainers, volumeExists, waitForOutput } from '../../scenarios/management/login-guide.ts';
-import { describeLogin, isCliLogin, loginMiss, loginVerdict, parseIds, pickLogin, projectLogin, shapeMiss } from '../../scenarios/management/login-container.ts';
+import {
+  guideTail,
+  GUIDE_LINE,
+  loginGuide,
+  loginRefusal,
+  PASTE_PROMPT,
+  statusRunners,
+  SUCCESS_LINE,
+  volumeContainers,
+  volumeExists,
+  waitForOutput,
+} from '../../scenarios/management/login-guide.ts';
+import {
+  describeLogin,
+  isCliLogin,
+  loginMiss,
+  loginVerdict,
+  parseIds,
+  pickLogin,
+  projectLogin,
+  shapeMiss,
+} from '../../scenarios/management/login-container.ts';
 import type { LoginContainer } from '../../scenarios/management/login-container.ts';
 import { LABEL_REPO } from '../../scenarios/lib/containers.ts';
 import { claudeLoggedIn, providerLogin } from '../../scenarios/dashboard/support.ts';
@@ -58,7 +84,10 @@ run-name: >-
 on: workflow_dispatch
 `);
   equal(folded.name, 'Nibfin · Shared runner');
-  equal(folded.runName, "${{ inputs.issue != '' && format('Nibfin · {0}#{1}', inputs.repo, inputs.issue) || 'Nibfin · route' }}");
+  equal(
+    folded.runName,
+    "${{ inputs.issue != '' && format('Nibfin · {0}#{1}', inputs.repo, inputs.issue) || 'Nibfin · route' }}",
+  );
   equal(readWorkflow('run-name: |\n  Nibfin\n  · run\njobs: {}\n').runName, 'Nibfin\n· run\n');
   equal(readWorkflow('run-name: |-\n    Nibfin\n    · run\n\n# c\non: push\n').runName, 'Nibfin\n· run');
   equal(readWorkflow('run-name: >\n  a\n  b\n\n  c\n').runName, 'a b\nc\n');
@@ -70,15 +99,22 @@ test('workflow triggers: scalar, flow list, flow mapping, block mapping and bloc
   deepEqual(triggers('on: push\n'), ['push']);
   deepEqual(triggers('on: [push, "issues"]\n'), ['push', 'issues']);
   deepEqual(triggers('on: { push: {}, workflow_call: {} }\n'), ['push', 'workflow_call']);
-  deepEqual(triggers('name: x\non:\n  workflow_call:\n    inputs:\n      a:\n        type: string\n  # note\n  issues:\n    types: [opened]\njobs: {}\n'), ['workflow_call', 'issues']);
+  deepEqual(
+    triggers(
+      'name: x\non:\n  workflow_call:\n    inputs:\n      a:\n        type: string\n  # note\n  issues:\n    types: [opened]\njobs: {}\n',
+    ),
+    ['workflow_call', 'issues'],
+  );
   deepEqual(triggers('"on":\n  - push\n  - workflow_call\njobs: {}\n'), ['push', 'workflow_call']);
   deepEqual(triggers('on: [workflow_call, # reusable\n  issues]\njobs: {}\n'), ['workflow_call', 'issues']);
   deepEqual(triggers('jobs: {}\n'), []);
 });
 
 test('run titles: every title an expression can render must start with the prefix', () => {
-  const shared = "${{ inputs.issue != '' && format('Nibfin · {0}#{1} · {2}', inputs.repo, inputs.issue, inputs.stage) || format('Nibfin · {0}@{1} · route', inputs.repo, inputs.ref) }}";
-  const issue = "${{ github.event.issue && format('Nibfin · {0}#{1} · wake', github.repository, github.event.issue.number) || format('Nibfin · {0}@{1} · wake', github.repository, github.event.workflow_run && (github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.head_branch || github.event.workflow_run.head_sha) || github.event.pull_request.head.ref || github.sha) }}";
+  const shared =
+    "${{ inputs.issue != '' && format('Nibfin · {0}#{1} · {2}', inputs.repo, inputs.issue, inputs.stage) || format('Nibfin · {0}@{1} · route', inputs.repo, inputs.ref) }}";
+  const issue =
+    "${{ github.event.issue && format('Nibfin · {0}#{1} · wake', github.repository, github.event.issue.number) || format('Nibfin · {0}@{1} · wake', github.repository, github.event.workflow_run && (github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.head_branch || github.event.workflow_run.head_sha) || github.event.pull_request.head.ref || github.sha) }}";
   equal(titleStartsWith(shared, 'Nibfin'), true);
   equal(titleStartsWith(issue, 'Nibfin'), true);
   equal(titleStartsWith('Nibfin · ${{ inputs.issue }}', 'Nibfin'), true);
@@ -98,14 +134,28 @@ test('unpinned images: a bare name passes only next to the digest, assigned and 
     `on:\n  workflow_call:\nenv:\n${env}jobs:\n  s:\n    runs-on: [self-hosted, nibfin-1]\n    steps:\n      - run: |\n          ${run}\n`;
   const bare = [{ ref: 'ghcr.io/taco3064/nibfin', why: 'run without a digest' }];
   // Passes: assigned, then only compared, as when telling older local images apart.
-  deepEqual(unpinnedImages(job('podman run --rm \\\n            "$IMAGE_REF" nibfin run\n          if [ "$r" != "$IMAGE" ]; then continue; fi\n          [[ ${IMAGE} == "$x" ]]'), D1), []);
+  deepEqual(
+    unpinnedImages(
+      job(
+        'podman run --rm \\\n            "$IMAGE_REF" nibfin run\n          if [ "$r" != "$IMAGE" ]; then continue; fi\n          [[ ${IMAGE} == "$x" ]]',
+      ),
+      D1,
+    ),
+    [],
+  );
   deepEqual(unpinnedImages(job('IMAGE=ghcr.io/taco3064/nibfin\n          [ "$r" = "$IMAGE" ]'), D1), []);
   // The digest must be in the file or a caller.
-  deepEqual(unpinnedImages(job('echo', '  IMAGE: ghcr.io/taco3064/nibfin\n'), D1), [{ ref: 'ghcr.io/taco3064/nibfin', why: 'with no expected digest in the file or its caller' }]);
+  deepEqual(unpinnedImages(job('echo', '  IMAGE: ghcr.io/taco3064/nibfin\n'), D1), [
+    { ref: 'ghcr.io/taco3064/nibfin', why: 'with no expected digest in the file or its caller' },
+  ]);
   deepEqual(unpinnedImages(job('echo', '  IMAGE: ghcr.io/taco3064/nibfin\n'), D1, [`with:\n  digest: ${D1}\n`]), []);
   // Other references fail on their own.
-  deepEqual(unpinnedImages(job('podman run ghcr.io/taco3064/nibfin:latest'), D1), [{ ref: 'ghcr.io/taco3064/nibfin:latest' }]);
-  deepEqual(unpinnedImages(job(`podman run ghcr.io/taco3064/nibfin@${D2}`), D1), [{ ref: `ghcr.io/taco3064/nibfin@${D2}` }]);
+  deepEqual(unpinnedImages(job('podman run ghcr.io/taco3064/nibfin:latest'), D1), [
+    { ref: 'ghcr.io/taco3064/nibfin:latest' },
+  ]);
+  deepEqual(unpinnedImages(job(`podman run ghcr.io/taco3064/nibfin@${D2}`), D1), [
+    { ref: `ghcr.io/taco3064/nibfin@${D2}` },
+  ]);
   // Run, pulled or created, literally or through the variable, however written.
   for (const run of [
     'podman run --rm \\\n            "$IMAGE" nibfin run',
@@ -123,19 +173,51 @@ test('unpinned images: a bare name passes only next to the digest, assigned and 
     'echo "img=$IMAGE" >> "$GITHUB_OUTPUT"',
     '[ "$(podman run "$IMAGE")" = x ]',
     '[ "$r" != "$IMAGE" ] || podman run "$IMAGE"',
-  ]) deepEqual(unpinnedImages(job(run), D1), bare, run);
+  ])
+    deepEqual(unpinnedImages(job(run), D1), bare, run);
   // Expressions, matrices, inputs, values below their key, image keys.
   const swap = (from: string, to: string) => job('x').replace(from, to);
   deepEqual(unpinnedImages(swap('          x\n', '          podman run "${{ env[\'IMAGE\'] }}"\n'), D1), bare);
-  deepEqual(unpinnedImages(swap('    steps:\n', '    strategy:\n      matrix:\n        img:\n          - ghcr.io/taco3064/nibfin\n    steps:\n'), D1), bare);
-  deepEqual(unpinnedImages(swap('  workflow_call:\n', '  workflow_call:\n    inputs:\n      image:\n        type: string\n        default: ghcr.io/taco3064/nibfin\n'), D1), bare);
-  deepEqual(unpinnedImages(swap('  IMAGE: ghcr.io/taco3064/nibfin\n', '  IMAGE:\n    ghcr.io/taco3064/nibfin\n'), D1), bare);
-  deepEqual(unpinnedImages(swap('  IMAGE: ghcr.io/taco3064/nibfin\n', '  IMAGE: >-\n    ghcr.io/taco3064/nibfin\n'), D1), bare);
+  deepEqual(
+    unpinnedImages(
+      swap(
+        '    steps:\n',
+        '    strategy:\n      matrix:\n        img:\n          - ghcr.io/taco3064/nibfin\n    steps:\n',
+      ),
+      D1,
+    ),
+    bare,
+  );
+  deepEqual(
+    unpinnedImages(
+      swap(
+        '  workflow_call:\n',
+        '  workflow_call:\n    inputs:\n      image:\n        type: string\n        default: ghcr.io/taco3064/nibfin\n',
+      ),
+      D1,
+    ),
+    bare,
+  );
+  deepEqual(
+    unpinnedImages(swap('  IMAGE: ghcr.io/taco3064/nibfin\n', '  IMAGE:\n    ghcr.io/taco3064/nibfin\n'), D1),
+    bare,
+  );
+  deepEqual(
+    unpinnedImages(swap('  IMAGE: ghcr.io/taco3064/nibfin\n', '  IMAGE: >-\n    ghcr.io/taco3064/nibfin\n'), D1),
+    bare,
+  );
   deepEqual(unpinnedImages(swap('    steps:\n', '    container: ghcr.io/taco3064/nibfin\n    steps:\n'), D1), bare);
-  deepEqual(unpinnedImages(swap('    steps:\n', '    container:\n      image: ${{ env.IMAGE }}\n    steps:\n'), D1), bare);
-  deepEqual(unpinnedImages(swap('      - run: |\n', '      - uses: docker://ghcr.io/taco3064/nibfin\n      - run: |\n'), D1), bare);
+  deepEqual(
+    unpinnedImages(swap('    steps:\n', '    container:\n      image: ${{ env.IMAGE }}\n    steps:\n'), D1),
+    bare,
+  );
+  deepEqual(
+    unpinnedImages(swap('      - run: |\n', '      - uses: docker://ghcr.io/taco3064/nibfin\n      - run: |\n'), D1),
+    bare,
+  );
   // A caller passing the bare name in.
-  const called = 'on:\n  workflow_call:\n    inputs:\n      img:\n        type: string\njobs:\n  s:\n    steps:\n      - run: podman run "${{ inputs.img }}"\n';
+  const called =
+    'on:\n  workflow_call:\n    inputs:\n      img:\n        type: string\njobs:\n  s:\n    steps:\n      - run: podman run "${{ inputs.img }}"\n';
   const caller = `env:\n  D: ${D1}\njobs:\n  j:\n    uses: ./.github/workflows/nibfin-job.yml\n    with:\n      img: ghcr.io/taco3064/nibfin\n`;
   deepEqual(unpinnedImages(called, D1, [caller]), bare);
   deepEqual(unpinnedImages(called, D1, []), []);
@@ -161,9 +243,15 @@ test('help parsing: subcommands without cobra builtins, flags with defaults, wit
     commands: [],
     flags: [{ name: 'count', default: '2' }, { name: 'repo', default: 'o/r' }, { name: 'yes' }, { name: 'verbose' }],
   });
-  const root = 'Usage:\n  gh nibfin [command]\n\nAvailable Commands:\n  completion  Generate\n  help        Help\n  runner      Runners\n  status      Status\n\nFlags:\n  -h, --help   help\n';
+  const root =
+    'Usage:\n  gh nibfin [command]\n\nAvailable Commands:\n  completion  Generate\n  help        Help\n  runner      Runners\n  status      Status\n\nFlags:\n  -h, --help   help\n';
   deepEqual(parseHelp(root), { commands: ['runner', 'status'], flags: [] });
-  const tree = new Map([['', root], ['runner', 'Available Commands:\n  add  Add\n'], ['runner add', HELP], ['status', 'Flags:\n      --json   json\n']]);
+  const tree = new Map([
+    ['', root],
+    ['runner', 'Available Commands:\n  add  Add\n'],
+    ['runner add', HELP],
+    ['status', 'Flags:\n      --json   json\n'],
+  ]);
   deepEqual(leafCommands(tree), ['runner add', 'status']);
 });
 
@@ -189,7 +277,10 @@ test('Check collects every problem with its rule and hides secrets', async () =>
   await c.part('R5.2', async () => {
     throw new Error('at http://127.0.0.1:1/#proof=abc123 with ghp_' + 'a'.repeat(30));
   });
-  deepEqual(c.outcome('ok'), { status: 'failed', reason: 'R5.1: first; R5.2: at http://127.0.0.1:1/#proof=<hidden> with <token>' });
+  deepEqual(c.outcome('ok'), {
+    status: 'failed',
+    reason: 'R5.1: first; R5.2: at http://127.0.0.1:1/#proof=<hidden> with <token>',
+  });
   deepEqual(new Check().outcome('all good'), { status: 'passed', reason: 'all good' });
   equal(redact('github_pat_' + 'b'.repeat(30)), '<token>');
   equal(tail({ stdout: 'x'.repeat(1000), stderr: '' }, 10), '…' + 'x'.repeat(10));
@@ -200,18 +291,33 @@ test('waitFor returns once the condition holds and fails at the deadline with th
   let t = 0;
   const clock = { now: () => t, sleep: async (ms: number) => void (t += ms) };
   let n = 0;
-  equal(await waitFor(async () => ++n, (v) => v === 3, { what: 'three', deadlineMs: 60_000, intervalMs: 1000, ...clock }), 3);
+  equal(
+    await waitFor(
+      async () => ++n,
+      (v) => v === 3,
+      { what: 'three', deadlineMs: 60_000, intervalMs: 1000, ...clock },
+    ),
+    3,
+  );
   equal(t, 2000);
   t = 0;
   await rejects(
-    waitFor(async () => 'busy', () => false, { what: 'idle', deadlineMs: 5000, intervalMs: 2000, ...clock }),
+    waitFor(
+      async () => 'busy',
+      () => false,
+      { what: 'idle', deadlineMs: 5000, intervalMs: 2000, ...clock },
+    ),
     /timed out after 5 s waiting for idle; last seen: busy/,
   );
   t = 0;
   await rejects(
-    waitFor(async () => {
-      throw new Error('404');
-    }, () => true, { what: 'x', deadlineMs: 1000, ...clock }),
+    waitFor(
+      async () => {
+        throw new Error('404');
+      },
+      () => true,
+      { what: 'x', deadlineMs: 1000, ...clock },
+    ),
     /last seen: error: 404/,
   );
 });
@@ -221,14 +327,20 @@ function ghcr(digest: string | null, seen: string[] = []): typeof fetch {
     const url = String(input);
     seen.push(`${init?.method ?? 'GET'} ${url} ${new Headers(init?.headers).get('authorization') ?? ''}`);
     if (url.startsWith('https://ghcr.io/token')) return new Response(JSON.stringify({ token: 'anon' }));
-    return new Response(null, { status: digest ? 200 : 404, headers: digest ? { 'docker-content-digest': digest } : {} });
+    return new Response(null, {
+      status: digest ? 200 : 404,
+      headers: digest ? { 'docker-content-digest': digest } : {},
+    });
   };
 }
 
 test('the GHCR :main digest is read anonymously; a moved :main is a precondition failure naming both digests', async () => {
   const seen: string[] = [];
   equal(await mainDigest(ghcr(D1, seen)), D1);
-  deepEqual(seen, ['GET https://ghcr.io/token?scope=repository:taco3064/nibfin:pull ', 'HEAD https://ghcr.io/v2/taco3064/nibfin/manifests/main Bearer anon']);
+  deepEqual(seen, [
+    'GET https://ghcr.io/token?scope=repository:taco3064/nibfin:pull ',
+    'HEAD https://ghcr.io/v2/taco3064/nibfin/manifests/main Bearer anon',
+  ]);
   equal(await requireCurrentImage(D1, ghcr(D1)), undefined);
   deepEqual(await requireCurrentImage(D1, ghcr(D2)), {
     status: 'failed',
@@ -241,7 +353,14 @@ test('the schema validator is strict: an unknown keyword fails to compile, a mis
   const schema = {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     oneOf: [{ $ref: '#/$defs/V' }],
-    $defs: { V: { type: 'object', properties: { a: { type: ['string', 'null'] } }, required: ['a'], additionalProperties: false } },
+    $defs: {
+      V: {
+        type: 'object',
+        properties: { a: { type: ['string', 'null'] } },
+        required: ['a'],
+        additionalProperties: false,
+      },
+    },
   };
   const v = schemaValidator(schema);
   deepEqual(v({ a: null }), []);
@@ -255,7 +374,10 @@ test('host state parsing: unit files and .wslconfig', () => {
     { name: 'a.service', state: 'enabled' },
     { name: 'b.timer', state: 'static' },
   ]);
-  deepEqual(parseIni('[WSL2]\r\nmemory = 8GB\r\n# c\r\n[experimental]\nx=1\n'), { wsl2: { memory: '8GB' }, experimental: { x: '1' } });
+  deepEqual(parseIni('[WSL2]\r\nmemory = 8GB\r\n# c\r\n[experimental]\nx=1\n'), {
+    wsl2: { memory: '8GB' },
+    experimental: { x: '1' },
+  });
   deepEqual(parseIni(null), {});
 });
 
@@ -268,11 +390,24 @@ test('host state before runner add: without a user manager the units come from t
   const seen: { argv: string[]; env?: Record<string, string> }[] = [];
   const run: HostRun = async (argv, env) => {
     seen.push({ argv, env });
-    if (argv[0] === 'systemctl' && argv[1] === '--global') return { code: 0, stdout: 'gpg-agent.socket enabled enabled\nmine.service disabled enabled\nx.timer static -\n', stderr: '' };
+    if (argv[0] === 'systemctl' && argv[1] === '--global')
+      return {
+        code: 0,
+        stdout: 'gpg-agent.socket enabled enabled\nmine.service disabled enabled\nx.timer static -\n',
+        stderr: '',
+      };
     if (argv[0] === 'systemctl') return { code: 1, stdout: '', stderr: 'Failed to connect to bus: No medium found' };
     return { code: 1, stdout: '', stderr: 'Failed to get user: User runner is not logged in or lingering.' };
   };
-  const state = await readLinuxHostState(run, { env: { PATH: '/usr/bin:/bin::/usr/bin' }, uid: 1001, user: 'runner', exists: () => false, systemFiles: () => ['a.service'], userEnabled: () => ['mine.service', 'own.timer'], now: () => 1234 });
+  const state = await readLinuxHostState(run, {
+    env: { PATH: '/usr/bin:/bin::/usr/bin' },
+    uid: 1001,
+    user: 'runner',
+    exists: () => false,
+    systemFiles: () => ['a.service'],
+    userEnabled: () => ['mine.service', 'own.timer'],
+    now: () => 1234,
+  });
   deepEqual(state, {
     platform: 'linux',
     units: [
@@ -295,18 +430,32 @@ test('host state before runner add: without a user manager the units come from t
     ],
   );
 
-  const noGlobal: HostRun = async (argv) => (argv[0] === 'systemctl' ? { code: 1, stdout: '', stderr: argv[1] === '--global' ? 'unreadable' : 'no bus' } : { code: 0, stdout: 'no\n', stderr: '' });
-  await rejects(readLinuxHostState(noGlobal, { env: {}, uid: 1001, user: 'runner', exists: () => false, systemFiles: () => [], userEnabled: () => [] }), /systemctl --global list-unit-files exited 1: unreadable/);
+  const noGlobal: HostRun = async (argv) =>
+    argv[0] === 'systemctl'
+      ? { code: 1, stdout: '', stderr: argv[1] === '--global' ? 'unreadable' : 'no bus' }
+      : { code: 0, stdout: 'no\n', stderr: '' };
+  await rejects(
+    readLinuxHostState(noGlobal, {
+      env: {},
+      uid: 1001,
+      user: 'runner',
+      exists: () => false,
+      systemFiles: () => [],
+      userEnabled: () => [],
+    }),
+    /systemctl --global list-unit-files exited 1: unreadable/,
+  );
 });
 
-test('host state: the user\'s own enabled units are the entries of its .wants and .requires directories', () => {
+test("host state: the user's own enabled units are the entries of its .wants and .requires directories", () => {
   const work = join(import.meta.dirname, '..', '..', '.e2e-work');
   mkdirSync(work, { recursive: true });
   const home = mkdtempSync(join(work, 'test-units-'));
   try {
     deepEqual(userEnabledUnits({}, home), []);
     const dir = join(home, '.config', 'systemd', 'user');
-    for (const d of ['default.target.wants', 'sockets.target.requires', 'other.d']) mkdirSync(join(dir, d), { recursive: true });
+    for (const d of ['default.target.wants', 'sockets.target.requires', 'other.d'])
+      mkdirSync(join(dir, d), { recursive: true });
     writeFileSync(join(dir, 'default.target.wants', 'b.service'), '');
     writeFileSync(join(dir, 'sockets.target.requires', 'a.socket'), '');
     writeFileSync(join(dir, 'other.d', 'override.conf'), '');
@@ -320,22 +469,43 @@ test('host state: the user\'s own enabled units are the entries of its .wants an
 
 test('host state: a running user manager and a lingering user are read, and their failures still throw', async () => {
   const ok: HostRun = async (argv) =>
-    argv[0] === 'systemctl' ? { code: 0, stdout: 'a.service enabled enabled\n', stderr: '' } : { code: 0, stdout: 'yes\n', stderr: '' };
+    argv[0] === 'systemctl'
+      ? { code: 0, stdout: 'a.service enabled enabled\n', stderr: '' }
+      : { code: 0, stdout: 'yes\n', stderr: '' };
   const opts = { env: { XDG_RUNTIME_DIR: '/r' }, uid: 1001, user: 'runner', systemFiles: () => [], now: () => 5 };
-  deepEqual(await readLinuxHostState(ok, { ...opts, exists: () => true }), { platform: 'linux', units: [{ name: 'a.service', state: 'enabled' }], linger: 'yes', systemFiles: [], readAt: 5, pathDirs: [] });
+  deepEqual(await readLinuxHostState(ok, { ...opts, exists: () => true }), {
+    platform: 'linux',
+    units: [{ name: 'a.service', state: 'enabled' }],
+    linger: 'yes',
+    systemFiles: [],
+    readAt: 5,
+    pathDirs: [],
+  });
 
-  const unitsFail: HostRun = async (argv) => (argv[0] === 'systemctl' ? { code: 1, stdout: '', stderr: 'boom' } : { code: 0, stdout: 'no\n', stderr: '' });
-  await rejects(readLinuxHostState(unitsFail, { ...opts, exists: (p) => p === '/r/bus' }), /systemctl --user list-unit-files exited 1: boom/);
+  const unitsFail: HostRun = async (argv) =>
+    argv[0] === 'systemctl' ? { code: 1, stdout: '', stderr: 'boom' } : { code: 0, stdout: 'no\n', stderr: '' };
+  await rejects(
+    readLinuxHostState(unitsFail, { ...opts, exists: (p) => p === '/r/bus' }),
+    /systemctl --user list-unit-files exited 1: boom/,
+  );
 
-  const lingerFail: HostRun = async (argv) => (argv[0] === 'systemctl' ? { code: 0, stdout: '', stderr: '' } : { code: 1, stdout: '', stderr: 'bad' });
-  await rejects(readLinuxHostState(lingerFail, { ...opts, exists: (p) => p === '/var/lib/systemd/linger/runner' }), /loginctl show-user runner exited 1: bad/);
+  const lingerFail: HostRun = async (argv) =>
+    argv[0] === 'systemctl' ? { code: 0, stdout: '', stderr: '' } : { code: 1, stdout: '', stderr: 'bad' };
+  await rejects(
+    readLinuxHostState(lingerFail, { ...opts, exists: (p) => p === '/var/lib/systemd/linger/runner' }),
+    /loginctl show-user runner exited 1: bad/,
+  );
 });
 
 test('waitFor ends with the abort reason once its signal aborts', async () => {
   const c = new AbortController();
   let reads = 0;
   await rejects(
-    waitFor(async () => (++reads === 2 && c.abort(new Error('harness budget of 190 min ran out')), 'busy'), () => false, { what: 'idle', deadlineMs: 60_000, intervalMs: 10, signal: c.signal }),
+    waitFor(
+      async () => (++reads === 2 && c.abort(new Error('harness budget of 190 min ran out')), 'busy'),
+      () => false,
+      { what: 'idle', deadlineMs: 60_000, intervalMs: 10, signal: c.signal },
+    ),
     /harness budget of 190 min ran out/,
   );
   equal(reads, 2);
@@ -343,7 +513,8 @@ test('waitFor ends with the abort reason once its signal aborts', async () => {
 
 // ---- runner-add-login (Proposal R5.30) -------------------------------------------
 
-const CGROUP = 'WARNING: cgroup v2 delegation is missing; see https://rootlesscontaine.rs/getting-started/common/cgroup2/ for how to enable it.';
+const CGROUP =
+  'WARNING: cgroup v2 delegation is missing; see https://rootlesscontaine.rs/getting-started/common/cgroup2/ for how to enable it.';
 
 test('loginGuide: the open and enter code step lines, across CRLF, interleaved stdout and ANSI colour', () => {
   const out = `Preview:\r\n  linger: ok\r\n\x1b[1mopen https://auth.openai.com/codex/device\x1b[0m\r\nwaiting for login…\r\n\x1b[33menter code ABCD-12345\x1b[0m\r\n`;
@@ -362,7 +533,9 @@ test('loginGuide: an advisory URL is no guide, but stays a secret', () => {
 });
 
 test('loginGuide: open mid-sentence does not count; GitHub URLs are not secrets', () => {
-  const g = loginGuide('please open https://example.com/login in a browser\nsee https://github.com/o/r and https://api.github.com/x and https://objects.githubusercontent.com/y\n');
+  const g = loginGuide(
+    'please open https://example.com/login in a browser\nsee https://github.com/o/r and https://api.github.com/x and https://objects.githubusercontent.com/y\n',
+  );
   equal(g.url, undefined);
   equal(GUIDE_LINE.test('please open https://example.com/login in a browser'), false);
   deepEqual(g.secrets, ['https://example.com/login']);
@@ -380,7 +553,8 @@ test('loginGuide: an enter code line or a code-shaped token alone is a secret, n
 });
 
 test('guideTail hides every login value before cutting, and strips ANSI', () => {
-  const out = `x`.repeat(50) + `\n\x1b[1mopen https://auth.example/device?user_code=ABCD-EFGH\x1b[0m\nenter code ABCD-EFGH\n`;
+  const out =
+    `x`.repeat(50) + `\n\x1b[1mopen https://auth.example/device?user_code=ABCD-EFGH\x1b[0m\nenter code ABCD-EFGH\n`;
   const t = guideTail(out, 40);
   equal(t.includes('auth.example'), false);
   equal(t.includes('ABCD'), false);
@@ -449,7 +623,12 @@ test('statusRunners reads one provider from .host.runners.runners; an unreadable
   const s = {
     host: {
       host: { running: true },
-      runners: { runners: [{ provider: 'claude', status: 'online' }, { provider: 'codex', status: 'offline' }] },
+      runners: {
+        runners: [
+          { provider: 'claude', status: 'online' },
+          { provider: 'codex', status: 'offline' },
+        ],
+      },
       providers: [{ provider: 'codex', loggedIn: false }],
     },
     repos: null,
@@ -463,7 +642,12 @@ test('statusRunners reads one provider from .host.runners.runners; an unreadable
 });
 
 test('providerLogin: true, false and undefined; claudeLoggedIn keeps its results', () => {
-  const s = { providers: [{ provider: 'claude', loggedIn: true }, { provider: 'codex', loggedIn: false, error: 'x' }] };
+  const s = {
+    providers: [
+      { provider: 'claude', loggedIn: true },
+      { provider: 'codex', loggedIn: false, error: 'x' },
+    ],
+  };
   equal(providerLogin(s, 'claude'), true);
   equal(providerLogin(s, 'codex'), false);
   equal(providerLogin({ providers: [{ provider: 'claude', loggedIn: true }] }, 'codex'), undefined);
@@ -492,22 +676,38 @@ test('loginRefusal: the no_runners refusal for the named provider, with a non-ze
   const refusal = 'no_runners: no codex runners on gate-host; add runners first: gh nibfin runner add codex\n';
   deepEqual(loginRefusal(1, refusal, 'codex'), { refused: true, guide: false });
   deepEqual(loginRefusal(0, refusal, 'codex'), { refused: false, guide: false });
-  deepEqual(loginRefusal(1, 'podman_failed: podman run exited 125: image not known\n', 'codex'), { refused: false, guide: false });
-  deepEqual(loginRefusal(1, `${refusal}open https://auth.openai.com/codex/device\n`, 'codex'), { refused: false, guide: true });
-  deepEqual(loginRefusal(1, `${refusal}paste the code shown in your browser: `, 'codex'), { refused: false, guide: true });
-  deepEqual(loginRefusal(1, `\x1b[31mno_runners: no codex runners on h;\x1b[0m\r\n`, 'codex'), { refused: true, guide: false });
+  deepEqual(loginRefusal(1, 'podman_failed: podman run exited 125: image not known\n', 'codex'), {
+    refused: false,
+    guide: false,
+  });
+  deepEqual(loginRefusal(1, `${refusal}open https://auth.openai.com/codex/device\n`, 'codex'), {
+    refused: false,
+    guide: true,
+  });
+  deepEqual(loginRefusal(1, `${refusal}paste the code shown in your browser: `, 'codex'), {
+    refused: false,
+    guide: true,
+  });
+  deepEqual(loginRefusal(1, `\x1b[31mno_runners: no codex runners on h;\x1b[0m\r\n`, 'codex'), {
+    refused: true,
+    guide: false,
+  });
   deepEqual(loginRefusal(1, 'see: gh nibfin runner add codex\r\n', 'codex'), { refused: true, guide: false });
   // The provider argument counts: a claude refusal is no codex refusal.
-  deepEqual(loginRefusal(1, 'no_runners: no claude runners on h; add runners first: gh nibfin runner add claude\n', 'codex'), { refused: false, guide: false });
+  deepEqual(
+    loginRefusal(1, 'no_runners: no claude runners on h; add runners first: gh nibfin runner add claude\n', 'codex'),
+    { refused: false, guide: false },
+  );
   // "codexx" is another word.
   deepEqual(loginRefusal(1, 'no codexx runners\n', 'codex'), { refused: false, guide: false });
 });
 
 test('volumeExists and volumeContainers read podman through exec', async () => {
   const calls: string[][] = [];
-  const ctx = (code: number, stdout = '') => ({
-    exec: async (argv: string[]) => (calls.push(argv), { code, stdout, stderr: code === 125 ? 'boom' : '' }),
-  }) as unknown as Parameters<typeof volumeExists>[0];
+  const ctx = (code: number, stdout = '') =>
+    ({
+      exec: async (argv: string[]) => (calls.push(argv), { code, stdout, stderr: code === 125 ? 'boom' : '' }),
+    }) as unknown as Parameters<typeof volumeExists>[0];
   equal(await volumeExists(ctx(0), 'v1'), true);
   equal(await volumeExists(ctx(1), 'v1'), false);
   await rejects(volumeExists(ctx(125), 'v1'), /podman volume exists v1 exited 125: boom/);
@@ -523,7 +723,19 @@ const JOB_IMAGE = 'a'.repeat(64);
 const OTHER_IMAGE = 'b'.repeat(64);
 
 /** A `podman container inspect` document shaped like gh-nibfin's Codex login container. */
-function inspectDoc(over: { id?: string; image?: string; digest?: string; entrypoint?: unknown; cmd?: unknown; tty?: boolean; stdin?: boolean; running?: boolean; labels?: Record<string, string> } = {}) {
+function inspectDoc(
+  over: {
+    id?: string;
+    image?: string;
+    digest?: string;
+    entrypoint?: unknown;
+    cmd?: unknown;
+    tty?: boolean;
+    stdin?: boolean;
+    running?: boolean;
+    labels?: Record<string, string>;
+  } = {},
+) {
   return [
     {
       Id: over.id ?? '1234567890ab' + 'c'.repeat(52),
@@ -544,7 +756,8 @@ function inspectDoc(over: { id?: string; image?: string; digest?: string; entryp
   ];
 }
 
-const login = (over: Parameters<typeof inspectDoc>[0] = {}): LoginContainer => projectLogin(inspectDoc(over)) as LoginContainer;
+const login = (over: Parameters<typeof inspectDoc>[0] = {}): LoginContainer =>
+  projectLogin(inspectDoc(over)) as LoginContainer;
 
 test('projectLogin keeps only the allowlisted fields; Entrypoint as an array or a string; Env never appears', () => {
   const c = login();
@@ -563,7 +776,17 @@ test('projectLogin keeps only the allowlisted fields; Entrypoint as an array or 
   deepEqual(login({ entrypoint: '/entry.sh', cmd: ['codex', 'login'] }).argv, ['/entry.sh', 'codex', 'login']);
   deepEqual(login({ entrypoint: null, cmd: null }).argv, []);
   equal(login({ labels: { [LABEL_REPO]: 'o/r' } }).job, true);
-  deepEqual(projectLogin({ Config: null }), { id: '', imageName: '', imageId: '', imageDigest: '', argv: [], tty: false, openStdin: false, running: false, job: false });
+  deepEqual(projectLogin({ Config: null }), {
+    id: '',
+    imageName: '',
+    imageId: '',
+    imageDigest: '',
+    argv: [],
+    tty: false,
+    openStdin: false,
+    running: false,
+    job: false,
+  });
   equal(projectLogin([]), undefined);
   equal(projectLogin(null), undefined);
 });
@@ -597,22 +820,34 @@ test('pickLogin matches only a non-Job, running, interactive codex login from th
   const r = pickLogin([other, flat, status, job, stopped], JOB_IMAGE);
   equal(r.match, undefined);
   equal(r.problems.length, 5);
-  match(r.problems[0] ?? '', /^container 111111111111 image ghcr\.io\/taco3064\/nibfin:main \(sha256:1+, id bbbbbbbbbbbb\) command "\/usr\/bin\/tini -- codex login --device-auth" Tty=false OpenStdin=true: image id differs from the Jobs' image id aaaaaaaaaaaa$/);
-  match(r.problems[1] ?? '', /^container 222222222222 .* command "\/usr\/bin\/tini -- codex login" Tty=false OpenStdin=false: not interactive$/);
-  match(r.problems[2] ?? '', /^container 333333333333 .*"\/usr\/bin\/tini -- codex login status" Tty=false OpenStdin=false: not interactive, not the CLI's own login/);
+  match(
+    r.problems[0] ?? '',
+    /^container 111111111111 image ghcr\.io\/taco3064\/nibfin:main \(sha256:1+, id bbbbbbbbbbbb\) command "\/usr\/bin\/tini -- codex login --device-auth" Tty=false OpenStdin=true: image id differs from the Jobs' image id aaaaaaaaaaaa$/,
+  );
+  match(
+    r.problems[1] ?? '',
+    /^container 222222222222 .* command "\/usr\/bin\/tini -- codex login" Tty=false OpenStdin=false: not interactive$/,
+  );
+  match(
+    r.problems[2] ?? '',
+    /^container 333333333333 .*"\/usr\/bin\/tini -- codex login status" Tty=false OpenStdin=false: not interactive, not the CLI's own login/,
+  );
   match(r.problems[3] ?? '', /^container 444444444444 .*: carries the Job label io\.github\.taco3064\.nibfin\.repo$/);
   match(r.problems[4] ?? '', /: not running$/);
   // A later match still wins; earlier misses stay as evidence.
   const later = pickLogin([status, ok], JOB_IMAGE);
   equal(later.match, ok);
   equal(later.problems.length, 1);
-  match(describeLogin(projectLogin({}) as LoginContainer), /^container \(none\) image \(none\) \(no digest, id \(none\)\) command "" Tty=false OpenStdin=false$/);
+  match(
+    describeLogin(projectLogin({}) as LoginContainer),
+    /^container \(none\) image \(none\) \(no digest, id \(none\)\) command "" Tty=false OpenStdin=false$/,
+  );
 });
 
 test('shapeMiss holds the misses of loginMiss except the image id', () => {
   const status = login({ stdin: false, cmd: ['codex', 'login', 'status'], image: OTHER_IMAGE });
   equal(shapeMiss(login({ image: OTHER_IMAGE })), undefined);
-  equal(shapeMiss(status), 'not interactive, not the CLI\'s own login (codex login [--device-auth])');
+  equal(shapeMiss(status), "not interactive, not the CLI's own login (codex login [--device-auth])");
   equal(loginMiss(status, JOB_IMAGE), `${shapeMiss(status)}, image id differs from the Jobs' image id aaaaaaaaaaaa`);
   equal(loginMiss(login(), JOB_IMAGE), undefined);
 });
@@ -622,7 +857,8 @@ test('loginVerdict: run state only for a login-shaped candidate proven to be fro
   const D3 = 'sha256:' + '3'.repeat(64);
   const ref = `ghcr.io/taco3064/nibfin@${D1}`;
   const base = { ref, jobImageId: JOB_IMAGE, initDigest: D1, volume: 'nibfin-codex', waitText: 'within 60 s' };
-  const r611 = /^R6\.11: expected an interactive container from the Jobs' image ghcr\.io\/taco3064\/nibfin@sha256:1+ running the CLI's own login \(codex login \[--device-auth\]\) while the guide was shown; observed: /;
+  const r611 =
+    /^R6\.11: expected an interactive container from the Jobs' image ghcr\.io\/taco3064\/nibfin@sha256:1+ running the CLI's own login \(codex login \[--device-auth\]\) while the guide was shown; observed: /;
   const reasons: string[] = [];
   const verdict = (input: Partial<Parameters<typeof loginVerdict>[0]>) => {
     const { failure } = loginVerdict({ ...base, seen: [], ...input });
@@ -633,17 +869,29 @@ test('loginVerdict: run state only for a login-shaped candidate proven to be fro
   // Proven by the container's ImageDigest.
   const byDigest = login({ id: '7'.repeat(64), image: CUR_IMAGE, digest: D2 });
   const rs = verdict({ seen: [byDigest], current: { digest: await mainDigest(ghcr(D2)) } });
-  match(rs, /^run state: precondition not reached: GHCR :main is sha256:2+, init resolved sha256:1+; a newer main image appeared after init and login candidate container 777777777777 /);
-  match(rs, /; observed: container 777777777777 .*: image id differs from the Jobs' image id aaaaaaaaaaaa within 60 s$/);
+  match(
+    rs,
+    /^run state: precondition not reached: GHCR :main is sha256:2+, init resolved sha256:1+; a newer main image appeared after init and login candidate container 777777777777 /,
+  );
+  match(
+    rs,
+    /; observed: container 777777777777 .*: image id differs from the Jobs' image id aaaaaaaaaaaa within 60 s$/,
+  );
   // Proven by the local image id of ghcr.io/taco3064/nibfin@<current>, with a platform digest.
   const byId = login({ id: '8'.repeat(64), image: CUR_IMAGE, digest: D3 });
-  match(verdict({ seen: [byId], current: { digest: D2, imageId: `sha256:${CUR_IMAGE}` } }), /^run state: precondition not reached: GHCR :main is sha256:2+, init resolved sha256:1+; .*login candidate container 888888888888 .*observed: container 888888888888 /);
+  match(
+    verdict({ seen: [byId], current: { digest: D2, imageId: `sha256:${CUR_IMAGE}` } }),
+    /^run state: precondition not reached: GHCR :main is sha256:2+, init resolved sha256:1+; .*login candidate container 888888888888 .*observed: container 888888888888 /,
+  );
 
   // From neither the Jobs' image nor the current :main.
   const other = login({ id: '9'.repeat(64), image: OTHER_IMAGE, digest: D3 });
   const neither = verdict({ seen: [other], current: { digest: D2, imageId: CUR_IMAGE } });
   match(neither, r611);
-  match(neither, /observed: container 999999999999 .*: image id differs .* within 60 s \(GHCR :main is sha256:2+, init resolved sha256:1+; no login candidate is from it\)$/);
+  match(
+    neither,
+    /observed: container 999999999999 .*: image id differs .* within 60 s \(GHCR :main is sha256:2+, init resolved sha256:1+; no login candidate is from it\)$/,
+  );
   // Current image not present locally and the digest differs: never run state.
   match(verdict({ seen: [byId], current: { digest: D2 } }), r611);
 
@@ -653,19 +901,34 @@ test('loginVerdict: run state only for a login-shaped candidate proven to be fro
   match(still, /observed: container 777777777777 .* within 60 s$/);
 
   // GHCR cannot be read.
-  const error = await mainDigest(ghcr(null)).then(() => '', (e: Error) => e.message);
+  const error = await mainDigest(ghcr(null)).then(
+    () => '',
+    (e: Error) => e.message,
+  );
   const unread = verdict({ seen: [other], current: { error } });
   match(unread, r611);
-  match(unread, /observed: container 999999999999 .* within 60 s \(GHCR :main could not be read to rule out a newer image: GHCR HEAD taco3064\/nibfin:main returned 404\)$/);
+  match(
+    unread,
+    /observed: container 999999999999 .* within 60 s \(GHCR :main could not be read to rule out a newer image: GHCR HEAD taco3064\/nibfin:main returned 404\)$/,
+  );
 
   // From the current image but not login-shaped.
-  const status = login({ id: '6'.repeat(64), image: CUR_IMAGE, digest: D2, stdin: false, cmd: ['codex', 'login', 'status'] });
+  const status = login({
+    id: '6'.repeat(64),
+    image: CUR_IMAGE,
+    digest: D2,
+    stdin: false,
+    cmd: ['codex', 'login', 'status'],
+  });
   const notLogin = verdict({ seen: [status], current: { digest: D2, imageId: CUR_IMAGE } });
   match(notLogin, r611);
   match(notLogin, /container 666666666666 .*not interactive, not the CLI's own login/);
 
   // Nothing seen.
-  equal(verdict({ waitText: 'before the command exited' }), `R6.11: expected an interactive container from the Jobs' image ${ref} running the CLI's own login (codex login [--device-auth]) while the guide was shown; observed: no running container mounting nibfin-codex before the command exited`);
+  equal(
+    verdict({ waitText: 'before the command exited' }),
+    `R6.11: expected an interactive container from the Jobs' image ${ref} running the CLI's own login (codex login [--device-auth]) while the guide was shown; observed: no running container mounting nibfin-codex before the command exited`,
+  );
 
   for (const r of reasons) equal(/secret|OPENAI_API_KEY|PATH=/.test(r), false, r);
 });

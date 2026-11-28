@@ -9,7 +9,8 @@ test('the Runner add matcher accepts add as a whole word anywhere in the name', 
 });
 
 test('the Runner remove matcher accepts remove as a whole word anywhere in the name', () => {
-  for (const name of ['Remove', 'Runner remove', 'Remove runner', '− Remove runner']) ok(RUNNER_REMOVE.test(name), name);
+  for (const name of ['Remove', 'Runner remove', 'Remove runner', '− Remove runner'])
+    ok(RUNNER_REMOVE.test(name), name);
   for (const name of ['Removed', 'Removal', 'Unremovable']) ok(!RUNNER_REMOVE.test(name), name);
 });
 
@@ -32,9 +33,15 @@ test('button names come from the button lines of an aria snapshot', () => {
 
 test('the missing-button message keeps its prefix and lists the buttons shown', () => {
   const prefix = 'R9.12: expected a /\\badd\\b/i button in the runner view; observed none';
-  equal(missingButtonMessage('R9.12', RUNNER_ADD, 'the runner view', ['Refresh', 'Log in']), `${prefix}; buttons shown: "Refresh", "Log in"`);
+  equal(
+    missingButtonMessage('R9.12', RUNNER_ADD, 'the runner view', ['Refresh', 'Log in']),
+    `${prefix}; buttons shown: "Refresh", "Log in"`,
+  );
   equal(missingButtonMessage('R9.12', RUNNER_ADD, 'the runner view', []), `${prefix}; no buttons shown`);
-  equal(missingButtonMessage('R9.12', RUNNER_ADD, 'the runner view', undefined), `${prefix}; the buttons shown could not be read`);
+  equal(
+    missingButtonMessage('R9.12', RUNNER_ADD, 'the runner view', undefined),
+    `${prefix}; the buttons shown could not be read`,
+  );
 });
 
 test('the missing-button message collapses, trims and caps the names shown', () => {

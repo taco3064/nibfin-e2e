@@ -59,7 +59,9 @@ interface Issue {
 
 /** Closes every open Issue as not planned, so Nibfin starts no further stage for it. */
 async function closeOpenIssues(kit: Kit, repo: string): Promise<number[]> {
-  const open = (await kit.github.list<Issue>(`/repos/${repo}/issues?state=open`)).filter((i) => i.pull_request === undefined);
+  const open = (await kit.github.list<Issue>(`/repos/${repo}/issues?state=open`)).filter(
+    (i) => i.pull_request === undefined,
+  );
   for (const i of open) await close(kit, repo, i.number);
   return open.map((i) => i.number);
 }
@@ -108,7 +110,10 @@ async function waitForIdleRunners(kit: Kit): Promise<void> {
     });
   } catch (error) {
     if (kit.signal.aborted || error === readError || last === undefined) throw error;
-    throw new Error(`${idleProblem(last) ?? 'Runners not online and idle'} (after waiting ${Math.round((kit.now() - start) / 1000)} s)`, { cause: error });
+    throw new Error(
+      `${idleProblem(last) ?? 'Runners not online and idle'} (after waiting ${Math.round((kit.now() - start) / 1000)} s)`,
+      { cause: error },
+    );
   }
 }
 
@@ -130,17 +135,26 @@ async function setVariables(kit: Kit, repo: string, wanted: Partial<Record<Libra
   }
   const after = await read();
   const wrong = LIBRARY_VARIABLES.filter((n) => after.get(n) !== wanted[n]);
-  if (wrong.length) throw new Error(`${repo}: variables read back wrong: ${wrong.map((n) => `${n} is ${JSON.stringify(after.get(n) ?? null)}, expected ${JSON.stringify(wanted[n] ?? null)}`).join('; ')}`);
+  if (wrong.length)
+    throw new Error(
+      `${repo}: variables read back wrong: ${wrong.map((n) => `${n} is ${JSON.stringify(after.get(n) ?? null)}, expected ${JSON.stringify(wanted[n] ?? null)}`).join('; ')}`,
+    );
 }
 
 async function clearE2eRulesets(kit: Kit, repo: string): Promise<void> {
-  for (const rs of await rulesets(kit.github, repo)) if (rs.name.startsWith('e2e-')) await kit.github.rest('DELETE', `/repos/${repo}/rulesets/${rs.id}`);
+  for (const rs of await rulesets(kit.github, repo))
+    if (rs.name.startsWith('e2e-')) await kit.github.rest('DELETE', `/repos/${repo}/rulesets/${rs.id}`);
   const left = (await rulesets(kit.github, repo)).filter((rs) => rs.name.startsWith('e2e-'));
-  if (left.length) throw new Error(`${repo}: rulesets ${left.map((r) => r.name).join(', ')} are still present after deleting them`);
+  if (left.length)
+    throw new Error(`${repo}: rulesets ${left.map((r) => r.name).join(', ')} are still present after deleting them`);
 }
 
 function entries(files: FixtureFile[]): TreeEntry[] {
-  return files.map((f) => ('symlink' in f ? { path: f.path, mode: '120000', content: f.symlink } : { path: f.path, mode: '100644', content: f.content }));
+  return files.map((f) =>
+    'symlink' in f
+      ? { path: f.path, mode: '120000', content: f.symlink }
+      : { path: f.path, mode: '100644', content: f.content },
+  );
 }
 
 /** Makes main's tree the baseline plus exactly `files`; returns the tree sha. */
@@ -149,9 +163,17 @@ async function writeContent(kit: Kit, repo: string, files: FixtureFile[]): Promi
   const head = await mainHead(kit.github, repo);
   if (!head) throw new Error(`${repo}: branch main does not exist`);
   const tree = files.length ? await createTree(kit.github, repo, entries(files), base.tree) : base.tree;
-  if (head.tree !== tree) await commitOnMain(kit.github, repo, tree, head.commit, `nibfin-e2e fixture: ${files.map((f) => f.path).join(', ') || 'baseline'}`);
+  if (head.tree !== tree)
+    await commitOnMain(
+      kit.github,
+      repo,
+      tree,
+      head.commit,
+      `nibfin-e2e fixture: ${files.map((f) => f.path).join(', ') || 'baseline'}`,
+    );
   const after = await mainHead(kit.github, repo);
-  if (after?.tree !== tree) throw new Error(`${repo}: main's tree reads back ${String(after?.tree)}, expected the fixture tree ${tree}`);
+  if (after?.tree !== tree)
+    throw new Error(`${repo}: main's tree reads back ${String(after?.tree)}, expected the fixture tree ${tree}`);
   return tree;
 }
 
@@ -163,8 +185,12 @@ async function writeContent(kit: Kit, repo: string, files: FixtureFile[]): Promi
  */
 export async function prepareFixture(kit: Kit, repo: string, state: FixtureState): Promise<{ tree: string }> {
   if (state.ruleset) {
-    if (repo === kit.sandbox.peer) throw new Error(`${repo}: the private peer sandbox has no rulesets on its plan (Proposal R3.55); a fixture cannot add one`);
-    if (!state.ruleset.name.startsWith('e2e-')) throw new Error(`fixture ruleset ${state.ruleset.name}: the name must start with e2e-`);
+    if (repo === kit.sandbox.peer)
+      throw new Error(
+        `${repo}: the private peer sandbox has no rulesets on its plan (Proposal R3.55); a fixture cannot add one`,
+      );
+    if (!state.ruleset.name.startsWith('e2e-'))
+      throw new Error(`fixture ruleset ${state.ruleset.name}: the name must start with e2e-`);
   }
   // 1. Quiesce. The Runners register only on the execution sandbox, whatever `repo` is.
   await closeOpenIssues(kit, repo);
@@ -179,7 +205,8 @@ export async function prepareFixture(kit: Kit, repo: string, state: FixtureState
   if (state.ruleset) {
     await kit.github.rest('POST', `/repos/${repo}/rulesets`, state.ruleset.body);
     const got = (await rulesets(kit.github, repo)).filter((rs) => rs.name === state.ruleset?.name);
-    if (got.length !== 1) throw new Error(`${repo}: ruleset ${state.ruleset.name} reads back ${got.length} time(s), expected once`);
+    if (got.length !== 1)
+      throw new Error(`${repo}: ruleset ${state.ruleset.name} reads back ${got.length} time(s), expected once`);
   }
   return { tree };
 }
@@ -192,7 +219,12 @@ export async function deleteE2eRulesets(kit: Kit, repo: string): Promise<void> {
 /** Opens a fixture Issue with `scope`, assigned to the sandbox owner, and returns its number. */
 export async function openFixture(kit: Kit, repo: string, title: string, body: string): Promise<number> {
   const owner = repo.split('/')[0] as string;
-  const { data } = await kit.github.rest<{ number: number }>('POST', `/repos/${repo}/issues`, { title, body, labels: ['scope'], assignees: [owner] });
+  const { data } = await kit.github.rest<{ number: number }>('POST', `/repos/${repo}/issues`, {
+    title,
+    body,
+    labels: ['scope'],
+    assignees: [owner],
+  });
   kit.log(`${repo}: opened fixture #${data.number} (${title})`);
   return data.number;
 }
@@ -202,7 +234,8 @@ export interface Comment {
   user?: { login: string };
 }
 
-export const comments = (kit: Kit, repo: string, n: number) => kit.github.list<Comment>(`/repos/${repo}/issues/${n}/comments`);
+export const comments = (kit: Kit, repo: string, n: number) =>
+  kit.github.list<Comment>(`/repos/${repo}/issues/${n}/comments`);
 
 export async function labels(kit: Kit, repo: string, n: number): Promise<string[]> {
   return (await kit.github.list<{ name: string }>(`/repos/${repo}/issues/${n}/labels`)).map((l) => l.name);
@@ -224,6 +257,9 @@ export async function issueState(kit: Kit, repo: string, n: number): Promise<str
     const last = body === undefined ? 'none' : excerpt(body, 1500, kit.secrets());
     return `${repo}#${n} labels [${l.join(', ')}]; latest comment: ${last}`;
   } catch (error) {
-    return redact(`${repo}#${n}: reading its state failed: ${error instanceof Error ? error.message : String(error)}`, kit.secrets());
+    return redact(
+      `${repo}#${n}: reading its state failed: ${error instanceof Error ? error.message : String(error)}`,
+      kit.secrets(),
+    );
   }
 }

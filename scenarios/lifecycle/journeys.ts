@@ -38,7 +38,12 @@ export async function stageJobRunning(
   k: Kit,
   n: number,
   stage: Stage,
-  o: { desc: string; deadlineMs: number; show?: (s: Snapshot) => Promise<string>; /** The Issue's name in the reason (default `P`). */ who?: string },
+  o: {
+    desc: string;
+    deadlineMs: number;
+    show?: (s: Snapshot) => Promise<string>;
+    /** The Issue's name in the reason (default `P`). */ who?: string;
+  },
 ): Promise<Job & { stage: Stage; run: Run }> {
   const pause = k.sleep ?? sleep;
   const iso = (t: number) => new Date(t).toISOString();
@@ -53,10 +58,14 @@ export async function stageJobRunning(
     const own = jobs.filter(selfHosted);
     const live = own.find((j) => j.status === 'in_progress');
     if (live) return { ...live, stage, run };
-    const done = own.find((j) => j.status === 'completed' && j.conclusion !== 'cancelled' && j.conclusion !== 'skipped');
+    const done = own.find(
+      (j) => j.status === 'completed' && j.conclusion !== 'cancelled' && j.conclusion !== 'skipped',
+    );
     if (done) {
       const prev = lastRead.get(done.id);
-      const seen = prev ? `the wait last read it at ${iso(prev.at)} (${prev.status})` : `on its first read at ${iso(at)}`;
+      const seen = prev
+        ? `the wait last read it at ${iso(prev.at)} (${prev.status})`
+        : `on its first read at ${iso(at)}`;
       missed = redact(
         `${o.who ?? 'P'}'s ${stage} job ${done.id} (run ${run.id}) completed (${String(done.conclusion)}) before the wait saw it running: started ${String(done.started_at)}, completed ${String(done.completed_at)}; ${seen}`,
         k.ctx.secretValues(),
@@ -81,7 +90,9 @@ export async function stageJobRunning(
       await untilAborted(pause(DIRECT_READ_MS), k.ctx.signal);
     }
   };
-  return k.obs.until(o.desc, fn, o.deadlineMs, o.show, { gonePast: firstOf(async () => missed, k.stageGone(k.exec, n, stage)) });
+  return k.obs.until(o.desc, fn, o.deadlineMs, o.show, {
+    gonePast: firstOf(async () => missed, k.stageGone(k.exec, n, stage)),
+  });
 }
 
 export interface Journey {
@@ -128,9 +139,24 @@ async function driveJourney(k: Kit, filed: number[]): Promise<Journey> {
   await k.hookRules('cd', [{ when: `src/${slugA}.js`, event: 'push', holdTag: `${t}-a-cd` }]);
   await k.hookRules('ci', [{ when: `src/${slugA}.js`, event: 'push', attempt: 2, holdTag: `${t}-a-ci2` }]);
 
-  const a = await k.file(exec, { scenario: 'delivery-lifecycle', title: 'Add triple', body: changeRequest(slugA, 'triple', 'returns its argument times three'), assignees: [owner.login] });
-  const b = await k.file(exec, { scenario: 'delivery-blocked-by-chain', title: 'Add double', body: changeRequest(k.slug('b'), 'double', 'returns its argument times two'), assignees: [owner.login] });
-  const c = await k.file(exec, { scenario: 'delivery-blocked-by-chain', title: 'Add negate', body: changeRequest(k.slug('c'), 'negate', 'returns its argument negated'), assignees: [owner.login] });
+  const a = await k.file(exec, {
+    scenario: 'delivery-lifecycle',
+    title: 'Add triple',
+    body: changeRequest(slugA, 'triple', 'returns its argument times three'),
+    assignees: [owner.login],
+  });
+  const b = await k.file(exec, {
+    scenario: 'delivery-blocked-by-chain',
+    title: 'Add double',
+    body: changeRequest(k.slug('b'), 'double', 'returns its argument times two'),
+    assignees: [owner.login],
+  });
+  const c = await k.file(exec, {
+    scenario: 'delivery-blocked-by-chain',
+    title: 'Add negate',
+    body: changeRequest(k.slug('c'), 'negate', 'returns its argument negated'),
+    assignees: [owner.login],
+  });
   await k.blockBy(exec, b.number, [a]);
   await k.blockBy(exec, c.number, [b]);
   await k.addLabels(exec, b.number, ['scope']);
@@ -140,24 +166,47 @@ async function driveJourney(k: Kit, filed: number[]): Promise<Journey> {
   const x = await k.file(exec, {
     scenario: 'delivery-parallel',
     title: 'Add square',
-    body: changeRequest(k.slug('x'), 'square', 'returns its argument squared', `Please deliver this with the codex provider.\n\nBlocked by #${c.number}`),
+    body: changeRequest(
+      k.slug('x'),
+      'square',
+      'returns its argument squared',
+      `Please deliver this with the codex provider.\n\nBlocked by #${c.number}`,
+    ),
     labels: ['scope'],
     assignees: [owner.login],
   });
-  const u = await k.file(exec, { scenario: 'delivery-blocked-by-chain', title: 'Add halve', body: changeRequest(k.slug('u'), 'halve', 'returns half its argument'), labels: ['scope'] });
+  const u = await k.file(exec, {
+    scenario: 'delivery-blocked-by-chain',
+    title: 'Add halve',
+    body: changeRequest(k.slug('u'), 'halve', 'returns half its argument'),
+    labels: ['scope'],
+  });
   filed.push(a.number, b.number, c.number, x.number, u.number);
 
   // R4.7: A without `scope` gets no stage and no comment once its opened wake completed.
-  await k.obs.until('A\'s opened wake run to complete', (s) => (wakeRuns(s.runs, exec, a.number).some((r) => r.status === 'completed') ? true : undefined), DEADLINE.event, k.show(exec, a.number));
+  await k.obs.until(
+    "A's opened wake run to complete",
+    (s) => (wakeRuns(s.runs, exec, a.number).some((r) => r.status === 'completed') ? true : undefined),
+    DEADLINE.event,
+    k.show(exec, a.number),
+  );
   const calm = await k.settle('A opened', k.now(), k.runsOf(exec, a.number));
   // Route may run for any Issue event; only an agent stage would mean A was taken up.
-  const aBeforeScope = { stageRuns: k.stages(calm, exec, a.number, AGENT_STAGES).length, comments: (await k.obs.comments(exec, a.number)).length };
+  const aBeforeScope = {
+    stageRuns: k.stages(calm, exec, a.number, AGENT_STAGES).length,
+    comments: (await k.obs.comments(exec, a.number)).length,
+  };
   await k.addLabels(exec, a.number, ['scope']);
   const aScopedAt = k.now();
 
   // R4.35: two wakes while A's Deliver runs.
   // A's deliver jobs are read directly: a short Deliver can run between two snapshots (Issue #567).
-  const deliverJob = await stageJobRunning(k, a.number, 'deliver', { desc: 'A\'s deliver job to run', deadlineMs: DEADLINE.delivery, show: k.show(exec, a.number), who: 'A' });
+  const deliverJob = await stageJobRunning(k, a.number, 'deliver', {
+    desc: "A's deliver job to run",
+    deadlineMs: DEADLINE.delivery,
+    show: k.show(exec, a.number),
+    who: 'A',
+  });
   const toggles: number[] = [];
   for (let i = 0; i < 2; i++) {
     toggles.push(k.now());
@@ -166,43 +215,86 @@ async function driveJourney(k: Kit, filed: number[]): Promise<Journey> {
   }
 
   const branch = `nibfin/issue-${a.number}`;
-  const aPr = await k.obs.until('A\'s PR to merge', (s) => s.pulls.get(exec)?.find((p) => p.head.ref === branch && p.merged_at), DEADLINE.delivery, k.show(exec, a.number));
+  const aPr = await k.obs.until(
+    "A's PR to merge",
+    (s) => s.pulls.get(exec)?.find((p) => p.head.ref === branch && p.merged_at),
+    DEADLINE.delivery,
+    k.show(exec, a.number),
+  );
   const { data: main } = await k.gh.rest<{ commit: { sha: string } }>('GET', `/repos/${exec}/branches/main`);
   const mergeSha = aPr.merge_commit_sha ?? main.commit.sha;
-  const pushRun = (s: Snapshot, name: string) => s.runs.find((r) => r.repo === exec && r.name === name && r.event === 'push' && r.head_sha === mergeSha);
+  const pushRun = (s: Snapshot, name: string) =>
+    s.runs.find((r) => r.repo === exec && r.name === name && r.event === 'push' && r.head_sha === mergeSha);
 
   // R3.31, R3.34: CI attempt 1 completes while CD is held; A stays open.
-  const ciRun = await k.obs.until('CI attempt 1 of A\'s merge to complete', (s) => {
-    const r = pushRun(s, 'CI');
-    return r && r.status === 'completed' && (r.run_attempt ?? 1) === 1 ? r : undefined;
-  }, DEADLINE.event);
+  const ciRun = await k.obs.until(
+    "CI attempt 1 of A's merge to complete",
+    (s) => {
+      const r = pushRun(s, 'CI');
+      return r && r.status === 'completed' && (r.run_attempt ?? 1) === 1 ? r : undefined;
+    },
+    DEADLINE.event,
+  );
   // What a CI or CD completion of the merge wakes: A's own runs and Nibfin's runs for the merge commit.
   const ofA = k.runsOf(exec, a.number);
-  const forMerge = (r: Run) => r.display_title.startsWith('Nibfin ·') && r.display_title.includes(`@${mergeSha.slice(0, 7)}`);
+  const forMerge = (r: Run) =>
+    r.display_title.startsWith('Nibfin ·') && r.display_title.includes(`@${mergeSha.slice(0, 7)}`);
   const heldCd = (r: Run) => r.name === 'CD' && r.head_sha === mergeSha;
-  const afterCi = await k.settle('CI of A\'s merge', time(ciRun.updated_at), (r) => (ofA(r) || forMerge(r)) && !heldCd(r));
+  const afterCi = await k.settle(
+    "CI of A's merge",
+    time(ciRun.updated_at),
+    (r) => (ofA(r) || forMerge(r)) && !heldCd(r),
+  );
   const openWhileCdHeld = isOpen(k, afterCi, a.number) && pushRun(afterCi, 'CD')?.status !== 'completed';
 
   // R3.36: a re-run attempt of CI that starts before CD completes, still running when it does.
   await k.gh.rest('POST', `/repos/${exec}/actions/runs/${ciRun.id}/rerun`);
   // Read the run itself: a re-run keeps its created_at, which may be older than the observer's listing window.
-  await k.obs.until('the CI re-run to start', async () => {
-    const { data: r } = await k.gh.rest<Run>('GET', `/repos/${exec}/actions/runs/${ciRun.id}`);
-    return (r.run_attempt ?? 1) >= 2 && r.status !== 'completed' ? r : undefined;
-  }, DEADLINE.event);
+  await k.obs.until(
+    'the CI re-run to start',
+    async () => {
+      const { data: r } = await k.gh.rest<Run>('GET', `/repos/${exec}/actions/runs/${ciRun.id}`);
+      return (r.run_attempt ?? 1) >= 2 && r.status !== 'completed' ? r : undefined;
+    },
+    DEADLINE.event,
+  );
   await k.gh.rest('POST', `/repos/${exec}/git/refs`, { ref: `refs/tags/${t}-a-cd`, sha: mergeSha });
-  const cdRun = await k.obs.until('CD of A\'s merge to complete', (s) => {
-    const r = pushRun(s, 'CD');
-    return r?.status === 'completed' ? r : undefined;
-  }, DEADLINE.event);
+  const cdRun = await k.obs.until(
+    "CD of A's merge to complete",
+    (s) => {
+      const r = pushRun(s, 'CD');
+      return r?.status === 'completed' ? r : undefined;
+    },
+    DEADLINE.event,
+  );
   const heldCi = (r: Run) => r.name === 'CI' && r.head_sha === mergeSha;
-  const afterCd = await k.settle('CD of A\'s merge', time(cdRun.updated_at), (r) => (ofA(r) || forMerge(r)) && !heldCi(r));
+  const afterCd = await k.settle(
+    "CD of A's merge",
+    time(cdRun.updated_at),
+    (r) => (ofA(r) || forMerge(r)) && !heldCi(r),
+  );
   const openAfterCd = isOpen(k, afterCd, a.number);
   await k.gh.rest('POST', `/repos/${exec}/git/refs`, { ref: `refs/tags/${t}-a-ci2`, sha: mergeSha });
 
-  await k.obs.until('A to close with delivered', (s) => k.delivered(s, exec, a.number), DEADLINE.delivery, k.show(exec, a.number), { gonePast: k.closeGone(exec, a.number) });
-  for (const [name, n] of [['B', b.number], ['C', c.number], ['X', x.number]] as const) {
-    await k.obs.until(`${name} to close with delivered`, (s) => k.delivered(s, exec, n), DEADLINE.delivery, k.show(exec, n), { gonePast: k.closeGone(exec, n) });
+  await k.obs.until(
+    'A to close with delivered',
+    (s) => k.delivered(s, exec, a.number),
+    DEADLINE.delivery,
+    k.show(exec, a.number),
+    { gonePast: k.closeGone(exec, a.number) },
+  );
+  for (const [name, n] of [
+    ['B', b.number],
+    ['C', c.number],
+    ['X', x.number],
+  ] as const) {
+    await k.obs.until(
+      `${name} to close with delivered`,
+      (s) => k.delivered(s, exec, n),
+      DEADLINE.delivery,
+      k.show(exec, n),
+      { gonePast: k.closeGone(exec, n) },
+    );
   }
   return {
     a,
@@ -291,17 +383,33 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
   const n = p.number;
   filed.push(n);
   const show = k.show(exec, n);
-  const running = (stage: 'shape' | 'deliver', after = 0) => async (s: Snapshot) =>
-    (await k.agentJobs(s, exec, n, [stage])).find((j: Job) => j.status === 'in_progress' && selfHosted(j) && time(j.started_at) >= after);
+  const running =
+    (stage: 'shape' | 'deliver', after = 0) =>
+    async (s: Snapshot) =>
+      (await k.agentJobs(s, exec, n, [stage])).find(
+        (j: Job) => j.status === 'in_progress' && selfHosted(j) && time(j.started_at) >= after,
+      );
 
-  const shapeJob = await stageJobRunning(k, n, 'shape', { desc: 'P\'s shape job to run', deadlineMs: DEADLINE.stage, show });
+  const shapeJob = await stageJobRunning(k, n, 'shape', {
+    desc: "P's shape job to run",
+    deadlineMs: DEADLINE.stage,
+    show,
+  });
   await k.addLabels(exec, n, ['pause']);
   const pausedAt = k.now();
-  const shapeDone = await k.obs.until('P\'s shape job to complete', async () => {
-    const j = await k.obs.job(exec, shapeJob.id);
-    return j.status === 'completed' ? j : undefined;
-  }, DEADLINE.stage, show);
-  const pauseLate = time(shapeDone.completed_at) <= pausedAt ? `P's shape job ${shapeDone.id} completed before pause was added` : undefined;
+  const shapeDone = await k.obs.until(
+    "P's shape job to complete",
+    async () => {
+      const j = await k.obs.job(exec, shapeJob.id);
+      return j.status === 'completed' ? j : undefined;
+    },
+    DEADLINE.stage,
+    show,
+  );
+  const pauseLate =
+    time(shapeDone.completed_at) <= pausedAt
+      ? `P's shape job ${shapeDone.id} completed before pause was added`
+      : undefined;
   // With `pause` on, the running Shape may be published and then held, or held before it
   // is published (Proposal R4.12 allows both). Settle P's runs woken after `pause` (for
   // example by `shaped` being added) and judge it from P's state while still paused.
@@ -317,7 +425,12 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
   const deliverWhilePaused = k.stages(calm, exec, n, ['deliver']).length;
   const edit = async () => {
     await k.gh.rest('PATCH', `/repos/${exec}/issues/${n}`, {
-      body: changeRequest(slug, 'quadruple', 'returns its argument times four', 'This replaces the earlier `triple` request: there must be no `triple` function.'),
+      body: changeRequest(
+        slug,
+        'quadruple',
+        'returns its argument times four',
+        'This replaces the earlier `triple` request: there must be no `triple` function.',
+      ),
     });
     return k.now();
   };
@@ -335,7 +448,7 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
     unpausedAt = k.now();
     const since = unpausedAt;
     await k.obs.until(
-      'P\'s Shape to be redone after pause was removed',
+      "P's Shape to be redone after pause was removed",
       async (s) => (await k.agentJobs(s, exec, n, ['shape'])).find((j) => time(j.started_at) >= since),
       DEADLINE.stage,
       show,
@@ -343,19 +456,25 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
     );
     const read = async () => (await k.gh.rest<Issue>('GET', `/repos/${exec}/issues/${n}`)).data;
     const names = (i: Issue) => i.labels.map((l) => l.name);
-    const published = await waitFor(read, (i) => i.state !== 'open' || names(i).includes('shaped') || names(i).includes('pending'), {
-      what: 'P\'s Shape to be published after pause was removed',
-      deadlineMs: Math.max(0, DEADLINE.stage - (k.now() - since)),
-      intervalMs: 5_000,
-      now: () => k.now(),
-      sleep: k.sleep,
-      signal: k.ctx.signal,
-    });
+    const published = await waitFor(
+      read,
+      (i) => i.state !== 'open' || names(i).includes('shaped') || names(i).includes('pending'),
+      {
+        what: "P's Shape to be published after pause was removed",
+        deadlineMs: Math.max(0, DEADLINE.stage - (k.now() - since)),
+        intervalMs: 5_000,
+        now: () => k.now(),
+        sleep: k.sleep,
+        signal: k.ctx.signal,
+      },
+    );
     // Closed or `pending` is a fault even when `shaped` is also on: no Deliver can start
     // while `pending` is on, so the waits after the edit could only end at the stall limit.
     if (published.state !== 'open' || names(published).includes('pending')) {
       const state = published.state !== 'open' ? 'is closed' : 'has pending';
-      throw new Error(`P ${state} while waiting for its Shape to be published after pause was removed: ${await k.summary(await k.obs.fresh(), exec, n)}`);
+      throw new Error(
+        `P ${state} while waiting for its Shape to be published after pause was removed: ${await k.summary(await k.obs.fresh(), exec, n)}`,
+      );
     }
     editedAt = await edit();
   }
@@ -363,7 +482,9 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
   const deliverBeforeEdit = async (s: Snapshot) => {
     if (unpausedAt === undefined) return undefined;
     const from = unpausedAt;
-    const j = (await k.agentJobs(s, exec, n, ['deliver'])).find((x) => time(x.started_at) >= from && time(x.started_at) < editedAt);
+    const j = (await k.agentJobs(s, exec, n, ['deliver'])).find(
+      (x) => time(x.started_at) >= from && time(x.started_at) < editedAt,
+    );
     return j
       ? `P's deliver job ${j.id} started at ${String(j.started_at)}, before the edit at ${new Date(editedAt).toISOString()} that followed the Shape redone after pause; the contradicted-Shape steps cannot be exercised`
       : undefined;
@@ -374,9 +495,15 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
   // `shaped` counts as sent back only when P's timeline, read now, shows `shaped` removed
   // after the edit. A timeline cached before the edit can only delay this to a later snapshot.
   const removedAfterEdit = async () =>
-    (await k.obs.timeline(exec, n)).some((e) => e.event === 'unlabeled' && e.label?.name === 'shaped' && time(e.created_at) >= Math.floor(editedAt / 1000) * 1000);
+    (await k.obs.timeline(exec, n)).some(
+      (e) =>
+        e.event === 'unlabeled' &&
+        e.label?.name === 'shaped' &&
+        time(e.created_at) >= Math.floor(editedAt / 1000) * 1000,
+    );
   const outcome = async (s: Snapshot) => {
-    if (!hasLabel(k, s, n, 'shaped') && (unpausedAt === undefined || (await removedAfterEdit()))) return 'sent back' as const;
+    if (!hasLabel(k, s, n, 'shaped') && (unpausedAt === undefined || (await removedAfterEdit())))
+      return 'sent back' as const;
     if (s.pulls.get(exec)?.some((pr) => pr.head.ref === `nibfin/issue-${n}`)) return 'pr' as const;
     return undefined;
   };
@@ -384,27 +511,48 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
   // PR whose CI would wake a review. If that Deliver sends the Shape back instead,
   // `pending` comes off for the re-Shape and goes on again during the next Deliver.
   const first = await k.obs.until(
-    'P\'s first Deliver after the edit',
+    "P's first Deliver after the edit",
     // A Deliver that started before the edit is left to `gonePast`, which names it.
-    async (s) => ((await deliverBeforeEdit(s)) ? undefined : ((await outcome(s)) ?? ((await running('deliver', editedAt)(s)) ? ('running' as const) : undefined))),
+    async (s) =>
+      (await deliverBeforeEdit(s))
+        ? undefined
+        : ((await outcome(s)) ?? ((await running('deliver', editedAt)(s)) ? ('running' as const) : undefined)),
     DEADLINE.stage,
     show,
-    { gonePast: firstOf(deliverBeforeEdit, k.stageGone(exec, n, 'deliver', { since: editedAt - 60_000, allowPending: true })) },
+    {
+      gonePast: firstOf(
+        deliverBeforeEdit,
+        k.stageGone(exec, n, 'deliver', { since: editedAt - 60_000, allowPending: true }),
+      ),
+    },
   );
   let pendingAt: number | undefined;
   if (first === 'running') {
     await k.addLabels(exec, n, ['pending']);
     pendingAt = k.now();
   }
-  const next = first === 'running' ? await k.obs.until('Deliver to send the Shape back or open a PR', outcome, DEADLINE.stage, show, { gonePast: k.stageGone(exec, n, 'deliver', { since: editedAt - 60_000, allowPending: true }) }) : first;
+  const next =
+    first === 'running'
+      ? await k.obs.until('Deliver to send the Shape back or open a PR', outcome, DEADLINE.stage, show, {
+          gonePast: k.stageGone(exec, n, 'deliver', { since: editedAt - 60_000, allowPending: true }),
+        })
+      : first;
   let reshapedAt: number | undefined;
   if (next === 'sent back') {
     if (pendingAt !== undefined) await k.removeLabel(exec, n, 'pending');
-    await k.obs.until('P to be shaped again', (x) => (hasLabel(k, x, n, 'shaped') ? x : undefined), DEADLINE.stage, show);
+    await k.obs.until(
+      'P to be shaped again',
+      (x) => (hasLabel(k, x, n, 'shaped') ? x : undefined),
+      DEADLINE.stage,
+      show,
+    );
     // The label's own time, not the snapshot's: a Deliver may start before the next snapshot.
     reshapedAt = await k.labeledAt(exec, n, 'shaped', editedAt);
-    if (reshapedAt === undefined) throw new Error(`#${n} shows \`shaped\` again but its timeline has no labeled event after the edit`);
-    await k.obs.until('P\'s next deliver job to run', running('deliver', reshapedAt), DEADLINE.stage, show, { gonePast: k.stageGone(exec, n, 'deliver', { since: reshapedAt - 60_000 }) });
+    if (reshapedAt === undefined)
+      throw new Error(`#${n} shows \`shaped\` again but its timeline has no labeled event after the edit`);
+    await k.obs.until("P's next deliver job to run", running('deliver', reshapedAt), DEADLINE.stage, show, {
+      gonePast: k.stageGone(exec, n, 'deliver', { since: reshapedAt - 60_000 }),
+    });
     await k.addLabels(exec, n, ['pending']);
     pendingAt = k.now();
   } else if (pendingAt === undefined) {
@@ -414,7 +562,7 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
   }
 
   const testDone = await k.obs.until(
-    'P\'s PR test check to complete',
+    "P's PR test check to complete",
     async (s) => {
       const pr = s.pulls.get(exec)?.find((x) => x.head.ref === `nibfin/issue-${n}` && x.state === 'open');
       if (!pr) return undefined;
@@ -424,7 +572,7 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
     DEADLINE.stage,
     show,
   );
-  const quiet = await k.settle('P\'s PR test', testDone, ofP);
+  const quiet = await k.settle("P's PR test", testDone, ofP);
   const reviewWhilePending = k.stages(quiet, exec, n, ['review']).filter((r) => time(r.created_at) >= pendingAt).length;
   // The hold is only shown when PR CI completed, and so woke the review, after `pending` was on.
   const reviewBefore = k.stages(quiet, exec, n, ['review']).filter((r) => time(r.created_at) < pendingAt).length;
@@ -435,6 +583,22 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
       : undefined;
   await k.removeLabel(exec, n, 'pending');
   const unpendedAt = k.now();
-  await k.obs.until('P to close with delivered', (s) => k.delivered(s, exec, n), DEADLINE.delivery, show, { gonePast: k.closeGone(exec, n) });
-  return { p, pausedAt, pauseLate, deliverWhilePaused, pauseOutcome: decided.kind, unpausedAt, editedAt, sentBack: next === 'sent back', reshapedAt, pendingAt, reviewWhilePending, pendingLate, unpendedAt };
+  await k.obs.until('P to close with delivered', (s) => k.delivered(s, exec, n), DEADLINE.delivery, show, {
+    gonePast: k.closeGone(exec, n),
+  });
+  return {
+    p,
+    pausedAt,
+    pauseLate,
+    deliverWhilePaused,
+    pauseOutcome: decided.kind,
+    unpausedAt,
+    editedAt,
+    sentBack: next === 'sent back',
+    reshapedAt,
+    pendingAt,
+    reviewWhilePending,
+    pendingLate,
+    unpendedAt,
+  };
 }

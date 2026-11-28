@@ -49,9 +49,21 @@ export interface UntilOptions {
 
 /** What a snapshot shows of the sandboxes' activity; two equal fingerprints mean nothing changed. */
 export function fingerprint(s: Pick<Snapshot, 'runs' | 'issues' | 'pulls'>): string {
-  const runs = s.runs.map((r) => [r.repo, r.id, r.status, r.conclusion, r.run_attempt, r.updated_at]).sort((a, b) => String(a[0]).localeCompare(String(b[0])) || Number(a[1]) - Number(b[1]));
-  const issues = [...s.issues].map(([repo, list]) => [repo, list.map((i) => [i.number, i.state, i.updated_at, (i.labels ?? []).map((l) => l.name).sort()]).sort((a, b) => Number(a[0]) - Number(b[0]))]);
-  const pulls = [...s.pulls].map(([repo, list]) => [repo, list.map((p) => [p.number, p.state, p.head?.sha, p.updated_at, p.merged_at]).sort((a, b) => Number(a[0]) - Number(b[0]))]);
+  const runs = s.runs
+    .map((r) => [r.repo, r.id, r.status, r.conclusion, r.run_attempt, r.updated_at])
+    .sort((a, b) => String(a[0]).localeCompare(String(b[0])) || Number(a[1]) - Number(b[1]));
+  const issues = [...s.issues].map(([repo, list]) => [
+    repo,
+    list
+      .map((i) => [i.number, i.state, i.updated_at, (i.labels ?? []).map((l) => l.name).sort()])
+      .sort((a, b) => Number(a[0]) - Number(b[0])),
+  ]);
+  const pulls = [...s.pulls].map(([repo, list]) => [
+    repo,
+    list
+      .map((p) => [p.number, p.state, p.head?.sha, p.updated_at, p.merged_at])
+      .sort((a, b) => Number(a[0]) - Number(b[0])),
+  ]);
   return JSON.stringify([runs, issues.sort(), pulls.sort()]);
 }
 
@@ -133,7 +145,10 @@ export class Observer {
     this.listedAt.set(repo, this.now());
     const iso = new Date(from).toISOString().replace(/\.\d+Z$/, 'Z');
     const listed = new Set<number>();
-    for (const run of await this.gh.list<Omit<Run, 'repo'>>(`${r}/actions/runs?created=${encodeURIComponent('>=' + iso)}`, 'workflow_runs')) {
+    for (const run of await this.gh.list<Omit<Run, 'repo'>>(
+      `${r}/actions/runs?created=${encodeURIComponent('>=' + iso)}`,
+      'workflow_runs',
+    )) {
       this.seen.set(`${repo} ${run.id}`, { ...run, repo });
       listed.add(run.id);
     }
@@ -151,7 +166,10 @@ export class Observer {
     for (const repo of this.repos) {
       const r = `/repos/${repo}`;
       await this.readRuns(repo);
-      issues.set(repo, (await this.gh.list<Issue>(`${r}/issues?state=all`)).filter((i) => i.pull_request === undefined));
+      issues.set(
+        repo,
+        (await this.gh.list<Issue>(`${r}/issues?state=all`)).filter((i) => i.pull_request === undefined),
+      );
       pulls.set(repo, await this.gh.list<Pull>(`${r}/pulls?state=all`));
     }
     const runs = [...this.seen.values()];
@@ -161,7 +179,9 @@ export class Observer {
     this.lastPrint = print;
     try {
       const { data } = await this.gh.rest<{ resources?: { core?: { remaining?: number } } }>('GET', '/rate_limit');
-      this.opts.log?.(`observer: snapshot ${s.gen}, ${runs.length} runs, ${data.resources?.core?.remaining ?? '?'} requests left this hour`);
+      this.opts.log?.(
+        `observer: snapshot ${s.gen}, ${runs.length} runs, ${data.resources?.core?.remaining ?? '?'} requests left this hour`,
+      );
     } catch {
       // The rate limit is only logged.
     }
@@ -217,7 +237,8 @@ export class Observer {
       this.opts.log?.(`observer: a read while waiting for ${desc} failed: ${lastError}`);
     };
     const calmSince = () => Math.max(this.lastActivityAt ?? start, start, this.lastFailedAt ?? start);
-    const stalled = (): Promise<never> => fail(`no sandbox activity for ${Math.round((this.now() - calmSince()) / 60_000)} min while waiting for ${desc}`);
+    const stalled = (): Promise<never> =>
+      fail(`no sandbox activity for ${Math.round((this.now() - calmSince()) / 60_000)} min while waiting for ${desc}`);
     // Whether `gonePast` (when given) judged the snapshot with no reason; a reason ends the wait, a failed read is logged.
     const judge = async (s: Snapshot): Promise<boolean> => {
       if (!opts.gonePast) return true;
@@ -285,16 +306,28 @@ export class Observer {
 
   /** Every job of every attempt of a run. */
   jobs(repo: string, runId: number): Promise<Job[]> {
-    return this.memo(`jobs ${repo} ${runId}`, () => this.gh.list<Job>(`/repos/${repo}/actions/runs/${runId}/jobs?filter=all`, 'jobs'), (js) => js.length > 0 && js.every(DONE_JOB));
+    return this.memo(
+      `jobs ${repo} ${runId}`,
+      () => this.gh.list<Job>(`/repos/${repo}/actions/runs/${runId}/jobs?filter=all`, 'jobs'),
+      (js) => js.length > 0 && js.every(DONE_JOB),
+    );
   }
 
   job(repo: string, jobId: number): Promise<Job> {
-    return this.memo(`job ${repo} ${jobId}`, async () => (await this.gh.rest<Job>('GET', `/repos/${repo}/actions/jobs/${jobId}`)).data, DONE_JOB);
+    return this.memo(
+      `job ${repo} ${jobId}`,
+      async () => (await this.gh.rest<Job>('GET', `/repos/${repo}/actions/jobs/${jobId}`)).data,
+      DONE_JOB,
+    );
   }
 
   /** A completed job's log, line by line. */
   log(repo: string, jobId: number): Promise<LogLine[]> {
-    return this.memo(`log ${repo} ${jobId}`, async () => parseLog((await this.gh.download(`/repos/${repo}/actions/jobs/${jobId}/logs`)).text), () => true);
+    return this.memo(
+      `log ${repo} ${jobId}`,
+      async () => parseLog((await this.gh.download(`/repos/${repo}/actions/jobs/${jobId}/logs`)).text),
+      () => true,
+    );
   }
 
   comments(repo: string, n: number): Promise<Comment[]> {
@@ -306,19 +339,35 @@ export class Observer {
    * branch_deletion…), optionally for one ref or type. It pages by `Link` cursors.
    */
   activity(repo: string, filter: { ref?: string; type?: string } = {}): Promise<Activity[]> {
-    const q = ['time_period=day', filter.ref && `ref=${encodeURIComponent(filter.ref)}`, filter.type && `activity_type=${filter.type}`].filter(Boolean).join('&');
+    const q = [
+      'time_period=day',
+      filter.ref && `ref=${encodeURIComponent(filter.ref)}`,
+      filter.type && `activity_type=${filter.type}`,
+    ]
+      .filter(Boolean)
+      .join('&');
     return this.memo(`activity ${repo} ${q}`, () => this.gh.listByLink<Activity>(`/repos/${repo}/activity?${q}`));
   }
 
   blockedBy(repo: string, n: number): Promise<Issue[]> {
-    return this.memo(`blocked_by ${repo} ${n}`, () => this.gh.list<Issue>(`/repos/${repo}/issues/${n}/dependencies/blocked_by`));
+    return this.memo(`blocked_by ${repo} ${n}`, () =>
+      this.gh.list<Issue>(`/repos/${repo}/issues/${n}/dependencies/blocked_by`),
+    );
   }
 
-  checkRuns(repo: string, sha: string): Promise<{ name: string; status: string; conclusion: string | null; completed_at: string | null }[]> {
-    return this.memo(`checks ${repo} ${sha}`, () => this.gh.list(`/repos/${repo}/commits/${sha}/check-runs`, 'check_runs'));
+  checkRuns(
+    repo: string,
+    sha: string,
+  ): Promise<{ name: string; status: string; conclusion: string | null; completed_at: string | null }[]> {
+    return this.memo(`checks ${repo} ${sha}`, () =>
+      this.gh.list(`/repos/${repo}/commits/${sha}/check-runs`, 'check_runs'),
+    );
   }
 
-  timeline(repo: string, n: number): Promise<{ event: string; created_at: string; label?: { name: string }; actor?: { login: string } | null }[]> {
+  timeline(
+    repo: string,
+    n: number,
+  ): Promise<{ event: string; created_at: string; label?: { name: string }; actor?: { login: string } | null }[]> {
     return this.memo(`timeline ${repo} ${n}`, () => this.gh.list(`/repos/${repo}/issues/${n}/timeline`));
   }
 
@@ -329,7 +378,9 @@ export class Observer {
   /** Every PR, open or closed, whose head is the branch. */
   pullsByHead(repo: string, branch: string): Promise<Pull[]> {
     const owner = repo.split('/')[0] as string;
-    return this.memo(`pulls ${repo} ${branch}`, () => this.gh.list<Pull>(`/repos/${repo}/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}`));
+    return this.memo(`pulls ${repo} ${branch}`, () =>
+      this.gh.list<Pull>(`/repos/${repo}/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}`),
+    );
   }
 
   /** Whether `ancestor` is reachable from `head`. */

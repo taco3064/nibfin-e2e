@@ -15,7 +15,14 @@ const run = (id: number, status: string, extra: Partial<Run> = {}): Run => ({
 });
 
 const snap = (): Record<'o/exec' | 'o/peer', Record<Field, string[]>> => ({
-  'o/exec': { labels: ['pause', 'scope'], issues: ['1:pause+scope'], pulls: ['2'], secrets: ['NIBFIN_GITHUB_TOKEN'], variables: ['A=1'], runners: ['7:r1:nibfin'] },
+  'o/exec': {
+    labels: ['pause', 'scope'],
+    issues: ['1:pause+scope'],
+    pulls: ['2'],
+    secrets: ['NIBFIN_GITHUB_TOKEN'],
+    variables: ['A=1'],
+    runners: ['7:r1:nibfin'],
+  },
   'o/peer': { labels: ['scope'], issues: [], pulls: [], secrets: [], variables: [], runners: [] },
 });
 
@@ -49,7 +56,17 @@ test('snapshotDiff: a token-shaped variable value is redacted', () => {
 });
 
 test('completedKeys: only completed runs are kept', () => {
-  deepEqual([...completedKeys([run(1, 'completed'), run(2, 'queued'), run(3, 'in_progress'), run(4, 'completed', { run_attempt: 2 })])], ['1:1', '4:2']);
+  deepEqual(
+    [
+      ...completedKeys([
+        run(1, 'completed'),
+        run(2, 'queued'),
+        run(3, 'in_progress'),
+        run(4, 'completed', { run_attempt: 2 }),
+      ]),
+    ],
+    ['1:1', '4:2'],
+  );
 });
 
 test('overlapping: runs not in the baseline, re-runs and unfinished runs count', () => {
@@ -60,18 +77,27 @@ test('overlapping: runs not in the baseline, re-runs and unfinished runs count',
     run(3, 'in_progress'),
     run(9, 'completed', { created_at: '2020-01-01T00:00:00Z' }),
   ];
-  deepEqual(overlapping(baseline, now).map((r) => r.id), [2, 3, 9]);
+  deepEqual(
+    overlapping(baseline, now).map((r) => r.id),
+    [2, 3, 9],
+  );
 });
 
 test('overlapping: a completed run in the baseline does not count, and duplicates appear once', () => {
   const baseline = completedKeys([run(1, 'completed')]);
   deepEqual(overlapping(baseline, [run(1, 'completed'), run(1, 'completed')]), []);
-  deepEqual(overlapping(baseline, [run(5, 'queued'), run(5, 'queued')]).map((r) => r.id), [5]);
+  deepEqual(
+    overlapping(baseline, [run(5, 'queued'), run(5, 'queued')]).map((r) => r.id),
+    [5],
+  );
 });
 
 test('overlapping: a run in progress at the baseline read and completed at the second read counts', () => {
   const baseline = completedKeys([run(1, 'completed'), run(2, 'in_progress')]);
-  deepEqual(overlapping(baseline, [run(1, 'completed'), run(2, 'completed')]).map((r) => r.id), [2]);
+  deepEqual(
+    overlapping(baseline, [run(1, 'completed'), run(2, 'completed')]).map((r) => r.id),
+    [2],
+  );
 });
 
 test('r542Decision: no change passes, with or without an overlap', () => {
@@ -82,7 +108,11 @@ test('r542Decision: no change passes, with or without an overlap', () => {
 test('r542Decision: a change with no overlap fails at once and names the change', () => {
   const d = r542Decision({ diff: ['o/exec labels: added [x]'], overlapUrls: [], attempt: 1, maxAttempts: 3 });
   equal(d.kind, 'fail');
-  if (d.kind === 'fail') match(d.reason, /^status changed GitHub state of the sandboxes with no Nibfin run overlapping: o\/exec labels: added \[x\]$/);
+  if (d.kind === 'fail')
+    match(
+      d.reason,
+      /^status changed GitHub state of the sandboxes with no Nibfin run overlapping: o\/exec labels: added \[x\]$/,
+    );
 });
 
 test('r542Decision: a change with an overlap retries while attempts remain', () => {
@@ -91,10 +121,18 @@ test('r542Decision: a change with an overlap retries while attempts remain', () 
 });
 
 test('r542Decision: a change with an overlap on the last attempt fails and names the runs', () => {
-  const d = r542Decision({ diff: ['o/exec issues: removed [1:scope]'], overlapUrls: ['https://x/runs/1', 'https://x/runs/2'], attempt: 3, maxAttempts: 3 });
+  const d = r542Decision({
+    diff: ['o/exec issues: removed [1:scope]'],
+    overlapUrls: ['https://x/runs/1', 'https://x/runs/2'],
+    attempt: 3,
+    maxAttempts: 3,
+  });
   equal(d.kind, 'fail');
   if (d.kind === 'fail') {
-    match(d.reason, /while Nibfin runs overlapped \(cause not shown to be status\): o\/exec issues: removed \[1:scope\]/);
+    match(
+      d.reason,
+      /while Nibfin runs overlapped \(cause not shown to be status\): o\/exec issues: removed \[1:scope\]/,
+    );
     match(d.reason, /overlapping runs: https:\/\/x\/runs\/1, https:\/\/x\/runs\/2$/);
   }
 });

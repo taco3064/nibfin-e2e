@@ -1,16 +1,42 @@
 import type { StepOutcome } from '../../src/types.ts';
 import { watchJobContainers } from './containers.ts';
 import type { Projection, Watch } from './containers.ts';
-import { DECOY_FILES, DECOY_PATTERN, EXTEND_TEXT, PROBE_FILE, RULESYNC_FILES, TASK_BODY, TOOLS, json } from './files.ts';
+import {
+  DECOY_FILES,
+  DECOY_PATTERN,
+  EXTEND_TEXT,
+  PROBE_FILE,
+  RULESYNC_FILES,
+  TASK_BODY,
+  TOOLS,
+  json,
+} from './files.ts';
 import type { Comment } from './fixture.ts';
 import { excerpt, redact, redactDeep } from './checks.ts';
-import { approvalRuleset, close, comments, deleteE2eRulesets, issueState, labels, openFixture, prepareFixture } from './fixture.ts';
+import {
+  approvalRuleset,
+  close,
+  comments,
+  deleteE2eRulesets,
+  issueState,
+  labels,
+  openFixture,
+  prepareFixture,
+} from './fixture.ts';
 import { buildOutput, imageLine, initEvents, jobLog } from './joblog.ts';
 import type { InitEvent } from './joblog.ts';
 import { message } from './kit.ts';
 import type { Kit } from './kit.ts';
 import { parseProbe } from './probe.ts';
-import { CLAUDE_VOLUME, TOOLS_VOLUME, inspectVolume, listVolume, readLoginFacts, removeLoginKey, statVolume } from './volume.ts';
+import {
+  CLAUDE_VOLUME,
+  TOOLS_VOLUME,
+  inspectVolume,
+  listVolume,
+  readLoginFacts,
+  removeLoginKey,
+  statVolume,
+} from './volume.ts';
 import type { LoginFacts, VolumeFile, VolumeInfo } from './volume.ts';
 import { DEADLINE, remoteWait } from './waits.ts';
 
@@ -41,7 +67,11 @@ export interface ObservedFacts {
   /** `podman volume inspect` of the login volume, read before the first Job. */
   loginVolume?: VolumeInfo | ReadError;
   /** Names, sizes and mtimes (never contents) of the login volume's files before Shape, after Shape and after Review. */
-  volumeFiles?: { beforeJobs: VolumeFile[] | ReadError; afterShape?: VolumeFile[] | ReadError; afterJobs?: VolumeFile[] | ReadError };
+  volumeFiles?: {
+    beforeJobs: VolumeFile[] | ReadError;
+    afterShape?: VolumeFile[] | ReadError;
+    afterJobs?: VolumeFile[] | ReadError;
+  };
   /** The login settings after the Review Job. */
   loginAfterJobs?: LoginFacts | ReadError;
   /** Every Job container of the fixture in start order (Shape, Deliver, Review, then extra-<k>), with its projection. */
@@ -73,14 +103,19 @@ const STAGES = ['Shape', 'Deliver', 'Review'];
 /** Every container started so far, in start order, named by stage. */
 export async function observedJobs(watch: Watch): Promise<ObservedJob[]> {
   const ids = [...new Set(watch.events.filter((e) => e.kind === 'start').map((e) => e.id))];
-  return Promise.all(ids.map(async (id, i) => {
-    const projection = await watch.projection(id);
-    return { stage: STAGES[i] ?? `extra-${i - STAGES.length + 1}`, id, ...(projection ? { projection } : {}) };
-  }));
+  return Promise.all(
+    ids.map(async (id, i) => {
+      const projection = await watch.projection(id);
+      return { stage: STAGES[i] ?? `extra-${i - STAGES.length + 1}`, id, ...(projection ? { projection } : {}) };
+    }),
+  );
 }
 
 const pathsOf = async (kit: Kit, repo: string, ref: string) => {
-  const { data } = await kit.github.rest<{ tree: { path: string }[]; truncated?: boolean }>('GET', `/repos/${repo}/git/trees/${ref.split('/').map(encodeURIComponent).join('/')}?recursive=1`);
+  const { data } = await kit.github.rest<{ tree: { path: string }[]; truncated?: boolean }>(
+    'GET',
+    `/repos/${repo}/git/trees/${ref.split('/').map(encodeURIComponent).join('/')}?recursive=1`,
+  );
   return data.tree.map((t) => t.path).sort();
 };
 
@@ -107,11 +142,20 @@ async function rootless(kit: Kit): Promise<boolean | undefined> {
 
 /** Fails when the Issue went `pending` (no further stage will come), naming its state. */
 async function notPending(kit: Kit, repo: string, n: number, stage: string): Promise<void> {
-  if ((await labels(kit, repo, n)).includes('pending')) throw new Error(`the ${stage} stage ended with pending: ${await issueState(kit, repo, n)}`);
+  if ((await labels(kit, repo, n)).includes('pending'))
+    throw new Error(`the ${stage} stage ended with pending: ${await issueState(kit, repo, n)}`);
 }
 
 /** Waits for the nth `died`; a deadline failure names the stage and the Issue's state. */
-async function stageDied(kit: Kit, watch: Watch, repo: string, n: number, count: number, stage: string, ms: number): Promise<void> {
+async function stageDied(
+  kit: Kit,
+  watch: Watch,
+  repo: string,
+  n: number,
+  count: number,
+  stage: string,
+  ms: number,
+): Promise<void> {
   try {
     await watch.died(count, ms, `the ${stage} Job container of ${repo}#${n} to end`);
   } catch (error) {
@@ -128,13 +172,17 @@ async function stageDied(kit: Kit, watch: Watch, repo: string, n: number, count:
  */
 export function missingApprovalLine(list: Comment[], owner: string, secrets: string[] = []): string | undefined {
   const lines = list.filter((c) => c.user?.login === owner).flatMap((c) => c.body.split('\n'));
-  const line = lines.find((l) => /approving review|approvals?\b/i.test(l) && /merg/i.test(l) && /wait|missing|requir|need|block/i.test(l));
+  const line = lines.find(
+    (l) => /approving review|approvals?\b/i.test(l) && /merg/i.test(l) && /wait|missing|requir|need|block/i.test(l),
+  );
   return line === undefined ? undefined : excerpt(line.trim(), 300, secrets);
 }
 
 /** The image of each started Job container, in start order; one gone before inspection shows as `(not inspected)`. */
 export function jobImagesOf(watch: Pick<Watch, 'events' | 'projections'>): string[] {
-  return watch.events.filter((e) => e.kind === 'start').map((e) => watch.projections.get(e.id)?.imageName ?? '(not inspected)');
+  return watch.events
+    .filter((e) => e.kind === 'start')
+    .map((e) => watch.projections.get(e.id)?.imageName ?? '(not inspected)');
 }
 
 /** Runs one fixture through Shape → Deliver → Review and records what its Jobs ran with (Issue #299). */
@@ -151,7 +199,13 @@ export async function runObservedJob(kit: Kit): Promise<StepOutcome> {
   try {
     await prepareFixture(kit, repo, {
       files: [
-        { path: '.nibfin.json', content: json({ tools: TOOLS, skills: { shape: { mode: 'extend', path: '.nibfin/skills/shape-extend.md' } } }) },
+        {
+          path: '.nibfin.json',
+          content: json({
+            tools: TOOLS,
+            skills: { shape: { mode: 'extend', path: '.nibfin/skills/shape-extend.md' } },
+          }),
+        },
         { path: '.nibfin/skills/shape-extend.md', content: EXTEND_TEXT },
         PROBE_FILE,
         ...RULESYNC_FILES,
@@ -182,12 +236,20 @@ export async function runObservedJob(kit: Kit): Promise<StepOutcome> {
     const p = facts.projection;
     if (p?.runId) {
       const { job, text } = await jobLog(kit, p.runRepo ?? repo, p.runId, `observed-job-${n}-shape`);
-      facts.shapeLog = { imageRef: imageLine(text), buildOutput: buildOutput(text), init: initEvents(text), slot: job.slot };
+      facts.shapeLog = {
+        imageRef: imageLine(text),
+        buildOutput: buildOutput(text),
+        init: initEvents(text),
+        slot: job.slot,
+      };
     }
     facts.loginAfter = await readLoginFacts(kit.exec);
     facts.volumeFiles.afterShape = await attempt(() => statVolume(kit.exec, CLAUDE_VOLUME));
     facts.memoryEntries = await listVolume(kit.exec, CLAUDE_VOLUME, '.', 'memory');
-    facts.decoys = { tools: await listVolume(kit.exec, TOOLS_VOLUME, '.', DECOY_PATTERN), login: await listVolume(kit.exec, CLAUDE_VOLUME, '.', DECOY_PATTERN) };
+    facts.decoys = {
+      tools: await listVolume(kit.exec, TOOLS_VOLUME, '.', DECOY_PATTERN),
+      login: await listVolume(kit.exec, CLAUDE_VOLUME, '.', DECOY_PATTERN),
+    };
     await notPending(kit, repo, n, 'Shape');
 
     // Deliver.
@@ -196,9 +258,12 @@ export async function runObservedJob(kit: Kit): Promise<StepOutcome> {
     const branch = `nibfin/issue-${n}`;
     facts.branchPaths = await pathsOf(kit, repo, branch);
     const owner = repo.split('/')[0] as string;
-    const pulls = await kit.github.list<{ number: number }>(`/repos/${repo}/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}`);
+    const pulls = await kit.github.list<{ number: number }>(
+      `/repos/${repo}/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}`,
+    );
     facts.pr = pulls[0]?.number;
-    if (facts.pr === undefined) throw new Error(`no pull request from ${branch} after Deliver; ${await issueState(kit, repo, n)}`);
+    if (facts.pr === undefined)
+      throw new Error(`no pull request from ${branch} after Deliver; ${await issueState(kit, repo, n)}`);
 
     // Review, then the finish Job on a GitHub-hosted runner (no local event marks its end).
     await stageDied(kit, watch, repo, n, 3, 'Review', DEADLINE.review);
@@ -206,16 +271,32 @@ export async function runObservedJob(kit: Kit): Promise<StepOutcome> {
     facts.loginAfterJobs = await attempt(() => readLoginFacts(kit.exec));
     facts.jobs = await observedJobs(watch);
     const pr = facts.pr;
-    facts.finish = await remoteWait(kit, `PR #${pr} to merge or get Nibfin's comment about the missing approving review`, DEADLINE.finish, 30_000, async () => {
-      const { data } = await kit.github.rest<{ merged?: boolean }>('GET', `/repos/${repo}/pulls/${pr}`);
-      if (data.merged) return { merged: true };
-      const line = missingApprovalLine(await comments(kit, repo, pr), owner, kit.secrets());
-      return line ? { merged: false, approvalComment: line } : undefined;
-    });
-    return { status: 'passed', reason: redact(`fixture ${repo}#${n} ran Shape, Deliver and Review; PR #${pr} ${facts.finish.merged ? 'merged' : 'waits for an approving review'}`, kit.secrets()), facts: out() };
+    facts.finish = await remoteWait(
+      kit,
+      `PR #${pr} to merge or get Nibfin's comment about the missing approving review`,
+      DEADLINE.finish,
+      30_000,
+      async () => {
+        const { data } = await kit.github.rest<{ merged?: boolean }>('GET', `/repos/${repo}/pulls/${pr}`);
+        if (data.merged) return { merged: true };
+        const line = missingApprovalLine(await comments(kit, repo, pr), owner, kit.secrets());
+        return line ? { merged: false, approvalComment: line } : undefined;
+      },
+    );
+    return {
+      status: 'passed',
+      reason: redact(
+        `fixture ${repo}#${n} ran Shape, Deliver and Review; PR #${pr} ${facts.finish.merged ? 'merged' : 'waits for an approving review'}`,
+        kit.secrets(),
+      ),
+      facts: out(),
+    };
   } catch (error) {
     // Every failure after the Issue exists names its labels and latest comment.
-    const state = facts.issue !== undefined && !message(error).includes(`#${facts.issue} labels`) ? `; ${await issueState(kit, repo, facts.issue)}` : '';
+    const state =
+      facts.issue !== undefined && !message(error).includes(`#${facts.issue} labels`)
+        ? `; ${await issueState(kit, repo, facts.issue)}`
+        : '';
     return { status: 'failed', reason: redact(message(error) + state, kit.secrets()), facts: out() };
   } finally {
     watch?.stop();

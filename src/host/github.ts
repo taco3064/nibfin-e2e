@@ -8,7 +8,12 @@ export class GitHubError extends Error {
 
 export interface GitHub {
   /** One REST call. Statuses listed in `allow` are returned instead of thrown. */
-  rest<T = unknown>(method: string, path: string, body?: unknown, allow?: number[]): Promise<{ status: number; data: T }>;
+  rest<T = unknown>(
+    method: string,
+    path: string,
+    body?: unknown,
+    allow?: number[],
+  ): Promise<{ status: number; data: T }>;
   /** Every page of a list endpoint; `key` picks the array out of wrapped responses (`runners`, `secrets`). */
   list<T = unknown>(path: string, key?: string): Promise<T[]>;
   /**
@@ -45,7 +50,13 @@ const MINUTE_MS = 60_000;
  * seconds), then a secondary-limit message with exponential back-off. `undefined` when
  * the response is not a rate limit, such as a permission 403.
  */
-function rateLimitDelay(status: number, headers: Headers, data: unknown, now: number, secondaryTries: number): number | undefined {
+function rateLimitDelay(
+  status: number,
+  headers: Headers,
+  data: unknown,
+  now: number,
+  secondaryTries: number,
+): number | undefined {
   if (status !== 403 && status !== 429) return undefined;
   const retryAfter = headers.get('retry-after')?.trim();
   if (retryAfter !== undefined && /^\d+$/.test(retryAfter)) return Number(retryAfter) * 1000;
@@ -114,13 +125,17 @@ export function createGitHub(
       const a = await send();
       if (!a.error) return a.result;
       let err = a.error;
-      const delay = wait && method === 'GET' ? rateLimitDelay(a.res.status, a.res.headers, a.data, now(), secondaryTries) : undefined;
+      const delay =
+        wait && method === 'GET'
+          ? rateLimitDelay(a.res.status, a.res.headers, a.data, now(), secondaryTries)
+          : undefined;
       if (wait && delay !== undefined) {
         if (waited + delay <= maxWaitMs) {
           wait.log(`GitHub ${method} ${path} rate-limited (${a.res.status}); waiting ${seconds(delay)} s`);
           await sleep(delay);
           waited += delay;
-          if (!a.res.headers.has('retry-after') && a.res.headers.get('x-ratelimit-remaining')?.trim() !== '0') secondaryTries++;
+          if (!a.res.headers.has('retry-after') && a.res.headers.get('x-ratelimit-remaining')?.trim() !== '0')
+            secondaryTries++;
           continue;
         }
         err = append(err, `; rate limit resets in ${seconds(delay)} s, beyond the ${seconds(maxWaitMs)} s wait limit`);
@@ -206,7 +221,12 @@ export function createGitHub(
       }
       const text = await final.text();
       if (!final.ok && !allow.includes(final.status)) {
-        throw new GitHubError('GET', path, final.status, final === first ? text.slice(0, 500) : 'the redirected download failed');
+        throw new GitHubError(
+          'GET',
+          path,
+          final.status,
+          final === first ? text.slice(0, 500) : 'the redirected download failed',
+        );
       }
       return { status: final.status, text };
     },

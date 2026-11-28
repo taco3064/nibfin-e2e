@@ -75,7 +75,12 @@ export function project(raw: unknown): Projection | undefined {
     mounts: mounts.map((m) => {
       const name = text(m.Name);
       const type = text(m.Type);
-      return { source: String(m.Source ?? m.Name ?? ''), destination: String(m.Destination ?? ''), ...(name ? { name } : {}), ...(type ? { type } : {}) };
+      return {
+        source: String(m.Source ?? m.Name ?? ''),
+        destination: String(m.Destination ?? ''),
+        ...(name ? { name } : {}),
+        ...(type ? { type } : {}),
+      };
     }),
     credentialEnv: [...credentialEnv].sort(),
     runId: env.get('NIBFIN_RUN_ID'),
@@ -114,7 +119,12 @@ export interface Watch {
  * stream; nothing polls. Each `start` is inspected at once and only the projection is kept.
  * `onStart` runs for each start before waiters see it.
  */
-export function watchJobContainers(kit: Kit, repo: string, issue?: number, onStart?: (e: ContainerEvent, index: number) => Promise<void> | void): Watch {
+export function watchJobContainers(
+  kit: Kit,
+  repo: string,
+  issue?: number,
+  onStart?: (e: ContainerEvent, index: number) => Promise<void> | void,
+): Watch {
   const events: ContainerEvent[] = [];
   const projections = new Map<string, Projection | undefined>();
   const pending = new Map<string, Promise<Projection | undefined>>();
@@ -128,19 +138,21 @@ export function watchJobContainers(kit: Kit, repo: string, issue?: number, onSta
   const stream = kit.stream(['podman', 'events', '--format', 'json', '--since', '10s', ...filters], (line) => {
     const e = parseEvent(line);
     if (!e) return;
-    chain = chain.then(async () => {
-      if (e.kind === 'start') {
-        const p = inspect(kit.exec, e.id).then((x) => (projections.set(e.id, x), x));
-        pending.set(e.id, p);
-        await p;
-        await onStart?.(e, events.filter((x) => x.kind === 'start').length);
-      }
-      events.push(e);
-      for (const w of [...waiters]) w();
-    }).catch((error: unknown) => {
-      ended = `handling a container event failed: ${error instanceof Error ? error.message : String(error)}`;
-      for (const w of [...waiters]) w();
-    });
+    chain = chain
+      .then(async () => {
+        if (e.kind === 'start') {
+          const p = inspect(kit.exec, e.id).then((x) => (projections.set(e.id, x), x));
+          pending.set(e.id, p);
+          await p;
+          await onStart?.(e, events.filter((x) => x.kind === 'start').length);
+        }
+        events.push(e);
+        for (const w of [...waiters]) w();
+      })
+      .catch((error: unknown) => {
+        ended = `handling a container event failed: ${error instanceof Error ? error.message : String(error)}`;
+        for (const w of [...waiters]) w();
+      });
   });
   stream.closed.then((code) => {
     ended ??= `podman events exited ${code}`;
@@ -154,7 +166,10 @@ export function watchJobContainers(kit: Kit, repo: string, issue?: number, onSta
         if (got !== undefined) return done(() => resolve(got));
         if (ended) return done(() => reject(new Error(`${ended} while waiting for ${what}`)));
       };
-      const timer = setTimeout(() => done(() => reject(new Error(`timed out after ${Math.round(deadlineMs / 1000)} s waiting for ${what}`))), deadlineMs);
+      const timer = setTimeout(
+        () => done(() => reject(new Error(`timed out after ${Math.round(deadlineMs / 1000)} s waiting for ${what}`))),
+        deadlineMs,
+      );
       const onAbort = () => done(() => reject(abortError(kit.signal)));
       const done = (f: () => void) => {
         clearTimeout(timer);
@@ -175,7 +190,8 @@ export function watchJobContainers(kit: Kit, repo: string, issue?: number, onSta
     started: (n, ms, what) => until(nth('start', n), ms, what),
     died: (n, ms, what) => until(nth('died', n), ms, what),
     diedAll: async (ids, ms, what) => {
-      const left = () => ids.filter((id) => !events.some((e) => e.kind === 'died' && (e.id.startsWith(id) || id.startsWith(e.id))));
+      const left = () =>
+        ids.filter((id) => !events.some((e) => e.kind === 'died' && (e.id.startsWith(id) || id.startsWith(e.id))));
       await until(() => (left().length ? undefined : true), ms, `${what} (${ids.length} container(s))`);
     },
     projection: (id) => pending.get(id) ?? Promise.resolve(projections.get(id)),
@@ -190,7 +206,10 @@ export function watchJobContainers(kit: Kit, repo: string, issue?: number, onSta
 export async function runningJobContainers(exec: Exec, repo: string): Promise<string[]> {
   const r = await exec(['podman', 'ps', '--quiet', '--no-trunc', '--filter', `label=${LABEL_REPO}=${repo}`]);
   if (r.code !== 0) throw new Error(`podman ps exited ${r.code}: ${r.stderr.trim().slice(-2000)}`);
-  return r.stdout.split('\n').map((l) => l.trim()).filter(Boolean);
+  return r.stdout
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
 }
 
 /** A running container's full id and image name, from `podman ps --format '{{.ID}} {{.Image}}'`. */

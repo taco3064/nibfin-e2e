@@ -76,7 +76,12 @@ const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&
  * This run's Issues with one of `titles`: every Issue updated since the run started (pull requests
  * skipped) whose body, or a comment since the run started, carries the run marker.
  */
-export async function runIssues(gh: GitHub, runId: string, since: string, titles: readonly string[]): Promise<Map<string, RunIssue[]>> {
+export async function runIssues(
+  gh: GitHub,
+  runId: string,
+  since: string,
+  titles: readonly string[],
+): Promise<Map<string, RunIssue[]>> {
   const out = new Map<string, RunIssue[]>();
   if (!titles.length) return out;
   const wanted = new Set(titles);
@@ -85,7 +90,9 @@ export async function runIssues(gh: GitHub, runId: string, since: string, titles
   const bound = encodeURIComponent(since);
   for (const issue of await gh.list<RequestIssue>(`/repos/${E2E_REPO}/issues?state=all&since=${bound}`)) {
     if (issue.pull_request || !wanted.has(issue.title)) continue;
-    const comments = await gh.list<{ body?: string | null }>(`/repos/${E2E_REPO}/issues/${issue.number}/comments?since=${bound}`);
+    const comments = await gh.list<{ body?: string | null }>(
+      `/repos/${E2E_REPO}/issues/${issue.number}/comments?since=${bound}`,
+    );
     const ours = [issue.body ?? '', ...comments.map((c) => c.body ?? '')].filter((t) => t.includes(marker));
     if (!ours.length) continue;
     const legs = new Set(ours.flatMap((t) => [...t.matchAll(leg)].map((m) => m[1] as string)));
@@ -99,13 +106,26 @@ export async function runIssues(gh: GitHub, runId: string, since: string, titles
  * with those titles are looked up in every state (see `runIssues`). Without titles nothing more
  * is read.
  */
-export async function filingContext(gh: GitHub, runId: string, since: string, titles: readonly string[] = []): Promise<FilingContext> {
+export async function filingContext(
+  gh: GitHub,
+  runId: string,
+  since: string,
+  titles: readonly string[] = [],
+): Promise<FilingContext> {
   const { data: me } = await gh.rest<{ login?: string }>('GET', '/user');
   if (!me.login) throw new Error('GitHub GET /user returned no login');
-  return { gh, runId, since, owner: me.login, open: await openRequests(gh), runIssues: await runIssues(gh, runId, since, titles) };
+  return {
+    gh,
+    runId,
+    since,
+    owner: me.login,
+    open: await openRequests(gh),
+    runIssues: await runIssues(gh, runId, since, titles),
+  };
 }
 
-const labelNames = (issue: RequestIssue) => (issue.labels ?? []).map((l) => (typeof l === 'string' ? l : (l.name ?? '')));
+const labelNames = (issue: RequestIssue) =>
+  (issue.labels ?? []).map((l) => (typeof l === 'string' ? l : (l.name ?? '')));
 
 export async function readIssue(ctx: FilingContext, number: number): Promise<RequestIssue> {
   return (await ctx.gh.rest<RequestIssue>('GET', `/repos/${E2E_REPO}/issues/${number}`)).data;
@@ -149,9 +169,15 @@ export interface Subject {
  * Comments on the open request unless this run already did; returns the re-read Issue.
  * Comment reads are bounded by the run's start.
  */
-export async function commentOnce(ctx: FilingContext, issue: RequestIssue, comment: string): Promise<{ decision: 'commented' | 'already commented'; issue: RequestIssue }> {
+export async function commentOnce(
+  ctx: FilingContext,
+  issue: RequestIssue,
+  comment: string,
+): Promise<{ decision: 'commented' | 'already commented'; issue: RequestIssue }> {
   const marker = runMarker(ctx.runId);
-  const comments = await ctx.gh.list<{ body?: string | null }>(`/repos/${E2E_REPO}/issues/${issue.number}/comments?since=${encodeURIComponent(ctx.since)}`);
+  const comments = await ctx.gh.list<{ body?: string | null }>(
+    `/repos/${E2E_REPO}/issues/${issue.number}/comments?since=${encodeURIComponent(ctx.since)}`,
+  );
   let decision: 'commented' | 'already commented' = 'already commented';
   if (!comments.some((c) => (c.body ?? '').includes(marker))) {
     await ctx.gh.rest('POST', `/repos/${E2E_REPO}/issues/${issue.number}/comments`, { body: withMarker(ctx, comment) });
@@ -160,7 +186,12 @@ export async function commentOnce(ctx: FilingContext, issue: RequestIssue, comme
   return { decision, issue: await readIssue(ctx, issue.number) };
 }
 
-async function create(ctx: FilingContext, title: string, text: string, platforms: readonly string[] = []): Promise<RequestIssue> {
+async function create(
+  ctx: FilingContext,
+  title: string,
+  text: string,
+  platforms: readonly string[] = [],
+): Promise<RequestIssue> {
   const { data } = await ctx.gh.rest<RequestIssue>('POST', `/repos/${E2E_REPO}/issues`, {
     title,
     body: withMarker(ctx, text, platforms),
@@ -172,10 +203,22 @@ async function create(ctx: FilingContext, title: string, text: string, platforms
   return issue;
 }
 
-function result(issue: RequestIssue, subject: Subject, owner: string, decision: Filed['decision'], reason: string): Filed {
+function result(
+  issue: RequestIssue,
+  subject: Subject,
+  owner: string,
+  decision: Filed['decision'],
+  reason: string,
+): Filed {
   const problems = readBackProblems(issue, subject.title, owner);
   if (problems.length) {
-    return { title: subject.title, decision: 'failed', number: issue.number, url: issue.html_url, reason: `read-back after "${decision}": ${problems.join('; ')}` };
+    return {
+      title: subject.title,
+      decision: 'failed',
+      number: issue.number,
+      url: issue.html_url,
+      reason: `read-back after "${decision}": ${problems.join('; ')}`,
+    };
   }
   return { title: subject.title, decision, number: issue.number, url: issue.html_url, reason };
 }
@@ -187,7 +230,13 @@ function result(issue: RequestIssue, subject: Subject, owner: string, decision: 
 async function alreadyFiled(ctx: FilingContext, subject: Subject, number: number, what: string): Promise<Filed> {
   const issue = await readIssue(ctx, number);
   if (issue.state !== 'open') {
-    return { title: subject.title, decision: 'already filed', number, url: issue.html_url, reason: `this run filed ${what} on #${number}, which is closed` };
+    return {
+      title: subject.title,
+      decision: 'already filed',
+      number,
+      url: issue.html_url,
+      reason: `this run filed ${what} on #${number}, which is closed`,
+    };
   }
   return result(issue, subject, ctx.owner, 'already filed', `this run filed ${what} on #${number}`);
 }
@@ -204,16 +253,37 @@ async function fileLegs(ctx: FilingContext, subject: Subject, legs: NonNullable<
   const text = legs.render(missing);
   const open = ctx.open.get(subject.title);
   if (open) {
-    await ctx.gh.rest('POST', `/repos/${E2E_REPO}/issues/${open.number}/comments`, { body: withMarker(ctx, text, missing) });
+    await ctx.gh.rest('POST', `/repos/${E2E_REPO}/issues/${open.number}/comments`, {
+      body: withMarker(ctx, text, missing),
+    });
     const issue = await readIssue(ctx, open.number);
-    if (issue.state === 'open') return result(issue, subject, ctx.owner, 'commented', `reused open request #${open.number} for ${missing.join(', ')}`);
+    if (issue.state === 'open')
+      return result(
+        issue,
+        subject,
+        ctx.owner,
+        'commented',
+        `reused open request #${open.number} for ${missing.join(', ')}`,
+      );
     ctx.open.delete(subject.title);
     const created = await create(ctx, subject.title, text, missing);
-    return result(created, subject, ctx.owner, 'created', `#${open.number} was closed while this run commented; filed a new request for ${missing.join(', ')}`);
+    return result(
+      created,
+      subject,
+      ctx.owner,
+      'created',
+      `#${open.number} was closed while this run commented; filed a new request for ${missing.join(', ')}`,
+    );
   }
   const created = await create(ctx, subject.title, text, missing);
   const before = own.length ? `this run's #${own.map((r) => r.issue.number).join(', #')} is closed; ` : '';
-  return result(created, subject, ctx.owner, 'created', `${before}no open request with this title; filed ${missing.join(', ')}`);
+  return result(
+    created,
+    subject,
+    ctx.owner,
+    'created',
+    `${before}no open request with this title; filed ${missing.join(', ')}`,
+  );
 }
 
 /**
@@ -228,7 +298,13 @@ export async function fileSubject(ctx: FilingContext, subject: Subject): Promise
     if (subject.legs) return await fileLegs(ctx, subject, subject.legs);
     const open = ctx.open.get(subject.title);
     if (open && (open.body ?? '').includes(runMarker(ctx.runId))) {
-      return result(await readIssue(ctx, open.number), subject, ctx.owner, 'already filed', `this run filed #${open.number}`);
+      return result(
+        await readIssue(ctx, open.number),
+        subject,
+        ctx.owner,
+        'already filed',
+        `this run filed #${open.number}`,
+      );
     }
     const closed = (ctx.runIssues.get(subject.title) ?? []).find((r) => r.issue.state !== 'open');
     if (closed) return await alreadyFiled(ctx, subject, closed.issue.number, 'this subject');
@@ -239,7 +315,13 @@ export async function fileSubject(ctx: FilingContext, subject: Subject): Promise
       }
       ctx.open.delete(subject.title);
       const issue = await create(ctx, subject.title, subject.body);
-      return result(issue, subject, ctx.owner, 'created', `#${open.number} was closed while this run commented; filed a new request`);
+      return result(
+        issue,
+        subject,
+        ctx.owner,
+        'created',
+        `#${open.number} was closed while this run commented; filed a new request`,
+      );
     }
     const issue = await create(ctx, subject.title, subject.body);
     return result(issue, subject, ctx.owner, 'created', 'no open request with this title');

@@ -1,4 +1,11 @@
-import { hostPeriodicRun, readHostState, readPeriodic, readTask, readVmPeriodic, userRuntimeDir } from '../../src/host/hoststate.ts';
+import {
+  hostPeriodicRun,
+  readHostState,
+  readPeriodic,
+  readTask,
+  readVmPeriodic,
+  userRuntimeDir,
+} from '../../src/host/hoststate.ts';
 import type { Baseline, CronState, Periodic, TaskDetail } from '../../src/host/hoststate.ts';
 import type { Scenario } from '../../src/types.ts';
 import { Check } from '../lib/check.ts';
@@ -29,21 +36,33 @@ export function newCronEntries(before: CronState, now: CronState): { problems: s
     return { problems: now.entries.filter((e) => !had.has(e)).map((e) => `the crontab gained the entry "${e}"`) };
   }
   if (!before.available) {
-    if (!now.available) return { problems: [], evidence: `cron not installed before (${before.evidence}) or after (${now.evidence})` };
-    return { problems: [`cron was not installed before runner add (${before.evidence}) and is now, with the entries [${now.entries.map((e) => `"${e}"`).join(', ')}]`] };
+    if (!now.available)
+      return { problems: [], evidence: `cron not installed before (${before.evidence}) or after (${now.evidence})` };
+    return {
+      problems: [
+        `cron was not installed before runner add (${before.evidence}) and is now, with the entries [${now.entries.map((e) => `"${e}"`).join(', ')}]`,
+      ],
+    };
   }
   const evidence = now.available ? '' : now.evidence;
-  return { problems: [`the crontab was readable before runner add but cron now reads as not installed (${evidence}); the reads disagree`] };
+  return {
+    problems: [
+      `the crontab was readable before runner add but cron now reads as not installed (${evidence}); the reads disagree`,
+    ],
+  };
 }
 
 const ALLOWED_TRIGGERS = ['MSFT_TaskLogonTrigger', 'MSFT_TaskEventTrigger'];
-const noRepetition = (interval: string | null | undefined) => interval === undefined || interval === null || interval.trim() === '' || interval.trim() === 'PT0S';
+const noRepetition = (interval: string | null | undefined) =>
+  interval === undefined || interval === null || interval.trim() === '' || interval.trim() === 'PT0S';
 
 /** A task's triggers that are not logon or event triggers, or that repeat; a repetition list that does not match the triggers is unreadable. */
 export function periodicTriggers(detail: TaskDetail): string[] {
   const out: string[] = [];
   if (detail.repetitions.length !== detail.triggers.length) {
-    out.push(`its trigger repetitions could not be read (${detail.repetitions.length} for ${detail.triggers.length} triggers)`);
+    out.push(
+      `its trigger repetitions could not be read (${detail.repetitions.length} for ${detail.triggers.length} triggers)`,
+    );
   }
   detail.triggers.forEach((t, i) => {
     if (!ALLOWED_TRIGGERS.includes(t)) out.push(`trigger ${t} is neither a logon nor an event trigger`);
@@ -68,9 +87,16 @@ function baseline(b: Baseline<Periodic> | undefined, where: string): Periodic {
 const list = (xs: string[]) => xs.join(', ') || 'none';
 
 /** Compares one scope's periodic mechanisms with its baseline; returns the cron evidence when cron is absent. */
-function comparePeriodic(c: Check, prefix: string, before: { units: Unit[]; timers: string[]; cron: CronState }, now: Periodic): string | undefined {
-  for (const u of newTimerUnits(before.units, now.units)) c.fail('R5.17', `${prefix}runner add added the timer unit ${u.name} (${u.state})`);
-  for (const t of newTimers(before, now.timers)) c.fail('R5.17', `${prefix}list-timers --all lists the timer ${t}, which was not there before runner add`);
+function comparePeriodic(
+  c: Check,
+  prefix: string,
+  before: { units: Unit[]; timers: string[]; cron: CronState },
+  now: Periodic,
+): string | undefined {
+  for (const u of newTimerUnits(before.units, now.units))
+    c.fail('R5.17', `${prefix}runner add added the timer unit ${u.name} (${u.state})`);
+  for (const t of newTimers(before, now.timers))
+    c.fail('R5.17', `${prefix}list-timers --all lists the timer ${t}, which was not there before runner add`);
   const cron = newCronEntries(before.cron, now.cron);
   for (const p of cron.problems) c.fail('R5.17', `${prefix}${p}`);
   return cron.evidence;
@@ -96,7 +122,9 @@ export const runnerNoPeriodic: Scenario = {
         const now = await readPeriodic(hostPeriodicRun(run, userRuntimeDir()), { noManagerOk: false });
         const units = base.manager ? base.units : before.units;
         const cron = comparePeriodic(c, '', { units, timers: base.timers, cron: base.cron }, now);
-        notes.push(`host: ${now.timers.length} timers and ${now.cron.available ? `${now.cron.entries.length} crontab lines` : 'no cron'} compared${cron ? ` (${cron})` : ''}`);
+        notes.push(
+          `host: ${now.timers.length} timers and ${now.cron.available ? `${now.cron.entries.length} crontab lines` : 'no cron'} compared${cron ? ` (${cron})` : ''}`,
+        );
       });
     }
 
@@ -111,7 +139,10 @@ export const runnerNoPeriodic: Scenario = {
           try {
             detail = await readTask(run, t);
           } catch (error) {
-            c.fail('R5.17', `scheduled task ${t} could not be read: ${error instanceof Error ? error.message : String(error)}`);
+            c.fail(
+              'R5.17',
+              `scheduled task ${t} could not be read: ${error instanceof Error ? error.message : String(error)}`,
+            );
             continue;
           }
           const actions = detail.actions.map((a) => `${a.execute} ${a.arguments}`.trim()).join('; ') || 'none';
@@ -135,10 +166,14 @@ export const runnerNoPeriodic: Scenario = {
           return;
         }
         const cron = comparePeriodic(c, 'podman machine VM: ', base, now);
-        notes.push(`VM units added: ${added.join(', ')}; ${now.timers.length} VM timers and ${now.cron.available ? `${now.cron.entries.length} VM crontab lines` : 'no VM cron'} compared${cron ? ` (${cron})` : ''}`);
+        notes.push(
+          `VM units added: ${added.join(', ')}; ${now.timers.length} VM timers and ${now.cron.available ? `${now.cron.entries.length} VM crontab lines` : 'no VM cron'} compared${cron ? ` (${cron})` : ''}`,
+        );
       });
     }
 
-    return c.outcome(`no new timer, cron entry or periodic scheduled task since before runner add; ${notes.join('; ')}`);
+    return c.outcome(
+      `no new timer, cron entry or periodic scheduled task since before runner add; ${notes.join('; ')}`,
+    );
   },
 };

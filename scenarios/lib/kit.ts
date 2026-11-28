@@ -47,7 +47,8 @@ export function createKit(host: HostServices, ctx: RunContext): Kit {
     log: ctx.log,
     facts: ctx.facts,
     ghToken: () => host.sandboxToken(),
-    secrets: () => [host.env.E2E_SANDBOX_TOKEN, host.env.E2E_CLAUDE_TOKEN].map((s) => s?.trim()).filter((s): s is string => !!s),
+    secrets: () =>
+      [host.env.E2E_SANDBOX_TOKEN, host.env.E2E_CLAUDE_TOKEN].map((s) => s?.trim()).filter((s): s is string => !!s),
     now: () => Date.now(),
     sleep: (ms) => untilAborted(new Promise((r) => setTimeout(r, ms)), ctx.signal),
     signal: ctx.signal,
@@ -60,8 +61,15 @@ export type KitFor = (ctx: RunContext) => Kit;
 /** The baseline the `nibfin` step recorded for the sandbox. */
 export function baselineOf(kit: Kit, repo: string): Baseline {
   const facts = kit.facts('nibfin');
-  const b = (repo === kit.sandbox.execution ? facts?.executionBaseline : repo === kit.sandbox.peer ? facts?.peerBaseline : undefined) as Baseline | undefined;
-  if (!b || typeof b.commit !== 'string' || typeof b.tree !== 'string') throw new Error(`${repo}: the nibfin step recorded no baseline for main`);
+  const b = (
+    repo === kit.sandbox.execution
+      ? facts?.executionBaseline
+      : repo === kit.sandbox.peer
+        ? facts?.peerBaseline
+        : undefined
+  ) as Baseline | undefined;
+  if (!b || typeof b.commit !== 'string' || typeof b.tree !== 'string')
+    throw new Error(`${repo}: the nibfin step recorded no baseline for main`);
   return b;
 }
 

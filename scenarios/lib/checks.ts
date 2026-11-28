@@ -18,7 +18,9 @@ export class Checks {
   }
 
   get failed(): string[] {
-    return this.items.filter((i) => !i.ok).map((i) => redact(`${i.rule}: ${i.what}${i.detail ? ` (observed: ${i.detail})` : ''}`, this.secrets));
+    return this.items
+      .filter((i) => !i.ok)
+      .map((i) => redact(`${i.rule}: ${i.what}${i.detail ? ` (observed: ${i.detail})` : ''}`, this.secrets));
   }
 
   outcome(prefix = ''): Outcome {
@@ -53,7 +55,8 @@ export function redactDeep<T>(value: T, secrets: string[]): T {
   const walk = (v: unknown): unknown => {
     if (typeof v === 'string') return redact(v, secrets);
     if (Array.isArray(v)) return v.map(walk);
-    if (v !== null && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [redact(k, secrets), walk(x)]));
+    if (v !== null && typeof v === 'object')
+      return Object.fromEntries(Object.entries(v).map(([k, x]) => [redact(k, secrets), walk(x)]));
     return v;
   };
   return walk(value) as T;

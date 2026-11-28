@@ -33,7 +33,12 @@ const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e)
  * message naming the ruleset and the enforcement read back; a failed write is otherwise
  * rethrown unchanged after the restore.
  */
-export async function withRulesetLifted<T>(gh: GitHub, repo: string, name: string, write: () => Promise<T>): Promise<T> {
+export async function withRulesetLifted<T>(
+  gh: GitHub,
+  repo: string,
+  name: string,
+  write: () => Promise<T>,
+): Promise<T> {
   const found = (await rulesets(gh, repo)).find((r) => r.name === name);
   if (!found) return write();
   const path = `/repos/${repo}/rulesets/${found.id}`;
@@ -128,7 +133,9 @@ async function jobs(gh: GitHub, repo: string, runId: number): Promise<Job[]> {
 
 /** Commits the hold workflow to main (idempotent). */
 export async function installHold(gh: GitHub, repo: string): Promise<void> {
-  await withRulesetLifted(gh, repo, CI_RULESET, () => putFile(gh, repo, HOLD_PATH, HOLD_WORKFLOW, 'nibfin-e2e: add the hold fixture workflow'));
+  await withRulesetLifted(gh, repo, CI_RULESET, () =>
+    putFile(gh, repo, HOLD_PATH, HOLD_WORKFLOW, 'nibfin-e2e: add the hold fixture workflow'),
+  );
 }
 
 /** Dispatches a hold and waits until its job runs on a Runner. */
@@ -144,15 +151,16 @@ export async function startHold(gh: GitHub, repo: string, seconds: number): Prom
       return await gh.rest<{ workflow_run_id?: number } | undefined>('POST', url, body);
     } catch (error) {
       // Without support for run details GitHub refuses the flag; dispatch plainly and find the run below.
-      if (!(error instanceof GitHubError) || error.status !== 422 || !/return_run_details/.test(error.message)) throw error;
+      if (!(error instanceof GitHubError) || error.status !== 422 || !/return_run_details/.test(error.message))
+        throw error;
       return gh.rest<undefined>('POST', url, { ref: body.ref, inputs: body.inputs });
     }
   };
-  const dispatched = await waitFor(
-    dispatch,
-    () => true,
-    { what: 'the hold dispatch to be accepted', deadlineMs: 90_000, intervalMs: 10_000 },
-  );
+  const dispatched = await waitFor(dispatch, () => true, {
+    what: 'the hold dispatch to be accepted',
+    deadlineMs: 90_000,
+    intervalMs: 10_000,
+  });
   let runId = dispatched.data?.workflow_run_id;
   if (typeof runId !== 'number') {
     const run = await waitFor(
@@ -179,16 +187,22 @@ export async function startHold(gh: GitHub, repo: string, seconds: number): Prom
 
 /** Waits for the hold's job to end and returns its conclusion. */
 export async function finishHold(gh: GitHub, repo: string, hold: Hold): Promise<string> {
-  const [job] = await waitFor(() => jobs(gh, repo, hold.runId), (js) => js[0]?.status === 'completed', {
-    what: `hold run ${hold.runId} to complete`,
-    deadlineMs: 10 * 60_000,
-    intervalMs: 10_000,
-  });
+  const [job] = await waitFor(
+    () => jobs(gh, repo, hold.runId),
+    (js) => js[0]?.status === 'completed',
+    {
+      what: `hold run ${hold.runId} to complete`,
+      deadlineMs: 10 * 60_000,
+      intervalMs: 10_000,
+    },
+  );
   return String((job as Job).conclusion);
 }
 
 export async function removeHold(gh: GitHub, repo: string): Promise<void> {
-  await withRulesetLifted(gh, repo, CI_RULESET, () => deleteFile(gh, repo, HOLD_PATH, 'nibfin-e2e: remove the hold fixture workflow'));
+  await withRulesetLifted(gh, repo, CI_RULESET, () =>
+    deleteFile(gh, repo, HOLD_PATH, 'nibfin-e2e: remove the hold fixture workflow'),
+  );
 }
 
 export { sleep };

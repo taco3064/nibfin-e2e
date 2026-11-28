@@ -23,7 +23,8 @@ export function parseIssueRef(text: string): IssueRef | { error: string } {
   return { repo: m[1] as string, number: Number(m[2]) };
 }
 
-export type ImpactState = 'not-delivered' | 'line' | 'none' | 'missing-line' | 'malformed-line' | 'no-shape' | 'multiple-shapes';
+export type ImpactState =
+  'not-delivered' | 'line' | 'none' | 'missing-line' | 'malformed-line' | 'no-shape' | 'multiple-shapes';
 
 export interface ImpactSource {
   issue: string;
@@ -68,15 +69,26 @@ const labelNames = (issue: Issue) => (issue.labels ?? []).map((l) => (typeof l =
  * rules its merged pull requests' changed files affect (`readChanges`). Everything is read
  * from GitHub now, so a stale or repeated dispatch selects from the current state (Proposal R1.11).
  */
-export async function readImpact(gh: GitHub, ref: IssueRef, entries: MapEntry[], changes?: ChangeContext): Promise<{ source: ImpactSource; ids: RuleId[]; decisions: Decision[] }> {
+export async function readImpact(
+  gh: GitHub,
+  ref: IssueRef,
+  entries: MapEntry[],
+  changes?: ChangeContext,
+): Promise<{ source: ImpactSource; ids: RuleId[]; decisions: Decision[] }> {
   const name = `${ref.repo}#${ref.number}`;
   const { data: issue } = await gh.rest<Issue>('GET', `/repos/${ref.repo}/issues/${ref.number}`);
   const url = issue.html_url ?? `https://github.com/${ref.repo}/issues/${ref.number}`;
   const decisions: Decision[] = [];
   const delivered = !issue.pull_request && issue.state === 'closed' && labelNames(issue).includes('delivered');
   if (!delivered) {
-    const reason = issue.pull_request ? 'it is a pull request' : `it is ${issue.state ?? 'in an unknown state'} with labels [${labelNames(issue).join(', ')}]`;
-    decisions.push({ subject: name, decision: 'not delivered: nothing selected', reason: `${reason}; only an Issue closed with \`delivered\` selects a rerun` });
+    const reason = issue.pull_request
+      ? 'it is a pull request'
+      : `it is ${issue.state ?? 'in an unknown state'} with labels [${labelNames(issue).join(', ')}]`;
+    decisions.push({
+      subject: name,
+      decision: 'not delivered: nothing selected',
+      reason: `${reason}; only an Issue closed with \`delivered\` selects a rerun`,
+    });
     return { source: { issue: name, url, state: 'not-delivered' }, ids: [], decisions };
   }
 
@@ -94,14 +106,30 @@ export async function readImpact(gh: GitHub, ref: IssueRef, entries: MapEntry[],
     state = line.state;
     if (line.state === 'line') {
       ids = line.ids;
-      decisions.push({ subject: name, decision: 'selected from the Shape line', reason: `Proposal rules: ${line.ids.join(', ')}` });
+      decisions.push({
+        subject: name,
+        decision: 'selected from the Shape line',
+        reason: `Proposal rules: ${line.ids.join(', ')}`,
+      });
     } else if (line.state === 'none') {
-      decisions.push({ subject: name, decision: 'nothing selected', reason: 'the Shape line is `Proposal rules: none`' });
+      decisions.push({
+        subject: name,
+        decision: 'nothing selected',
+        reason: 'the Shape line is `Proposal rules: none`',
+      });
     } else if (line.state === 'malformed-line') {
       source.malformed = line.text;
-      decisions.push({ subject: name, decision: 'malformed Shape line', reason: `treated like a missing line: ${line.text}` });
+      decisions.push({
+        subject: name,
+        decision: 'malformed Shape line',
+        reason: `treated like a missing line: ${line.text}`,
+      });
     } else {
-      decisions.push({ subject: name, decision: 'Shape without a line', reason: 'the approved Shape has no `Proposal rules:` line (approved before the format existed)' });
+      decisions.push({
+        subject: name,
+        decision: 'Shape without a line',
+        reason: 'the approved Shape has no `Proposal rules:` line (approved before the format existed)',
+      });
     }
   } else {
     state = shapes.length === 0 ? 'no-shape' : 'multiple-shapes';
@@ -118,8 +146,10 @@ export async function readImpact(gh: GitHub, ref: IssueRef, entries: MapEntry[],
     ids = cited.ids;
     decisions.push({
       subject: name,
-      decision: 'fell back to the Issue\'s ## Authority',
-      reason: cited.ids.length ? `cited: ${cited.ids.join(', ')}${cited.sections.length ? ` (sections ${cited.sections.map((s) => `§${s}`).join(', ')})` : ''}` : 'it cites no rule or section',
+      decision: "fell back to the Issue's ## Authority",
+      reason: cited.ids.length
+        ? `cited: ${cited.ids.join(', ')}${cited.sections.length ? ` (sections ${cited.sections.map((s) => `§${s}`).join(', ')})` : ''}`
+        : 'it cites no rule or section',
     });
   }
   if (ref.repo === E2E_REPO && changes) {
@@ -127,7 +157,8 @@ export async function readImpact(gh: GitHub, ref: IssueRef, entries: MapEntry[],
     source.pulls = changed.pulls;
     decisions.push(...changed.decisions);
     ids = [...ids];
-    for (const id of [...changed.ids, ...(changed.all ? entries.map((e) => e.id) : [])]) if (!ids.includes(id)) ids.push(id);
+    for (const id of [...changed.ids, ...(changed.all ? entries.map((e) => e.id) : [])])
+      if (!ids.includes(id)) ids.push(id);
   }
   return { source, ids, decisions };
 }

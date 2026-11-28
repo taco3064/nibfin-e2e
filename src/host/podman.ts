@@ -28,10 +28,15 @@ export function podmanDirs(env: HostServices['env']): string[] {
  * The `podmanDirs` folders that hold `podman.exe` after the install. Throws, naming every
  * folder searched and the MSI log, when none does.
  */
-export function findPodman(env: HostServices['env'], log: string, exists: (path: string) => boolean = existsSync): string[] {
+export function findPodman(
+  env: HostServices['env'],
+  log: string,
+  exists: (path: string) => boolean = existsSync,
+): string[] {
   const dirs = podmanDirs(env);
   const installed = dirs.filter((d) => exists(win32.join(d, 'podman.exe')));
-  if (!installed.length) throw new Error(`podman.exe not found after install in ${dirs.join(' or ')}; see the MSI log ${log}`);
+  if (!installed.length)
+    throw new Error(`podman.exe not found after install in ${dirs.join(' or ')}; see the MSI log ${log}`);
   return installed;
 }
 
@@ -52,7 +57,8 @@ export async function preparePodman(host: HostServices, platform: Platform): Pro
   if (!res.ok) throw new Error(`downloading ${PODMAN_MSI.url} returned ${res.status}`);
   const bytes = Buffer.from(await res.arrayBuffer());
   const sum = createHash('sha256').update(bytes).digest('hex');
-  if (sum !== PODMAN_MSI.sha256) throw new Error(`Podman MSI checksum mismatch: got sha256:${sum}, expected sha256:${PODMAN_MSI.sha256}`);
+  if (sum !== PODMAN_MSI.sha256)
+    throw new Error(`Podman MSI checksum mismatch: got sha256:${sum}, expected sha256:${PODMAN_MSI.sha256}`);
   const work = host.workDir();
   const msi = join(work, 'podman-installer-windows-amd64.msi');
   writeFileSync(msi, bytes);
@@ -70,7 +76,9 @@ export async function preparePodman(host: HostServices, platform: Platform): Pro
 }
 
 async function listMachines(exec: Exec): Promise<unknown[]> {
-  const parsed: unknown = JSON.parse((await mustRun(exec, ['podman', 'machine', 'list', '--format', 'json'])).stdout || '[]');
+  const parsed: unknown = JSON.parse(
+    (await mustRun(exec, ['podman', 'machine', 'list', '--format', 'json'])).stdout || '[]',
+  );
   return Array.isArray(parsed) ? parsed : [];
 }
 
@@ -83,7 +91,14 @@ export async function machineReport(exec: Exec, initialised: boolean): Promise<s
   const states = (await listMachines(exec)).map((m) => {
     const r = typeof m === 'object' && m !== null ? (m as Record<string, unknown>) : {};
     const name = typeof r.Name === 'string' && r.Name ? r.Name : 'unnamed machine';
-    const state = r.Running === true ? 'running' : r.Starting === true ? 'starting' : r.Running === false ? 'stopped' : 'state unknown';
+    const state =
+      r.Running === true
+        ? 'running'
+        : r.Starting === true
+          ? 'starting'
+          : r.Running === false
+            ? 'stopped'
+            : 'state unknown';
     return `${name}: ${state}`;
   });
   const head = initialised ? 'podman machine initialised' : 'podman machine already existed';
@@ -107,6 +122,7 @@ const ALREADY_RUNNING = /^Error: unable to start "[^"]+": already running$/m;
  */
 export async function startPodmanMachine(exec: Exec): Promise<ExecResult & { alreadyRunning: boolean }> {
   const r = await exec(['podman', 'machine', 'start']);
-  if (r.code === 125 && ALREADY_RUNNING.test(r.stderr.replace(/\r/g, ''))) return { ...r, code: 0, alreadyRunning: true };
+  if (r.code === 125 && ALREADY_RUNNING.test(r.stderr.replace(/\r/g, '')))
+    return { ...r, code: 0, alreadyRunning: true };
   return { ...r, alreadyRunning: false };
 }

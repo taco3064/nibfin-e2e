@@ -9,7 +9,15 @@ import type { Registration } from '../lib/github.ts';
 import type { KitFor } from '../lib/kit.ts';
 import { runnerSlot } from '../lib/runners.ts';
 import { readMachine, shQuote, tryExec, vmExec } from '../lib/vm.ts';
-import { cgroupPids, descendants, hostFs, listenerRoot, matchRunners, parseRunnerFile, processRoot } from './host-requirements.ts';
+import {
+  cgroupPids,
+  descendants,
+  hostFs,
+  listenerRoot,
+  matchRunners,
+  parseRunnerFile,
+  processRoot,
+} from './host-requirements.ts';
 import type { HostFs, LocalRunner, RunnerFile } from './host-requirements.ts';
 import { newEnabledUnits } from './runner-add-setup.ts';
 
@@ -171,7 +179,11 @@ export function hostingRunner(processes: WinProcess[], selfPid: number): Hosting
     seen.add(cur.ProcessId);
     const parent = byPid.get(cur.ParentProcessId);
     if (!parent || seen.has(parent.ProcessId)) break;
-    if (isRunnerProcess(parent)) return { process: parent, root: parent.ExecutablePath ? win32.dirname(win32.dirname(parent.ExecutablePath)) : undefined };
+    if (isRunnerProcess(parent))
+      return {
+        process: parent,
+        root: parent.ExecutablePath ? win32.dirname(win32.dirname(parent.ExecutablePath)) : undefined,
+      };
     cur = parent;
   }
   return {};
@@ -198,17 +210,36 @@ export function serviceProgram(pathName: string): string {
  * root of the runner hosting this job. A process or service whose path is empty is a problem
  * too. With no hosting root, every one is.
  */
-export function winRunnerProblems(processes: WinProcess[], services: WinService[], hostingRoot: string | undefined): string[] {
+export function winRunnerProblems(
+  processes: WinProcess[],
+  services: WinService[],
+  hostingRoot: string | undefined,
+): string[] {
   const out: string[] = [];
   const inside = (path: string) => hostingRoot !== undefined && underWin(path, hostingRoot);
-  const where = hostingRoot === undefined ? 'with no runner hosting this job found' : `outside ${hostingRoot}, the runner hosting this job`;
+  const where =
+    hostingRoot === undefined
+      ? 'with no runner hosting this job found'
+      : `outside ${hostingRoot}, the runner hosting this job`;
   for (const p of processes.filter(isRunnerProcess)) {
-    if (!p.ExecutablePath) out.push(`Windows host process ${p.Name} PID ${p.ProcessId} has no ExecutablePath; cannot tell whether it is the runner hosting this job`);
-    else if (!inside(p.ExecutablePath)) out.push(`Windows host runs ${p.Name} PID ${p.ProcessId} from ${p.ExecutablePath} ${where}; Runners must run inside the podman machine VM`);
+    if (!p.ExecutablePath)
+      out.push(
+        `Windows host process ${p.Name} PID ${p.ProcessId} has no ExecutablePath; cannot tell whether it is the runner hosting this job`,
+      );
+    else if (!inside(p.ExecutablePath))
+      out.push(
+        `Windows host runs ${p.Name} PID ${p.ProcessId} from ${p.ExecutablePath} ${where}; Runners must run inside the podman machine VM`,
+      );
   }
   for (const s of services.filter((x) => (x.Name ?? '').toLowerCase().startsWith('actions.runner.'))) {
-    if (!s.PathName?.trim()) out.push(`Windows service ${s.Name} (${s.State ?? 'unknown state'}) has no PathName; cannot tell whether it is the runner hosting this job`);
-    else if (!inside(serviceProgram(s.PathName))) out.push(`Windows service ${s.Name} (${s.State ?? 'unknown state'}) runs ${s.PathName} ${where}; Runners must run inside the podman machine VM`);
+    if (!s.PathName?.trim())
+      out.push(
+        `Windows service ${s.Name} (${s.State ?? 'unknown state'}) has no PathName; cannot tell whether it is the runner hosting this job`,
+      );
+    else if (!inside(serviceProgram(s.PathName)))
+      out.push(
+        `Windows service ${s.Name} (${s.State ?? 'unknown state'}) runs ${s.PathName} ${where}; Runners must run inside the podman machine VM`,
+      );
   }
   return out;
 }
@@ -235,18 +266,24 @@ export function layoutProblems(l: Layout): string[] {
   const unit = `nibfin-runner-${l.slot}.service`;
   if (l.unit !== unit) out.push(`registration ${l.registration} runs in unit ${l.unit}, expected ${unit}`);
   const root = posix.join(l.dataDir, 'nibfin', 'runners', l.slot);
-  if (posix.normalize(l.root) !== root) out.push(`registration ${l.registration} runs from ${l.root}, expected ${root}`);
+  if (posix.normalize(l.root) !== root)
+    out.push(`registration ${l.registration} runs from ${l.root}, expected ${root}`);
   const home = posix.normalize(l.home).replace(/\/+$/, '');
   const fragment = l.fragment ? posix.normalize(l.fragment) : '';
-  if (!fragment.startsWith(`${home}/`)) out.push(`unit ${l.unit} of ${l.registration} is loaded from ${l.fragment || '(no FragmentPath)'}, expected a user unit file under ${home}`);
+  if (!fragment.startsWith(`${home}/`))
+    out.push(
+      `unit ${l.unit} of ${l.registration} is loaded from ${l.fragment || '(no FragmentPath)'}, expected a user unit file under ${home}`,
+    );
   return out;
 }
 
 /** The unit names a VM command may carry. */
 const UNIT_NAME = /^[A-Za-z0-9@._-]+\.service$/;
 
-const PROCESSES = 'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath | ConvertTo-Json -Compress';
-const SERVICES = "Get-CimInstance Win32_Service | Where-Object { $_.Name -like 'actions.runner.*' } | Select-Object Name,State,PathName | ConvertTo-Json -Compress";
+const PROCESSES =
+  'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath | ConvertTo-Json -Compress';
+const SERVICES =
+  "Get-CimInstance Win32_Service | Where-Object { $_.Name -like 'actions.runner.*' } | Select-Object Name,State,PathName | ConvertTo-Json -Compress";
 
 const list = (xs: string[], none = 'none') => (xs.length ? xs.join(', ') : none);
 
@@ -264,9 +301,20 @@ interface Placed extends LocalRunner {
 }
 
 /** Each registration's runner, the matching problems, and the layout problems. */
-function judge(c: Check, where: string, placed: Placed[], regs: Registration[], home: string, dataDir: string): Placed[] {
+function judge(
+  c: Check,
+  where: string,
+  placed: Placed[],
+  regs: Registration[],
+  home: string,
+  dataDir: string,
+): Placed[] {
   const m = matchRunners(placed, regs);
-  c.that(m.unregistered.length === 0, RULE, `${where}: runner roots without a registration on the execution sandbox: ${list(m.unregistered)}`);
+  c.that(
+    m.unregistered.length === 0,
+    RULE,
+    `${where}: runner roots without a registration on the execution sandbox: ${list(m.unregistered)}`,
+  );
   c.that(m.unbacked.length === 0, RULE, `${where}: registrations backed by no runner: ${list(m.unbacked)}`);
   c.that(m.duplicated.length === 0, RULE, `${where}: registrations backed by several runners: ${list(m.duplicated)}`);
   const matched: Placed[] = [];
@@ -274,7 +322,16 @@ function judge(c: Check, where: string, placed: Placed[], regs: Registration[], 
     const p = placed.find((x) => x.file?.agentId === g.id && x.file?.agentName === g.name);
     if (!p) continue;
     matched.push(p);
-    for (const problem of layoutProblems({ slot: runnerSlot(g.name), registration: g.name, unit: p.unit, root: p.root, fragment: p.fragment, home, dataDir })) c.fail(RULE, `${where}: ${problem}`);
+    for (const problem of layoutProblems({
+      slot: runnerSlot(g.name),
+      registration: g.name,
+      unit: p.unit,
+      root: p.root,
+      fragment: p.fragment,
+      home,
+      dataDir,
+    }))
+      c.fail(RULE, `${where}: ${problem}`);
   }
   return matched;
 }
@@ -302,7 +359,10 @@ export function runnerLocation(kitFor: KitFor, deps: LocationDeps = {}): Scenari
       const execution = kit.sandbox.execution;
       const before = (kit.facts('nibfin') ?? {}).hostBefore as HostState | undefined;
       if (before?.platform !== platform) {
-        c.fail(RULE, `the nibfin step recorded no ${platform} host state before runner add (found ${before?.platform ?? 'none'})`);
+        c.fail(
+          RULE,
+          `the nibfin step recorded no ${platform} host state before runner add (found ${before?.platform ?? 'none'})`,
+        );
         return c.outcome('');
       }
       const summary: string[] = [];
@@ -312,7 +372,12 @@ export function runnerLocation(kitFor: KitFor, deps: LocationDeps = {}): Scenari
       await c.part(RULE, async () => {
         regs = await registrations(kit.github, execution);
         c.that(regs.length > 0, RULE, `${execution} lists no runner registration`);
-        for (const r of regs) c.that(isLinuxOs(r.os), RULE, `registration ${r.name} reports os ${r.os ?? '(none)'} in GitHub's runner API, expected Linux`);
+        for (const r of regs)
+          c.that(
+            isLinuxOs(r.os),
+            RULE,
+            `registration ${r.name} reports os ${r.os ?? '(none)'} in GitHub's runner API, expected Linux`,
+          );
         summary.push(`${regs.length} registrations on ${execution} report os Linux`);
       });
 
@@ -321,7 +386,10 @@ export function runnerLocation(kitFor: KitFor, deps: LocationDeps = {}): Scenari
         const home = kit.env.HOME?.trim() || homedir();
         const dataDir = kit.env.XDG_DATA_HOME?.trim() || posix.join(home, '.local', 'share');
         await c.part(RULE, async () => {
-          const now = await readHostState((argv, env) => kit.exec(argv, { env }), 'linux', { env: kit.env, ...(uid === undefined ? {} : { uid }) });
+          const now = await readHostState((argv, env) => kit.exec(argv, { env }), 'linux', {
+            env: kit.env,
+            ...(uid === undefined ? {} : { uid }),
+          });
           if (now.platform !== 'linux') throw new Error('the host state read is not Linux');
           const units = newEnabledUnits(before, now);
           if (!c.that(units.length > 0, RULE, 'runner add enabled no new systemd user unit on the host')) return;
@@ -330,17 +398,42 @@ export function runnerLocation(kitFor: KitFor, deps: LocationDeps = {}): Scenari
           const self = { pid: fs.readlink('/proc/self/ns/pid'), mnt: fs.readlink('/proc/self/ns/mnt') };
           const placed: Placed[] = [];
           for (const u of units) {
-            const argv = ['systemctl', '--user', 'show', '-p', 'Id', '-p', 'ActiveState', '-p', 'UnitFileState', '-p', 'ControlGroup', '-p', 'MainPID', '-p', 'FragmentPath', u];
+            const argv = [
+              'systemctl',
+              '--user',
+              'show',
+              '-p',
+              'Id',
+              '-p',
+              'ActiveState',
+              '-p',
+              'UnitFileState',
+              '-p',
+              'ControlGroup',
+              '-p',
+              'MainPID',
+              '-p',
+              'FragmentPath',
+              u,
+            ];
             const r = await tryExec(kit.exec, argv, env ? { env } : undefined);
             if (r.code !== 0) {
               c.fail(RULE, `systemctl --user show ${u} exited ${r.code}: ${tail(r)}`);
               continue;
             }
             const p = parseShow(r.stdout)[0] ?? {};
-            c.that(p.ActiveState === 'active' && p.UnitFileState === 'enabled', RULE, `host user unit ${u} is ActiveState=${p.ActiveState ?? '(none)'} UnitFileState=${p.UnitFileState ?? '(none)'}, expected active and enabled`);
+            c.that(
+              p.ActiveState === 'active' && p.UnitFileState === 'enabled',
+              RULE,
+              `host user unit ${u} is ActiveState=${p.ActiveState ?? '(none)'} UnitFileState=${p.UnitFileState ?? '(none)'}, expected active and enabled`,
+            );
             const cg = p.ControlGroup ?? '';
             const owner = unitOfCgroup(cg);
-            c.that(uid !== undefined && owner?.uid === uid && owner.unit === u, RULE, `host user unit ${u} runs in cgroup ${cg || '(none)'}, expected ${u} under /user.slice/user-${uid ?? '?'}.slice/user@${uid ?? '?'}.service/ (the host user's own manager)`);
+            c.that(
+              uid !== undefined && owner?.uid === uid && owner.unit === u,
+              RULE,
+              `host user unit ${u} runs in cgroup ${cg || '(none)'}, expected ${u} under /user.slice/user-${uid ?? '?'}.slice/user@${uid ?? '?'}.service/ (the host user's own manager)`,
+            );
             let pids = cg ? cgroupPids(fs, cg) : [];
             let source = `cgroup ${cg || '(none)'}`;
             if (!pids.length) {
@@ -348,24 +441,52 @@ export function runnerLocation(kitFor: KitFor, deps: LocationDeps = {}): Scenari
               pids = main > 0 ? descendants(fs, main) : [];
               source = `MainPID ${main || 'none'} and its descendants`;
             }
-            const listeners = pids.map((pid) => ({ pid, root: processRoot(fs, pid) })).filter((x): x is { pid: number; root: string } => x.root !== undefined);
-            if (!c.that(listeners.length > 0, RULE, `host user unit ${u} runs no official runner <root>/bin/Runner.Listener (${source}: ${pids.length} processes)`)) continue;
+            const listeners = pids
+              .map((pid) => ({ pid, root: processRoot(fs, pid) }))
+              .filter((x): x is { pid: number; root: string } => x.root !== undefined);
+            if (
+              !c.that(
+                listeners.length > 0,
+                RULE,
+                `host user unit ${u} runs no official runner <root>/bin/Runner.Listener (${source}: ${pids.length} processes)`,
+              )
+            )
+              continue;
             for (const l of listeners) {
               for (const ns of ['pid', 'mnt'] as const) {
                 const link = fs.readlink(`/proc/${l.pid}/ns/${ns}`);
-                c.that(link !== undefined && self[ns] !== undefined && link === self[ns], RULE, `Runner.Listener PID ${l.pid} of ${u} is in ${ns} namespace ${link ?? '(unreadable)'}, the host's is ${self[ns] ?? '(unreadable)'}; expected a host process, not one in a container`);
+                c.that(
+                  link !== undefined && self[ns] !== undefined && link === self[ns],
+                  RULE,
+                  `Runner.Listener PID ${l.pid} of ${u} is in ${ns} namespace ${link ?? '(unreadable)'}, the host's is ${self[ns] ?? '(unreadable)'}; expected a host process, not one in a container`,
+                );
               }
-              if (!placed.some((x) => x.root === l.root)) placed.push({ root: l.root, unit: u, fragment: p.FragmentPath });
+              if (!placed.some((x) => x.root === l.root))
+                placed.push({ root: l.root, unit: u, fragment: p.FragmentPath });
             }
           }
           for (const r of placed) {
             const text = fs.readFile(join(r.root, '.runner'));
             r.file = text === undefined ? undefined : parseRunnerFile(text);
-            c.that(!!r.file, RULE, `${r.root}/.runner on the host is ${text === undefined ? 'not readable' : 'not a JSON object'}`);
+            c.that(
+              !!r.file,
+              RULE,
+              `${r.root}/.runner on the host is ${text === undefined ? 'not readable' : 'not a JSON object'}`,
+            );
           }
-          if (!c.that(placed.length > 0, RULE, 'no Runner.Listener runs in any user unit runner add enabled on the host')) return;
+          if (
+            !c.that(placed.length > 0, RULE, 'no Runner.Listener runs in any user unit runner add enabled on the host')
+          )
+            return;
           const matched = judge(c, 'Linux host', placed, regs, home, dataDir);
-          summary.push(layoutSummary(`directly on the host under user@${uid}.service, in the host's PID and mount namespaces`, matched, dataDir, home));
+          summary.push(
+            layoutSummary(
+              `directly on the host under user@${uid}.service, in the host's PID and mount namespaces`,
+              matched,
+              dataDir,
+              home,
+            ),
+          );
         });
       }
 
@@ -377,7 +498,9 @@ export function runnerLocation(kitFor: KitFor, deps: LocationDeps = {}): Scenari
           try {
             return parseWinList(r.stdout);
           } catch (error) {
-            throw new Error(`powershell ${what} printed ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+            throw new Error(`powershell ${what} printed ${error instanceof Error ? error.message : String(error)}`, {
+              cause: error,
+            });
           }
         };
 
@@ -386,31 +509,69 @@ export function runnerLocation(kitFor: KitFor, deps: LocationDeps = {}): Scenari
           const processes = (await ps(PROCESSES, 'Get-CimInstance Win32_Process')) as WinProcess[];
           const services = (await ps(SERVICES, 'Get-CimInstance Win32_Service')) as WinService[];
           const hosting = hostingRunner(processes, pid);
-          if (hosting.process && hosting.root === undefined) c.fail(RULE, `the runner hosting this job, ${hosting.process.Name} PID ${hosting.process.ProcessId}, has no ExecutablePath; its install root cannot be read`);
+          if (hosting.process && hosting.root === undefined)
+            c.fail(
+              RULE,
+              `the runner hosting this job, ${hosting.process.Name} PID ${hosting.process.ProcessId}, has no ExecutablePath; its install root cannot be read`,
+            );
           for (const problem of winRunnerProblems(processes, services, hosting.root)) c.fail(RULE, problem);
-          summary.push(hosting.process && hosting.root !== undefined ? `no other Runner process or actions.runner.* service on the Windows host; excluded the runner hosting this job: ${hosting.process.Name} PID ${hosting.process.ProcessId} under ${hosting.root}` : 'no Runner process or actions.runner.* service on the Windows host; no hosting runner found');
+          summary.push(
+            hosting.process && hosting.root !== undefined
+              ? `no other Runner process or actions.runner.* service on the Windows host; excluded the runner hosting this job: ${hosting.process.Name} PID ${hosting.process.ProcessId} under ${hosting.root}`
+              : 'no Runner process or actions.runner.* service on the Windows host; no hosting runner found',
+          );
         });
 
         // Inside the podman machine VM.
         await c.part(RULE, async () => {
           const machine = await readMachine(kit.exec);
-          if (!c.that(machine.state === 'running', RULE, `podman machine ${machine.name} is ${machine.state || '(no State)'}, expected running`)) return;
+          if (
+            !c.that(
+              machine.state === 'running',
+              RULE,
+              `podman machine ${machine.name} is ${machine.state || '(no State)'}, expected running`,
+            )
+          )
+            return;
           const out = await vmExec(kit.exec, machine.name, DISCOVER);
           const report = parseVmReport(out);
           if (report.uid === undefined || report.home === undefined || report.data === undefined) {
-            throw new Error(`podman machine ssh ${machine.name} printed no uid, home or data line: ${tail({ stdout: out, stderr: '' }, 300)}`);
+            throw new Error(
+              `podman machine ssh ${machine.name} printed no uid, home or data line: ${tail({ stdout: out, stderr: '' }, 300)}`,
+            );
           }
-          if (!c.that(report.listeners.length > 0, RULE, `no Runner.Listener runs inside podman machine ${machine.name}`)) return;
+          if (
+            !c.that(report.listeners.length > 0, RULE, `no Runner.Listener runs inside podman machine ${machine.name}`)
+          )
+            return;
           const placed: Placed[] = [];
           for (const l of report.listeners) {
             const root = listenerRoot(l.path);
             const owner = l.cgroups.map(unitOfCgroup).find((x) => x !== undefined);
-            if (!c.that(root !== undefined, RULE, `VM Runner.Listener PID ${l.pid} runs from ${l.path}, not an absolute <root>/bin/Runner.Listener`) || root === undefined) continue;
-            if (!c.that(owner !== undefined && owner.uid === report.uid, RULE, `VM Runner.Listener PID ${l.pid} (${root}) is in cgroup ${list(l.cgroups, '(none)')}, expected a .service unit under user@${report.uid}.service of the ssh user`) || !owner) continue;
+            if (
+              !c.that(
+                root !== undefined,
+                RULE,
+                `VM Runner.Listener PID ${l.pid} runs from ${l.path}, not an absolute <root>/bin/Runner.Listener`,
+              ) ||
+              root === undefined
+            )
+              continue;
+            if (
+              !c.that(
+                owner !== undefined && owner.uid === report.uid,
+                RULE,
+                `VM Runner.Listener PID ${l.pid} (${root}) is in cgroup ${list(l.cgroups, '(none)')}, expected a .service unit under user@${report.uid}.service of the ssh user`,
+              ) ||
+              !owner
+            )
+              continue;
             if (placed.some((x) => x.root === root)) continue;
             let file: RunnerFile | undefined;
-            if (l.runner === undefined) c.fail(RULE, `${root}/.runner inside podman machine ${machine.name} is not readable`);
-            else if (!(file = parseRunnerFile(l.runner))) c.fail(RULE, `${root}/.runner inside podman machine ${machine.name} is not a JSON object`);
+            if (l.runner === undefined)
+              c.fail(RULE, `${root}/.runner inside podman machine ${machine.name} is not readable`);
+            else if (!(file = parseRunnerFile(l.runner)))
+              c.fail(RULE, `${root}/.runner inside podman machine ${machine.name} is not a JSON object`);
             placed.push({ root, unit: owner.unit, fragment: undefined, ...(file ? { file } : {}) });
           }
           const units = [...new Set(placed.map((p) => p.unit))];
@@ -422,13 +583,32 @@ export function runnerLocation(kitFor: KitFor, deps: LocationDeps = {}): Scenari
             const shown = parseShow(await vmExec(kit.exec, machine.name, script));
             for (const u of good) {
               const s = shown.find((x) => x.Id === u);
-              if (!c.that(!!s, RULE, `systemctl --user show inside podman machine ${machine.name} printed nothing for ${u}`) || !s) continue;
-              c.that(s.ActiveState === 'active' && s.UnitFileState === 'enabled', RULE, `VM user unit ${u} is ActiveState=${s.ActiveState ?? '(none)'} UnitFileState=${s.UnitFileState ?? '(none)'}, expected active and enabled`);
+              if (
+                !c.that(
+                  !!s,
+                  RULE,
+                  `systemctl --user show inside podman machine ${machine.name} printed nothing for ${u}`,
+                ) ||
+                !s
+              )
+                continue;
+              c.that(
+                s.ActiveState === 'active' && s.UnitFileState === 'enabled',
+                RULE,
+                `VM user unit ${u} is ActiveState=${s.ActiveState ?? '(none)'} UnitFileState=${s.UnitFileState ?? '(none)'}, expected active and enabled`,
+              );
               for (const p of placed) if (p.unit === u) p.fragment = s.FragmentPath;
             }
           }
           const matched = judge(c, `podman machine ${machine.name}`, placed, regs, report.home, report.data);
-          summary.push(layoutSummary(`inside podman machine ${machine.name} under user@${report.uid}.service of the ssh user`, matched, report.data, report.home));
+          summary.push(
+            layoutSummary(
+              `inside podman machine ${machine.name} under user@${report.uid}.service of the ssh user`,
+              matched,
+              report.data,
+              report.home,
+            ),
+          );
         });
       }
 

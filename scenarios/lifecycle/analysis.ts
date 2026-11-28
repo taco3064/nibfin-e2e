@@ -136,7 +136,13 @@ export function pushWakeSha(title: string): string | undefined {
 }
 
 /** Stage runs in the execution repository for one Issue, oldest first. */
-export function stageRuns(runs: Run[], executionRepo: string, issueRepo: string, issue: number, stages: readonly Stage[] = STAGES): (Run & { stage: Stage })[] {
+export function stageRuns(
+  runs: Run[],
+  executionRepo: string,
+  issueRepo: string,
+  issue: number,
+  stages: readonly Stage[] = STAGES,
+): (Run & { stage: Stage })[] {
   const out: (Run & { stage: Stage })[] = [];
   for (const r of runs) {
     if (r.repo !== executionRepo) continue;
@@ -167,11 +173,18 @@ export function jobWindow(job: Job, issue: string, stage: Stage): Window | undef
 }
 
 /** Whether a job ran on a self-hosted Runner (the agent job of an agent stage). */
-export const selfHosted = (job: Job) => job.labels.includes('self-hosted') || job.labels.some((l) => /^nibfin-\d+$/.test(l));
+export const selfHosted = (job: Job) =>
+  job.labels.includes('self-hosted') || job.labels.some((l) => /^nibfin-\d+$/.test(l));
 
 /** Whether a runner took the job: it has a runner and a start and is not waiting in the queue. */
 export function ranOnRunner(job: Job): boolean {
-  if (Number.isNaN(time(job.started_at)) || job.status === 'queued' || job.status === 'waiting' || job.status === 'pending') return false;
+  if (
+    Number.isNaN(time(job.started_at)) ||
+    job.status === 'queued' ||
+    job.status === 'waiting' ||
+    job.status === 'pending'
+  )
+    return false;
   return !!job.runner_name;
 }
 
@@ -185,7 +198,9 @@ export const HOSTED_GROUP = 'GitHub Actions';
  */
 export function githubHosted(job: Job): boolean {
   if (!ranOnRunner(job) || selfHosted(job)) return false;
-  return job.runner_group_name === undefined || job.runner_group_name === null || job.runner_group_name === HOSTED_GROUP;
+  return (
+    job.runner_group_name === undefined || job.runner_group_name === null || job.runner_group_name === HOSTED_GROUP
+  );
 }
 
 /** Run, job, status, runner, runner group and labels of a job, for failure messages. */
@@ -199,12 +214,17 @@ export function describeJob(run: Pick<Run, 'id' | 'display_title'>, job: Job): s
  * GitHub-hosted and not on one of the sandbox's registered Runners. Jobs no runner took
  * (the skipped `stage` job, or a run cancelled while it waited) are not judged.
  */
-export function hostedOnlyProblems(run: Pick<Run, 'id' | 'display_title'>, jobs: Job[], sandboxRunners: string[]): string[] {
+export function hostedOnlyProblems(
+  run: Pick<Run, 'id' | 'display_title'>,
+  jobs: Job[],
+  sandboxRunners: string[],
+): string[] {
   const out: string[] = [];
   for (const j of jobs) {
     if (!ranOnRunner(j)) continue;
     if (!githubHosted(j)) out.push(`${describeJob(run, j)} did not run on a GitHub-hosted runner`);
-    else if (sandboxRunners.includes(j.runner_name ?? '')) out.push(`${describeJob(run, j)} ran on the sandbox's registered Runner ${String(j.runner_name)}`);
+    else if (sandboxRunners.includes(j.runner_name ?? ''))
+      out.push(`${describeJob(run, j)} ran on the sandbox's registered Runner ${String(j.runner_name)}`);
   }
   return out;
 }
@@ -216,13 +236,22 @@ export function hostedOnlyProblems(run: Pick<Run, 'id' | 'display_title'>, jobs:
  * `podman run` line and, at or after it, a `nibfin route` line. The messages name the job
  * and the missing piece and quote no log text.
  */
-export function routePodmanProblems(run: Pick<Run, 'id' | 'display_title'>, job: Job, lines: LogLine[], image: string): string[] {
+export function routePodmanProblems(
+  run: Pick<Run, 'id' | 'display_title'>,
+  job: Job,
+  lines: LogLine[],
+  image: string,
+): string[] {
   const out: string[] = [];
-  const imageRe = new RegExp(`Nibfin image: ${image.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}@sha256:[0-9a-f]{64}(?:\\s|$)`);
-  if (!lines.some((l) => imageRe.test(l.text))) out.push(`${describeJob(run, job)} has no \`Nibfin image: ${image}@sha256:<digest>\` line in its log`);
+  const imageRe = new RegExp(
+    `Nibfin image: ${image.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}@sha256:[0-9a-f]{64}(?:\\s|$)`,
+  );
+  if (!lines.some((l) => imageRe.test(l.text)))
+    out.push(`${describeJob(run, job)} has no \`Nibfin image: ${image}@sha256:<digest>\` line in its log`);
   const podman = lines.findIndex((l) => l.text.includes('podman run'));
   if (podman < 0) out.push(`${describeJob(run, job)} has no \`podman run\` line in its log`);
-  else if (!lines.slice(podman).some((l) => l.text.includes('nibfin route'))) out.push(`${describeJob(run, job)} has no \`nibfin route\` line at or after its \`podman run\` line`);
+  else if (!lines.slice(podman).some((l) => l.text.includes('nibfin route')))
+    out.push(`${describeJob(run, job)} has no \`nibfin route\` line at or after its \`podman run\` line`);
   return out;
 }
 
@@ -231,7 +260,8 @@ export function windowAt<W extends { start: number; end: number }>(t: number, wi
   return Number.isNaN(t) ? undefined : windows.find((w) => w.start <= t && t <= w.end);
 }
 
-export const overlap = (a: { start: number; end: number }, b: { start: number; end: number }) => a.start < b.end && b.start < a.end;
+export const overlap = (a: { start: number; end: number }, b: { start: number; end: number }) =>
+  a.start < b.end && b.start < a.end;
 
 /**
  * The common span in which the windows, each on its own Runner, cover every registered
@@ -240,7 +270,13 @@ export const overlap = (a: { start: number; end: number }, b: { start: number; e
  */
 export function busyTogether(windows: Window[], runners: string[]): { start: number; end: number } | undefined {
   const on = windows.map((w) => w.runner);
-  if (!runners.length || windows.length !== runners.length || new Set(on).size !== on.length || !runners.every((r) => on.includes(r))) return undefined;
+  if (
+    !runners.length ||
+    windows.length !== runners.length ||
+    new Set(on).size !== on.length ||
+    !runners.every((r) => on.includes(r))
+  )
+    return undefined;
   const start = Math.max(...windows.map((w) => w.start));
   const end = Math.min(...windows.map((w) => w.end));
   return start < end ? { start, end } : undefined;
@@ -303,16 +339,20 @@ const isoAt = (ms: number) => (Number.isNaN(ms) ? 'unknown' : new Date(ms).toISO
  * contains the comment time `at`, the last one if several do (Proposal R3.13, R3.40).
  */
 export function publishingJob<J extends Job>(jobs: J[], issue: string, at: number): J | undefined {
-  return jobs.filter((j) => {
-    const w = jobWindow(j, issue, 'shape');
-    return !!w && windowAt(at, [w]) !== undefined;
-  }).at(-1);
+  return jobs
+    .filter((j) => {
+      const w = jobWindow(j, issue, 'shape');
+      return !!w && windowAt(at, [w]) !== undefined;
+    })
+    .at(-1);
 }
 
 /** `<id> <started>–<completed or running>` for each job, or `none`. */
 export function describeShapeJobs(jobs: Job[]): string {
   if (jobs.length === 0) return 'none';
-  return jobs.map((j) => `${j.id} ${isoAt(time(j.started_at))}–${j.completed_at ? isoAt(time(j.completed_at)) : 'running'}`).join(', ');
+  return jobs
+    .map((j) => `${j.id} ${isoAt(time(j.started_at))}–${j.completed_at ? isoAt(time(j.completed_at)) : 'running'}`)
+    .join(', ');
 }
 
 /** Up to `max` log lines mentioning `validat…` or `Validator`, trimmed, shortened and quoted (Proposal R1.14). */
@@ -328,12 +368,24 @@ export function validationQuote(lines: LogLine[], max = 3): string {
 }
 
 /** The publishing shape job's log shows no Validator verdict (Proposal R3.13, R3.40). */
-export function noVerdictMessage(o: { job: number; n: number; rewrite: boolean; published: number; lines: LogLine[] }): string {
+export function noVerdictMessage(o: {
+  job: number;
+  n: number;
+  rewrite: boolean;
+  published: number;
+  lines: LogLine[];
+}): string {
   return `shape job ${o.job} of #${o.n}, which ${o.rewrite ? 'rewrote' : 'published'} the Shape at ${isoAt(o.published)}, shows no Validator verdict in its log (nothing observable); its validation lines: ${validationQuote(o.lines)}`;
 }
 
 /** No successful shape job was running when the Shape comment was written (Proposal R3.13, R3.40). */
-export function noPublishingJobMessage(o: { n: number; rewrite: boolean; after: number; published: number; jobs: Job[] }): string {
+export function noPublishingJobMessage(o: {
+  n: number;
+  rewrite: boolean;
+  after: number;
+  published: number;
+  jobs: Job[];
+}): string {
   return `#${o.n}: no successful shape job after ${isoAt(o.after)} was running when the Shape was ${o.rewrite ? 'rewritten' : 'published'} (${isoAt(o.published)}); shape jobs seen: ${describeShapeJobs(o.jobs)}`;
 }
 
@@ -356,7 +408,9 @@ export const BRANCH_WRITES = new Set(['push', 'force_push', 'branch_creation']);
 
 /** Branch writes whose timestamp lies inside the window. */
 export function pushesWithin(acts: Activity[], w: { start: number; end: number }): Activity[] {
-  return acts.filter((a) => BRANCH_WRITES.has(a.activity_type) && time(a.timestamp) >= w.start && time(a.timestamp) <= w.end);
+  return acts.filter(
+    (a) => BRANCH_WRITES.has(a.activity_type) && time(a.timestamp) >= w.start && time(a.timestamp) <= w.end,
+  );
 }
 
 /** Whether a branch ref (`refs/heads/…` or bare) is derived from the Issue number: `nibfin/issue-<n>` and its suffixed variants. */
@@ -379,7 +433,10 @@ export function describeComments(comments: Comment[]): string {
   const head = `read ${comments.length} comment${comments.length === 1 ? '' : 's'}`;
   if (!comments.length) return head;
   const each = comments.map((c, i) => {
-    const text = (c.body ?? '').replace(/<!--[\s\S]*?(-->|$)/g, ' ').replace(/\s+/g, ' ').trim();
+    const text = (c.body ?? '')
+      .replace(/<!--[\s\S]*?(-->|$)/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
     const start = text.length > 80 ? `${text.slice(0, 80).trimEnd()}…` : text;
     const marker = markerOf(c.body);
     return `#${i + 1} ${marker ? `marker ${marker}` : 'no marker'} "${start}"`;
@@ -399,7 +456,10 @@ export function refersToIssue(text: string | null | undefined, repo: string, n: 
   if (!text) return false;
   const r = escapeRegExp(repo);
   const free = '(?<![\\w./-])';
-  return new RegExp(`https://github\\.com/${r}/issues/${n}(?!\\d)|${free}${r}#${n}(?!\\d)|${free}#${n}(?!\\d)`, 'i').test(text);
+  return new RegExp(
+    `https://github\\.com/${r}/issues/${n}(?!\\d)|${free}${r}#${n}(?!\\d)|${free}#${n}(?!\\d)`,
+    'i',
+  ).test(text);
 }
 
 /** The first marked comment that references every Issue in `numbers` of `repo` (R3.6's listing). */
@@ -418,18 +478,27 @@ export function duplicateMarkers(comments: Comment[]): string[] {
 }
 
 /** Whether a job left the queue before `t` (so a hold that starts at `t` cannot be observed). */
-export const startedBefore = (job: Job, t: number) => job.status !== 'queued' && !!job.started_at && time(job.started_at) < t;
+export const startedBefore = (job: Job, t: number) =>
+  job.status !== 'queued' && !!job.started_at && time(job.started_at) < t;
 
 /**
  * R4.23: while the Runners are offline, the job dispatched while they were online is
  * still queued with the same id and label, and the Issue got no new route or stage run.
  */
-export function queuedHoldProblems(recorded: { id: number; label: string; runId: number }, current: Job | undefined, laterRuns: Run[]): string[] {
+export function queuedHoldProblems(
+  recorded: { id: number; label: string; runId: number },
+  current: Job | undefined,
+  laterRuns: Run[],
+): string[] {
   const out: string[] = [];
   if (!current) out.push(`job ${recorded.id} is no longer listed`);
   else {
-    if (current.status !== 'queued') out.push(`job ${recorded.id} is ${current.status}${current.runner_name ? ` on ${current.runner_name}` : ''}, expected queued`);
-    if (!current.labels.includes(recorded.label)) out.push(`job ${recorded.id} has labels ${current.labels.join(', ')}, expected ${recorded.label}`);
+    if (current.status !== 'queued')
+      out.push(
+        `job ${recorded.id} is ${current.status}${current.runner_name ? ` on ${current.runner_name}` : ''}, expected queued`,
+      );
+    if (!current.labels.includes(recorded.label))
+      out.push(`job ${recorded.id} has labels ${current.labels.join(', ')}, expected ${recorded.label}`);
   }
   const other = laterRuns.filter((r) => r.id !== recorded.runId);
   if (other.length) out.push(`new runs appeared: ${other.map((r) => `${r.display_title} (${r.id})`).join(', ')}`);
@@ -456,10 +525,14 @@ export function fixPushProblems(input: {
     for (const a of writes) {
       if (a.ref !== want) out.push(`the ${w.reason} Deliver pushed to ${a.ref} at ${a.timestamp}, not ${want}`);
     }
-    if (!writes.some((a) => a.ref === want)) out.push(`not exercised: the ${w.reason} Deliver pushed nothing to ${want}`);
+    if (!writes.some((a) => a.ref === want))
+      out.push(`not exercised: the ${w.reason} Deliver pushed nothing to ${want}`);
   }
   for (const h of input.headsAfter) {
-    if (h.prHead !== h.branchHead) out.push(`after the ${h.reason} Deliver, PR #${input.prNumber}'s head is ${h.prHead} but ${input.branch} is at ${h.branchHead}`);
+    if (h.prHead !== h.branchHead)
+      out.push(
+        `after the ${h.reason} Deliver, PR #${input.prNumber}'s head is ${h.prHead} but ${input.branch} is at ${h.branchHead}`,
+      );
   }
   const others = input.pullsForBranch.filter((n) => n !== input.prNumber);
   if (others.length) out.push(`other PRs use ${input.branch}: ${others.map((n) => `#${n}`).join(', ')}`);

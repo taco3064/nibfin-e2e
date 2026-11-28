@@ -22,7 +22,8 @@ const SLOT = 'claude-1';
 /** Restarts the slot's user service and waits until its registration is online again. */
 async function restart(kit: Kit, slot: string): Promise<void> {
   const r = await kit.exec(['systemctl', '--user', 'restart', `nibfin-runner-${slot}.service`]);
-  if (r.code !== 0) throw new Error(`restarting nibfin-runner-${slot}.service exited ${r.code}: ${r.stderr.trim().slice(-1000)}`);
+  if (r.code !== 0)
+    throw new Error(`restarting nibfin-runner-${slot}.service exited ${r.code}: ${r.stderr.trim().slice(-1000)}`);
   await remoteWait(kit, `Runner ${slot} to be online after its restart`, DEADLINE.runnerOnline, 10_000, async () => {
     const runner = (await localRunners(kit.github, kit.sandbox.execution)).find((x) => x.slot === slot);
     return runner?.status === 'online' ? true : undefined;
@@ -50,14 +51,20 @@ export function shapeProbeLine(cs: Comment[], secrets: string[]): { ok: boolean;
   let source = 'the Shape comment';
   if (shapeAt < 0) {
     at = cs.findLastIndex((x) => parseProbe(x.body) !== undefined);
-    if (at < 0) return { ok: false, detail: `no Shape comment and no comment with an e2e-probe block (${cs.length} comments)` };
+    if (at < 0)
+      return { ok: false, detail: `no Shape comment and no comment with an e2e-probe block (${cs.length} comments)` };
     source = `no Shape comment; fallback: comment #${at + 1} of ${cs.length}, the latest with an e2e-probe block`;
   }
   const probe = parseProbe(cs[at]?.body ?? '');
   if (!probe) return { ok: false, detail: 'the Shape comment has no e2e-probe block' };
   const line = first(probe, 'first_instruction_line');
-  if (line === undefined) return { ok: false, detail: `the e2e-probe block in ${source} has no first_instruction_line; its keys: ${excerpt([...probe.keys()].join(', ') || 'none', 200, secrets)}` };
-  if (line.trim() === OVERRIDE_MARKER) return { ok: true, detail: `${source}: first_instruction_line is the override marker` };
+  if (line === undefined)
+    return {
+      ok: false,
+      detail: `the e2e-probe block in ${source} has no first_instruction_line; its keys: ${excerpt([...probe.keys()].join(', ') || 'none', 200, secrets)}`,
+    };
+  if (line.trim() === OVERRIDE_MARKER)
+    return { ok: true, detail: `${source}: first_instruction_line is the override marker` };
   return { ok: false, detail: `first_instruction_line in ${source} is "${excerpt(line, 120, secrets)}"` };
 }
 
@@ -76,7 +83,10 @@ export function modelChoice(kitFor: KitFor): Scenario {
       const body = async (): Promise<Outcome> => {
         await prepareFixture(kit, execution, {
           files: [
-            { path: '.nibfin.json', content: json({ skills: { shape: { mode: 'override', path: '.nibfin/skills/shape-override.md' } } }) },
+            {
+              path: '.nibfin.json',
+              content: json({ skills: { shape: { mode: 'override', path: '.nibfin/skills/shape-override.md' } } }),
+            },
             { path: '.nibfin/skills/shape-override.md', content: OVERRIDE_TEXT },
             PROBE_FILE,
           ],
@@ -87,21 +97,50 @@ export function modelChoice(kitFor: KitFor): Scenario {
         await restart(kit, SLOT);
 
         const run = (repo: string) =>
-          runFirstJob(kit, repo, { title: 'e2e model choice: add double(n)', file: `model-choice-${repo.split('/')[1]}`, deadlineMs: DEADLINE.shape, stage: 'Shape', pauseWhenShaped: true, onOpen: (n) => opened.push([repo, n]) });
+          runFirstJob(kit, repo, {
+            title: 'e2e model choice: add double(n)',
+            file: `model-choice-${repo.split('/')[1]}`,
+            deadlineMs: DEADLINE.shape,
+            stage: 'Shape',
+            pauseWhenShaped: true,
+            onOpen: (n) => opened.push([repo, n]),
+          });
         // Both Jobs are awaited, also when one fails, so neither runs on while the Runner is restored.
         const settled = await Promise.allSettled([run(execution), run(peer)]);
         const failedRuns = settled.flatMap((s) => (s.status === 'rejected' ? [message(s.reason)] : []));
         if (failedRuns.length) throw new Error(failedRuns.join('; '));
         const [ex, pe] = settled.map((s) => (s as PromiseFulfilledResult<FirstJob>).value) as [FirstJob, FirstJob];
         const slots = { ex: await slotOf(kit, ex), pe: await slotOf(kit, pe) };
-        if (slots.ex === slots.pe) return { status: 'failed', reason: `both Jobs landed on one Runner (${slots.ex}), so the per-Runner model cannot be told apart` };
+        if (slots.ex === slots.pe)
+          return {
+            status: 'failed',
+            reason: `both Jobs landed on one Runner (${slots.ex}), so the per-Runner model cannot be told apart`,
+          };
         const model = (j: FirstJob) => initEvents(j.log?.text ?? '')[0]?.model;
-        const bySlot = new Map([[slots.ex, ex], [slots.pe, pe]]);
+        const bySlot = new Map([
+          [slots.ex, ex],
+          [slots.pe, pe],
+        ]);
         const m1 = model(bySlot.get('claude-1') as FirstJob);
         const m2 = model(bySlot.get('claude-2') as FirstJob);
-        c.hold('R6.26', 'the Runner whose .env sets NIBFIN_MODEL=sonnet ran a Sonnet model', /sonnet/i.test(m1 ?? ''), m1 ?? 'no init event');
-        c.hold('R6.27', 'the Runner without NIBFIN_MODEL ran the Claude default, Opus', /opus/i.test(m2 ?? ''), m2 ?? 'no init event');
-        c.hold('R6.28', 'the repository variable NIBFIN_MODEL=haiku chose no model', ![m1, m2].some((m) => /haiku/i.test(m ?? '')), `${m1 ?? '-'}, ${m2 ?? '-'}`);
+        c.hold(
+          'R6.26',
+          'the Runner whose .env sets NIBFIN_MODEL=sonnet ran a Sonnet model',
+          /sonnet/i.test(m1 ?? ''),
+          m1 ?? 'no init event',
+        );
+        c.hold(
+          'R6.27',
+          'the Runner without NIBFIN_MODEL ran the Claude default, Opus',
+          /opus/i.test(m2 ?? ''),
+          m2 ?? 'no init event',
+        );
+        c.hold(
+          'R6.28',
+          'the repository variable NIBFIN_MODEL=haiku chose no model',
+          ![m1, m2].some((m) => /haiku/i.test(m ?? '')),
+          `${m1 ?? '-'}, ${m2 ?? '-'}`,
+        );
 
         // R7.6 reads the comments as they were when shaped was observed; later comments do not count.
         let atShaped = ex.shaped?.comments;
@@ -137,7 +176,11 @@ export function modelChoice(kitFor: KitFor): Scenario {
         restore = `restoring Runner ${SLOT} failed: ${message(error)}`;
       }
       for (const [repo, n] of opened) await close(kit, repo, n).catch(() => {});
-      if (restore) return { status: 'failed', reason: outcome.status === 'failed' ? `${restore}; the scenario had also failed: ${outcome.reason}` : restore };
+      if (restore)
+        return {
+          status: 'failed',
+          reason: outcome.status === 'failed' ? `${restore}; the scenario had also failed: ${outcome.reason}` : restore,
+        };
       return outcome;
     },
   };

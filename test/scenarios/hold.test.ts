@@ -20,7 +20,12 @@ function withCi(enforcement = 'active') {
     target: 'branch',
     enforcement,
     conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } },
-    rules: [{ type: 'required_status_checks', parameters: { strict_required_status_checks_policy: false, required_status_checks: [{ context: 'test' }] } } as { type: string }],
+    rules: [
+      {
+        type: 'required_status_checks',
+        parameters: { strict_required_status_checks_policy: false, required_status_checks: [{ context: 'test' }] },
+      } as { type: string },
+    ],
   };
   (h.repo(EXEC).rulesets as FakeRuleset[]).push(ci);
   return { h, ci };
@@ -31,7 +36,10 @@ const writesOf = (writes: string[]) => writes.filter((w) => w.includes('/ruleset
 
 test('without the lift, the fake refuses the direct write as GitHub did in the gate', async () => {
   const { h } = withCi();
-  await rejects(putFile(h.kit.github, EXEC, HOLD_PATH, 'x', 'm'), (e: Error) => e.message.includes(RULE_VIOLATION) && e.message.includes('409'));
+  await rejects(
+    putFile(h.kit.github, EXEC, HOLD_PATH, 'x', 'm'),
+    (e: Error) => e.message.includes(RULE_VIOLATION) && e.message.includes('409'),
+  );
 });
 
 test('with an active e2e-ci, installing and removing the hold lift the ruleset for the write and restore it to active', async () => {
@@ -51,7 +59,10 @@ test('with an active e2e-ci, installing and removing the hold lift the ruleset f
 
   // Only enforcement was switched: every other field is as before.
   equal(JSON.stringify({ ...ci, enforcement: undefined }), before);
-  deepEqual((h.repo(EXEC).rulesets as FakeRuleset[]).map((r) => r.name), [CI_RULESET]);
+  deepEqual(
+    (h.repo(EXEC).rulesets as FakeRuleset[]).map((r) => r.name),
+    [CI_RULESET],
+  );
 });
 
 test('with no ruleset, the hold is installed and removed by the direct write alone', async () => {
@@ -61,7 +72,10 @@ test('with no ruleset, the hold is installed and removed by the direct write alo
   await removeHold(h.kit.github, EXEC);
   equal(h.repo(EXEC).mainFiles.has(HOLD_PATH), false);
   deepEqual(writesOf(h.fake.writes), [`PUT ${CONTENTS}`, `DELETE ${CONTENTS}`]);
-  equal(h.fake.writes.some((w) => w.includes('/rulesets')), false);
+  equal(
+    h.fake.writes.some((w) => w.includes('/rulesets')),
+    false,
+  );
 });
 
 test('an e2e-ci that is not active is left as it is', async () => {
@@ -69,13 +83,20 @@ test('an e2e-ci that is not active is left as it is', async () => {
   await installHold(h.kit.github, EXEC);
   ok(h.repo(EXEC).mainFiles.has(HOLD_PATH));
   equal(ci.enforcement, 'disabled');
-  equal(h.fake.writes.some((w) => w.includes('/rulesets')), false);
+  equal(
+    h.fake.writes.some((w) => w.includes('/rulesets')),
+    false,
+  );
 });
 
 test('a failing file write still restores the ruleset, and the original error is thrown', async () => {
   const { h, ci } = withCi();
   h.fake.failures.set(`PUT ${CONTENTS}`, 500);
-  await rejects(installHold(h.kit.github, EXEC), (e: Error) => /PUT .*e2e-hold\.yml returned 500: refused by fake/.test(e.message) && !e.message.includes(CI_RULESET));
+  await rejects(
+    installHold(h.kit.github, EXEC),
+    (e: Error) =>
+      /PUT .*e2e-hold\.yml returned 500: refused by fake/.test(e.message) && !e.message.includes(CI_RULESET),
+  );
   equal(ci.enforcement, 'active');
   deepEqual(writesOf(h.fake.writes), [`PUT ${RULESET}`, `PUT ${CONTENTS}`, `PUT ${RULESET}`]);
 });
@@ -83,17 +104,27 @@ test('a failing file write still restores the ruleset, and the original error is
 /** A client whose ruleset PUTs after the first are answered by `restore`. */
 function failingRestore(h: ReturnType<typeof setup>, restore: () => Response) {
   let puts = 0;
-  return createGitHub(() => 'tok', async (input, init) => {
-    if ((init?.method ?? 'GET') === 'PUT' && new URL(String(input)).pathname === RULESET && ++puts > 1) return restore();
-    return h.fake.fetch(input, init);
-  });
+  return createGitHub(
+    () => 'tok',
+    async (input, init) => {
+      if ((init?.method ?? 'GET') === 'PUT' && new URL(String(input)).pathname === RULESET && ++puts > 1)
+        return restore();
+      return h.fake.fetch(input, init);
+    },
+  );
 }
 
 test('a failed restore fails plainly with the ruleset name and the enforcement read back', async () => {
   const { h, ci } = withCi();
-  const gh = failingRestore(h, () => new Response(JSON.stringify({ message: 'Resource not accessible' }), { status: 403 }));
+  const gh = failingRestore(
+    h,
+    () => new Response(JSON.stringify({ message: 'Resource not accessible' }), { status: 403 }),
+  );
   await rejects(installHold(gh, EXEC), (e: Error) => {
-    match(e.message, new RegExp(`^${CI_RULESET} on ${EXEC} reads back enforcement disabled after restore; expected active`));
+    match(
+      e.message,
+      new RegExp(`^${CI_RULESET} on ${EXEC} reads back enforcement disabled after restore; expected active`),
+    );
     match(e.message, /restore failed .*403: Resource not accessible/);
     return true;
   });
@@ -103,7 +134,10 @@ test('a failed restore fails plainly with the ruleset name and the enforcement r
 test('a restore that does not stick is caught by the read-back', async () => {
   const { h } = withCi();
   const gh = failingRestore(h, () => new Response(JSON.stringify({}), { status: 200 }));
-  await rejects(removeHold(gh, EXEC), new RegExp(`${CI_RULESET} on ${EXEC} reads back enforcement disabled after restore; expected active`));
+  await rejects(
+    removeHold(gh, EXEC),
+    new RegExp(`${CI_RULESET} on ${EXEC} reads back enforcement disabled after restore; expected active`),
+  );
 });
 
 test('a failed write and a failed restore report both, with the write as the cause', async () => {

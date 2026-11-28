@@ -30,11 +30,17 @@ export interface Review {
 }
 
 /** What is wrong with a review GitHub created for `event` on `commit`. */
-export function reviewProblems(r: Review, state: 'CHANGES_REQUESTED' | 'APPROVED', commit: string, pr: number): string[] {
+export function reviewProblems(
+  r: Review,
+  state: 'CHANGES_REQUESTED' | 'APPROVED',
+  commit: string,
+  pr: number,
+): string[] {
   const out: string[] = [];
   if (r.state !== state) out.push(`review ${r.id} on PR #${pr} has state ${r.state}, expected ${state}`);
   if (r.commit_id !== commit) out.push(`review ${r.id} on PR #${pr} is on ${r.commit_id}, expected ${commit}`);
-  if (!r.submitted_at || Number.isNaN(time(r.submitted_at))) out.push(`review ${r.id} on PR #${pr} has no submitted_at`);
+  if (!r.submitted_at || Number.isNaN(time(r.submitted_at)))
+    out.push(`review ${r.id} on PR #${pr} has no submitted_at`);
   return out;
 }
 
@@ -65,7 +71,8 @@ export interface FixEvidence {
 }
 
 const at = (e: { review: { submitted_at: string } }) => time(e.review.submitted_at);
-const named = (e: { pr: number; review: { id: number; submitted_at: string } }) => `PR #${e.pr} review ${e.review.id} (submitted ${e.review.submitted_at})`;
+const named = (e: { pr: number; review: { id: number; submitted_at: string } }) =>
+  `PR #${e.pr} review ${e.review.id} (submitted ${e.review.submitted_at})`;
 
 /** The deliver jobs created at or after the review, oldest first. */
 export function fixJobs(e: { jobs: FixJob[]; review: { submitted_at: string } }): FixJob[] {
@@ -74,7 +81,12 @@ export function fixJobs(e: { jobs: FixJob[]; review: { submitted_at: string } })
 
 /** When the last completed deliver job after the review ended (the review time when none did): Nibfin's next review-awaited comment comes after it. */
 export function fixDoneAt(e: { jobs: FixJob[]; review: { submitted_at: string } }): number {
-  return Math.max(at(e), ...fixJobs(e).map((j) => time(j.completed_at)).filter((t) => !Number.isNaN(t)));
+  return Math.max(
+    at(e),
+    ...fixJobs(e)
+      .map((j) => time(j.completed_at))
+      .filter((t) => !Number.isNaN(t)),
+  );
 }
 
 /** What breaks R3.27 for the changes-requested review: no review-fix Deliver after it, no push, or a head without the asked change. */
@@ -85,13 +97,18 @@ export function reviewFixProblems(e: FixEvidence): string[] {
   if (!late.length) {
     const seen = e.jobs.map((j) => `${j.id} (created ${String(j.created_at)})`).join(', ') || 'none';
     out.push(`no deliver job started after ${named(e)}; deliver jobs seen: ${seen}`);
-  } else if (!done.length) out.push(`no deliver job after ${named(e)} completed: ${late.map((j) => `${j.id} (${j.status})`).join(', ')}`);
-  else if (!done.some((j) => j.reason === 'review')) out.push(`the deliver jobs after ${named(e)} carry REASON ${done.map((j) => `${j.reason ?? 'unknown'} (job ${j.id})`).join(', ')}, expected review`);
+  } else if (!done.length)
+    out.push(`no deliver job after ${named(e)} completed: ${late.map((j) => `${j.id} (${j.status})`).join(', ')}`);
+  else if (!done.some((j) => j.reason === 'review'))
+    out.push(
+      `the deliver jobs after ${named(e)} carry REASON ${done.map((j) => `${j.reason ?? 'unknown'} (job ${j.id})`).join(', ')}, expected review`,
+    );
   const pushes = e.pushes.filter((p) => p.activity_type !== 'branch_deletion' && time(p.timestamp) >= at(e));
   if (!pushes.length) out.push(`no push to the branch after ${named(e)}`);
   if (e.head === e.reviewed) out.push(`PR #${e.pr}'s head is still the reviewed ${e.reviewed}`);
   else if (e.content === undefined) out.push(`${e.file} is missing at the new head ${e.head}`);
-  else if (!new RegExp(`\\b${ASKED}\\b`).test(e.content)) out.push(`${e.file} at the new head ${e.head} has no \`${ASKED}\`, the change ${named(e)} asked for`);
+  else if (!new RegExp(`\\b${ASKED}\\b`).test(e.content))
+    out.push(`${e.file} at the new head ${e.head} has no \`${ASKED}\`, the change ${named(e)} asked for`);
   return out;
 }
 
@@ -109,8 +126,10 @@ export function approvalMergeProblems(e: MergeEvidence): string[] {
   const out: string[] = [];
   if (!e.merged) out.push(`PR #${e.pr} did not merge after ${named(e)}`);
   else {
-    if (!(time(e.merged.merged_at) >= at(e))) out.push(`PR #${e.merged.number} merged at ${String(e.merged.merged_at)}, before ${named(e)}`);
-    if (e.merged.head !== e.fixed) out.push(`PR #${e.merged.number} merged head ${e.merged.head}, not the approved ${e.fixed}`);
+    if (!(time(e.merged.merged_at) >= at(e)))
+      out.push(`PR #${e.merged.number} merged at ${String(e.merged.merged_at)}, before ${named(e)}`);
+    if (e.merged.head !== e.fixed)
+      out.push(`PR #${e.merged.number} merged head ${e.merged.head}, not the approved ${e.fixed}`);
   }
   if (!e.delivered) out.push(`the Issue did not close with delivered after ${named(e)}`);
   return out;
@@ -132,7 +151,10 @@ async function submit(k: Kit, pr: number, body: Record<string, unknown>): Promis
     return data;
   } catch (error) {
     const status = error instanceof GitHubError ? ` (HTTP ${error.status})` : '';
-    throw new Error(`${RULE}: the collaborator could not submit a ${String(body.event)} review on PR #${pr}${status}: ${message(error)}; widening E2E_PEER_GITHUB_TOKEN is an Owner decision`, { cause: error });
+    throw new Error(
+      `${RULE}: the collaborator could not submit a ${String(body.event)} review on PR #${pr}${status}: ${message(error)}; widening E2E_PEER_GITHUB_TOKEN is an Owner decision`,
+      { cause: error },
+    );
   }
 }
 
@@ -150,19 +172,29 @@ export const reviewEvents: Scenario = lifecycle({
       await k.ruleset(RULESET, [APPROVAL_RULE]);
       const slug = k.slug('re');
       const file = `src/${slug}.js`;
-      const issue = await k.file(exec, { scenario: 'review-events', title: 'Add double', body: changeRequest(slug, 'double', 'returns its argument times two'), labels: ['scope'], assignees: [owner.login] });
+      const issue = await k.file(exec, {
+        scenario: 'review-events',
+        title: 'Add double',
+        body: changeRequest(slug, 'double', 'returns its argument times two'),
+        labels: ['scope'],
+        assignees: [owner.login],
+      });
       const num = (n = issue.number);
       const branch = `nibfin/issue-${num}`;
       const show = k.show(exec, num);
       const prOf = (s: { pulls: Map<string, Pull[]> }) => s.pulls.get(exec)?.find((p) => p.head.ref === branch);
 
       // 1–2: the PR waits for an approving review (R3.26), without pending and unmerged.
-      const pr0 = await k.obs.until(`#${num}'s PR`, (s) => prOf(s), DEADLINE.stage, show, { gonePast: k.closeGone(exec, num) });
+      const pr0 = await k.obs.until(`#${num}'s PR`, (s) => prOf(s), DEADLINE.stage, show, {
+        gonePast: k.closeGone(exec, num),
+      });
       const prn = pr0.number;
       const waits = await k.obs.until(
         `a marked comment on PR #${prn} saying the merge waits for a review`,
         async (s) => {
-          const reviewed = (await k.agentJobs(s, exec, num, ['review'])).map((j) => time(j.started_at)).filter((t) => !Number.isNaN(t));
+          const reviewed = (await k.agentJobs(s, exec, num, ['review']))
+            .map((j) => time(j.started_at))
+            .filter((t) => !Number.isNaN(t));
           if (!reviewed.length) return undefined;
           return awaitingReview(await k.obs.comments(exec, prn), Math.min(...reviewed)) ? s : undefined;
         },
@@ -172,12 +204,28 @@ export const reviewEvents: Scenario = lifecycle({
       );
       const calm = await k.settle(`the review-awaited comment on PR #${prn}`, waits.at, k.runsOf(exec, num));
       const pr = prOf(calm) ?? pr0;
-      if (pr.merged_at) return { status: 'failed', reason: `${RULE}: not exercised: PR #${prn} merged at ${pr.merged_at} while the approval rule was in force, before any review` };
-      if (k.labels(calm, exec, num).includes('pending')) return { status: 'failed', reason: `${RULE}: not exercised: #${num} has pending while PR #${prn} waits for a review; ${await show(calm)}` };
-      if (pr.user?.login === peer.login) return { status: 'failed', reason: `${RULE}: not exercised: PR #${prn} is authored by the collaborator ${peer.login}, who cannot review it` };
+      if (pr.merged_at)
+        return {
+          status: 'failed',
+          reason: `${RULE}: not exercised: PR #${prn} merged at ${pr.merged_at} while the approval rule was in force, before any review`,
+        };
+      if (k.labels(calm, exec, num).includes('pending'))
+        return {
+          status: 'failed',
+          reason: `${RULE}: not exercised: #${num} has pending while PR #${prn} waits for a review; ${await show(calm)}`,
+        };
+      if (pr.user?.login === peer.login)
+        return {
+          status: 'failed',
+          reason: `${RULE}: not exercised: PR #${prn} is authored by the collaborator ${peer.login}, who cannot review it`,
+        };
       const reviewed = pr.head.sha;
       const before = await k.fileOn(exec, reviewed, file);
-      if (before !== undefined && new RegExp(`\\b${ASKED}\\b`).test(before)) return { status: 'failed', reason: `${RULE}: not exercised: ${file} at PR #${prn}'s head ${reviewed} already has \`${ASKED}\`` };
+      if (before !== undefined && new RegExp(`\\b${ASKED}\\b`).test(before))
+        return {
+          status: 'failed',
+          reason: `${RULE}: not exercised: ${file} at PR #${prn}'s head ${reviewed} already has \`${ASKED}\``,
+        };
 
       // 3: the collaborator requests changes on the current head. From here the harness only reads.
       const asked = await submit(k, prn, { commit_id: reviewed, event: 'REQUEST_CHANGES', body: reviewBody(slug) });
@@ -192,7 +240,9 @@ export const reviewEvents: Scenario = lifecycle({
         async (s) => {
           const head = prOf(s)?.head.sha;
           if (!head || head === reviewed) return undefined;
-          const job = (await k.agentJobs(s, exec, num, ['deliver'])).find((j) => time(j.created_at ?? j.run.created_at) >= time(askedAt) && j.status === 'completed');
+          const job = (await k.agentJobs(s, exec, num, ['deliver'])).find(
+            (j) => time(j.created_at ?? j.run.created_at) >= time(askedAt) && j.status === 'completed',
+          );
           return job ? { job, head, s } : undefined;
         },
         DEADLINE.stage,
@@ -210,7 +260,14 @@ export const reviewEvents: Scenario = lifecycle({
             reason = `unreadable: ${message(error)}`;
           }
         }
-        jobs.push({ id: j.id, created_at: created, completed_at: j.completed_at, status: j.status, conclusion: j.conclusion, reason });
+        jobs.push({
+          id: j.id,
+          created_at: created,
+          completed_at: j.completed_at,
+          status: j.status,
+          conclusion: j.conclusion,
+          reason,
+        });
       }
       const fixProblems = reviewFixProblems({
         pr: prn,
@@ -222,8 +279,12 @@ export const reviewEvents: Scenario = lifecycle({
         content: await k.fileOn(exec, fix.head, file),
         file,
       });
-      const wakes = fix.s.runs.filter((r) => r.repo === exec && r.event === 'pull_request_review' && time(r.created_at) >= time(askedAt));
-      c.note(`runs on pull_request_review after review ${asked.id}: ${wakes.map((r) => `${r.name} ${r.id}`).join(', ') || 'none'}`);
+      const wakes = fix.s.runs.filter(
+        (r) => r.repo === exec && r.event === 'pull_request_review' && time(r.created_at) >= time(askedAt),
+      );
+      c.note(
+        `runs on pull_request_review after review ${asked.id}: ${wakes.map((r) => `${r.name} ${r.id}`).join(', ') || 'none'}`,
+      );
       if (!c.none(RULE, fixProblems)) return c.outcome('');
 
       // 5: the review again waits for an approval on the new head.
@@ -239,21 +300,43 @@ export const reviewEvents: Scenario = lifecycle({
         show,
         { gonePast: k.closeGone(exec, num) },
       );
-      const calm2 = await k.settle(`the review-awaited comment on PR #${prn} after the fix`, again.at, k.runsOf(exec, num));
+      const calm2 = await k.settle(
+        `the review-awaited comment on PR #${prn} after the fix`,
+        again.at,
+        k.runsOf(exec, num),
+      );
       const pr2 = prOf(calm2);
       if (!pr2) return { status: 'failed', reason: `${RULE}: PR #${prn} is no longer listed after the review fix` };
-      c.check('R3.27', !pr2.merged_at, `PR #${prn} merged at ${String(pr2.merged_at)} after ${askedName}, without an approval`);
-      c.check('R3.27', !k.labels(calm2, exec, num).includes('pending'), `#${num} has pending after the review fix of ${askedName}; ${await show(calm2)}`);
+      c.check(
+        'R3.27',
+        !pr2.merged_at,
+        `PR #${prn} merged at ${String(pr2.merged_at)} after ${askedName}, without an approval`,
+      );
+      c.check(
+        'R3.27',
+        !k.labels(calm2, exec, num).includes('pending'),
+        `#${num} has pending after the review fix of ${askedName}; ${await show(calm2)}`,
+      );
       if (c.failed) return c.outcome('');
       const fixed = pr2.head.sha;
 
       // 6: the same collaborator approves the fixed head; that approval alone lets the merge continue.
-      const approval = await submit(k, prn, { commit_id: fixed, event: 'APPROVE', body: 'Approved by the nibfin-e2e collaborator.' });
+      const approval = await submit(k, prn, {
+        commit_id: fixed,
+        event: 'APPROVE',
+        body: 'Approved by the nibfin-e2e collaborator.',
+      });
       if (!c.none(RULE, reviewProblems(approval, 'APPROVED', fixed, prn))) return c.outcome('');
       const approvedAt = approval.submitted_at as string;
       const approvedName = `PR #${prn} review ${approval.id} (approved, submitted ${approvedAt})`;
       k.ctx.log(`review-events: ${approvedName} on ${fixed}`);
-      await k.obs.until(`#${num} to close with delivered after ${approvedName}`, (s) => k.delivered(s, exec, num), DEADLINE.delivery, show, { gonePast: k.closeGone(exec, num) });
+      await k.obs.until(
+        `#${num} to close with delivered after ${approvedName}`,
+        (s) => k.delivered(s, exec, num),
+        DEADLINE.delivery,
+        show,
+        { gonePast: k.closeGone(exec, num) },
+      );
       const s = await k.obs.fresh();
       const merged = (await k.obs.pullsByHead(exec, branch)).find((p) => p.merged_at);
       c.none(
@@ -266,7 +349,9 @@ export const reviewEvents: Scenario = lifecycle({
           delivered: !!k.delivered(s, exec, num),
         }),
       );
-      return c.outcome(`#${num}: ${askedName} alone led to a review-fix Deliver that added \`${ASKED}\` (${fix.head}); ${approvedName} alone let PR #${prn} merge and #${num} close with delivered`);
+      return c.outcome(
+        `#${num}: ${askedName} alone led to a review-fix Deliver that added \`${ASKED}\` (${fix.head}); ${approvedName} alone let PR #${prn} merge and #${num} close with delivered`,
+      );
     } finally {
       await k.deleteRuleset(RULESET).catch((e: unknown) => k.ctx.log(`deleting ${RULESET} failed: ${message(e)}`));
       await k.pauseOpen(exec, [n]);

@@ -53,13 +53,18 @@ for await (const line of createInterface({ input: process.stdin })) {
 export const RULESYNC_FILES: FixtureFile[] = [
   {
     path: '.rulesync/rules/e2e-probe.md',
-    content: '---\nroot: true\ntargets: ["*"]\ndescription: "nibfin-e2e sandbox"\nglobs: ["**/*"]\n---\n\n# nibfin-e2e sandbox\n\nThis repository is an automated e2e sandbox. Keep changes small.\n',
+    content:
+      '---\nroot: true\ntargets: ["*"]\ndescription: "nibfin-e2e sandbox"\nglobs: ["**/*"]\n---\n\n# nibfin-e2e sandbox\n\nThis repository is an automated e2e sandbox. Keep changes small.\n',
   },
   {
     path: '.rulesync/skills/e2e-probe-skill/SKILL.md',
-    content: '---\nname: e2e-probe-skill\ndescription: nibfin-e2e probe skill; it is never needed for real work.\ntargets: ["*"]\n---\n\nThis skill exists only so the e2e harness can see that rulesync generated it.\n',
+    content:
+      '---\nname: e2e-probe-skill\ndescription: nibfin-e2e probe skill; it is never needed for real work.\ntargets: ["*"]\n---\n\nThis skill exists only so the e2e harness can see that rulesync generated it.\n',
   },
-  { path: '.rulesync/mcp.json', content: json({ mcpServers: { 'e2e-probe': { type: 'stdio', command: 'node', args: ['e2e/mcp-server.mjs'] } } }) },
+  {
+    path: '.rulesync/mcp.json',
+    content: json({ mcpServers: { 'e2e-probe': { type: 'stdio', command: 'node', args: ['e2e/mcp-server.mjs'] } } }),
+  },
   { path: 'e2e/mcp-server.mjs', content: MCP_SERVER },
 ];
 
@@ -91,4 +96,5 @@ export const TOOLS = { node: '22.15.0', python: '3.13.7', go: '1.24.2' } as cons
 export const TOOL_OUTPUT = { node: `v${TOOLS.node}`, python: `Python ${TOOLS.python}`, go: `go${TOOLS.go}` } as const;
 
 /** A minimal development task on the sandbox template. */
-export const TASK_BODY = 'Add `double(n)` to `src/sum.js`, returning `n * 2`, with a test in `test/sum.test.js`.\n\nThis is an automated nibfin-e2e fixture.';
+export const TASK_BODY =
+  'Add `double(n)` to `src/sum.js`, returning `n * 2`, with a test in `test/sum.test.js`.\n\nThis is an automated nibfin-e2e fixture.';

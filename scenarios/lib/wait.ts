@@ -22,7 +22,11 @@ const show = (v: unknown) => {
  * Polls `read` within this run until `until` holds, and fails with the last value seen
  * once the deadline passes. A throw from `read` counts as a value and is retried.
  */
-export async function waitFor<T>(read: () => Promise<T>, until: (value: T) => boolean, options: WaitOptions): Promise<T> {
+export async function waitFor<T>(
+  read: () => Promise<T>,
+  until: (value: T) => boolean,
+  options: WaitOptions,
+): Promise<T> {
   const now = options.now ?? Date.now;
   const pause = options.sleep ?? sleep;
   const interval = options.intervalMs ?? 10_000;
@@ -40,5 +44,7 @@ export async function waitFor<T>(read: () => Promise<T>, until: (value: T) => bo
     if (now() >= end) break;
     await untilAborted(pause(Math.max(0, Math.min(interval, end - now()))), options.signal);
   }
-  throw new Error(`timed out after ${Math.round(options.deadlineMs / 1000)} s waiting for ${options.what}; last seen: ${show(last)}`);
+  throw new Error(
+    `timed out after ${Math.round(options.deadlineMs / 1000)} s waiting for ${options.what}; last seen: ${show(last)}`,
+  );
 }

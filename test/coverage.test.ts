@@ -8,7 +8,8 @@ import { map, passed, scenario, scenarioA, scenarios, step } from './fixtures.ts
 test('parseRuleId accepts R<section>.<n> only', () => {
   deepEqual(parseRuleId('R5.12'), { section: 5, n: 12 });
   deepEqual(parseRuleId('R0.1'), { section: 0, n: 1 });
-  for (const bad of ['R5', 'R5.0', 'R05.1', 'r5.1', 'R5.1 ', 'R-1.2', 5]) equal(parseRuleId(bad), undefined, String(bad));
+  for (const bad of ['R5', 'R5.0', 'R05.1', 'r5.1', 'R5.1 ', 'R-1.2', 5])
+    equal(parseRuleId(bad), undefined, String(bad));
 });
 
 test('validateMap accepts a well-formed map', () => {
@@ -19,7 +20,13 @@ test('validateMap reports each malformed entry', () => {
   const cases: [unknown, RegExp][] = [
     [{}, /must be an array/],
     [[{ id: 'R1', platforms: ['linux'], scenarios: [] }], /id must match/],
-    [[{ id: 'R1.1', platforms: ['linux'], scenarios: [] }, { id: 'R1.1', notE2e: 'x' }], /duplicate id/],
+    [
+      [
+        { id: 'R1.1', platforms: ['linux'], scenarios: [] },
+        { id: 'R1.1', notE2e: 'x' },
+      ],
+      /duplicate id/,
+    ],
     [[{ id: 'R1.1', platforms: [], scenarios: [] }], /platforms must be a non-empty array/],
     [[{ id: 'R1.1', platforms: ['bsd'], scenarios: [] }], /unknown platform "bsd"/],
     [[{ id: 'R1.1', platforms: ['linux'] }], /exactly one of/],
@@ -31,7 +38,10 @@ test('validateMap reports each malformed entry', () => {
   for (const [raw, expected] of cases) {
     const { entries, errors } = validateMap(raw);
     deepEqual(entries, []);
-    ok(errors.some((e) => expected.test(e)), `${JSON.stringify(raw)} -> ${errors.join('; ')}`);
+    ok(
+      errors.some((e) => expected.test(e)),
+      `${JSON.stringify(raw)} -> ${errors.join('; ')}`,
+    );
   }
 });
 
@@ -41,8 +51,17 @@ test('validateRegistry reports duplicates, bad rule ids and unknown steps', () =
     [scenario('a', ['R3.1'], ['linux'], passed, ['missing']), scenario('a', ['bad'], [], passed)],
     [step('s', passed), step('s', passed)],
   );
-  for (const expected of [/step s: duplicate id/, /scenario a: duplicate id/, /malformed rule id "bad"/, /at least one platform/, /unknown provisioning step missing/]) {
-    ok(errors.some((e) => expected.test(e)), `${expected} in ${errors.join('; ')}`);
+  for (const expected of [
+    /step s: duplicate id/,
+    /scenario a: duplicate id/,
+    /malformed rule id "bad"/,
+    /at least one platform/,
+    /unknown provisioning step missing/,
+  ]) {
+    ok(
+      errors.some((e) => expected.test(e)),
+      `${expected} in ${errors.join('; ')}`,
+    );
   }
 });
 
@@ -66,7 +85,10 @@ test('crossCheck reports every inconsistency', () => {
     /scenario a: declares R0.1, which the Proposal marks 不測/,
     /scenario a: declares R9.9, which is not in the coverage map/,
   ]) {
-    ok(errors.some((e) => expected.test(e)), `${expected} in ${errors.join('; ')}`);
+    ok(
+      errors.some((e) => expected.test(e)),
+      `${expected} in ${errors.join('; ')}`,
+    );
   }
 });
 
@@ -78,11 +100,14 @@ test('computeCoverage counts a rule only when every required platform has a scen
     uncovered: [{ id: 'R5.14', missingPlatforms: ['macos'] }],
   });
   const linuxOnly = computeCoverage(map, [scenarioA]);
-  deepEqual(linuxOnly.uncovered.map((u) => [u.id, u.missingPlatforms]), [
-    ['R3.2', ['windows']],
-    ['R5.13', ['windows']],
-    ['R5.14', ['macos']],
-  ]);
+  deepEqual(
+    linuxOnly.uncovered.map((u) => [u.id, u.missingPlatforms]),
+    [
+      ['R3.2', ['windows']],
+      ['R5.13', ['windows']],
+      ['R5.14', ['macos']],
+    ],
+  );
   equal(computeCoverage([{ id: 'R0.1', notE2e: 'x' }], []).percent, 100);
 });
 

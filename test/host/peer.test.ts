@@ -23,7 +23,8 @@ export function stubGitHub(handler: Handler) {
   const gh: GitHub = {
     async rest<T>(method: string, path: string, body?: unknown, allow: number[] = []) {
       const r = answer(method, path, body);
-      if (r.status >= 400 && !allow.includes(r.status)) throw new Error(`GitHub ${method} ${path} returned ${r.status}`);
+      if (r.status >= 400 && !allow.includes(r.status))
+        throw new Error(`GitHub ${method} ${path} returned ${r.status}`);
       return { status: r.status, data: r.data as T };
     },
     async list<T>(path: string, key?: string) {
@@ -42,13 +43,17 @@ export function stubGitHub(handler: Handler) {
 }
 
 const INNER = 10;
-const inner = (argv: string[]) => (argv[0] === 'sudo' && argv[1] === '-u' && argv[5] === '/bin/sh' ? argv.slice(INNER) : undefined);
+const inner = (argv: string[]) =>
+  argv[0] === 'sudo' && argv[1] === '-u' && argv[5] === '/bin/sh' ? argv.slice(INNER) : undefined;
 
 test('peerArgv runs as e2epeer through sudo and passes the token only as the first stdin line', () => {
   const p = peerArgv(['gh', 'nibfin', 'status'], { cwd: '/home/e2epeer/sandbox', token: 'peer-secret', input: 'rest' });
   deepEqual(p.argv.slice(0, 7), ['sudo', '-u', 'e2epeer', '-H', '--', '/bin/sh', '-c']);
   deepEqual(p.argv.slice(8), ['sh', '/home/e2epeer/sandbox', 'gh', 'nibfin', 'status']);
-  equal(p.argv.some((a) => a.includes('peer-secret')), false);
+  equal(
+    p.argv.some((a) => a.includes('peer-secret')),
+    false,
+  );
   equal(p.input, 'peer-secret\nrest');
   equal(peerArgv(['id']).input, '');
   equal(peerArgv(['id']).argv[2], 'e2epeer');
@@ -56,7 +61,8 @@ test('peerArgv runs as e2epeer through sudo and passes the token only as the fir
 
 test('the peer prelude exports GH_TOKEN from stdin, keeps the rest of stdin, and the child gets no E2E_* variable', async () => {
   const exec = createExec({ ...process.env, E2E_PEER_GITHUB_TOKEN: 'peer-secret', E2E_SANDBOX_TOKEN: 'sbx' }, () => {});
-  const script = 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.stringify({s,cwd:process.cwd(),gh:process.env.GH_TOKEN,e2e:Object.keys(process.env).filter(k=>/^E2E_/i.test(k)),rt:process.env.XDG_RUNTIME_DIR})))';
+  const script =
+    'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.stringify({s,cwd:process.cwd(),gh:process.env.GH_TOKEN,e2e:Object.keys(process.env).filter(k=>/^E2E_/i.test(k)),rt:process.env.XDG_RUNTIME_DIR})))';
   const p = peerArgv([process.execPath, '-e', script], { cwd: '/tmp', token: 'peer-secret', input: 'more input' });
   // Without sudo: the same /bin/sh script and positional arguments.
   const r = await exec(p.argv.slice(5), { input: p.input });
@@ -126,8 +132,14 @@ test('deletePeerKeys deletes only the harness prefix and reports what reads back
     return undefined;
   });
   deepEqual(await deletePeerKeys(gh), []);
-  deepEqual(calls.filter((c) => c.method === 'DELETE').map((c) => c.path), ['/user/keys/1']);
-  deepEqual(keys.map((k) => k.title), ['laptop']);
+  deepEqual(
+    calls.filter((c) => c.method === 'DELETE').map((c) => c.path),
+    ['/user/keys/1'],
+  );
+  deepEqual(
+    keys.map((k) => k.title),
+    ['laptop'],
+  );
   keys.push({ id: 3, title: 'nibfin-e2e-peer-new', key: 'ssh-ed25519 C' });
   stuck.add(3);
   deepEqual(await deletePeerKeys(gh), ['nibfin-e2e-peer-new (3)']);
@@ -138,7 +150,14 @@ interface World {
   keys: { id: number; title: string; key: string }[];
 }
 
-function services(world: World, env: Record<string, string> = { E2E_SANDBOX_TOKEN: 's', E2E_CLAUDE_TOKEN: 'claude-secret', E2E_PEER_GITHUB_TOKEN: 'peer-secret' }) {
+function services(
+  world: World,
+  env: Record<string, string> = {
+    E2E_SANDBOX_TOKEN: 's',
+    E2E_CLAUDE_TOKEN: 'claude-secret',
+    E2E_PEER_GITHUB_TOKEN: 'peer-secret',
+  },
+) {
   let userExists = false;
   let written = false;
   const { exec, calls } = fakeExec((argv: string[]) => {
@@ -150,7 +169,11 @@ function services(world: World, env: Record<string, string> = { E2E_SANDBOX_TOKE
         return {};
       }
       if (cmd[0] === 'podman' && cmd[1] === 'run') {
-        return { stdout: written ? `0 700\n0 600\n${JSON.stringify({ env: { CLAUDE_CODE_OAUTH_TOKEN: 'claude-secret' } })}\n` : '0 700\n-\n' };
+        return {
+          stdout: written
+            ? `0 700\n0 600\n${JSON.stringify({ env: { CLAUDE_CODE_OAUTH_TOKEN: 'claude-secret' } })}\n`
+            : '0 700\n-\n',
+        };
       }
       if (cmd.join(' ') === 'gh extension remove nibfin') return { code: 1 };
       return {};
@@ -201,13 +224,29 @@ function services(world: World, env: Record<string, string> = { E2E_SANDBOX_TOKE
 }
 
 test('preparePeer: user, ids, user manager, gh-nibfin, clone, login volume and a fresh SSH key; tokens never in argv', async () => {
-  const world: World = { permission: 'write', keys: [{ id: 5, title: 'nibfin-e2e-peer-crashed', key: 'ssh-ed25519 OLD' }, { id: 6, title: 'laptop', key: 'ssh-ed25519 L' }] };
+  const world: World = {
+    permission: 'write',
+    keys: [
+      { id: 5, title: 'nibfin-e2e-peer-crashed', key: 'ssh-ed25519 OLD' },
+      { id: 6, title: 'laptop', key: 'ssh-ed25519 L' },
+    ],
+  };
   const s = services(world);
   const facts: PeerFacts = {};
   const reason = await preparePeer(s.host, 'linux', facts, () => new Date('2026-11-26T10:00:00.000Z'));
   match(reason, /peer-login \(write\) has SSH key nibfin-e2e-peer-2026-11-26T10-00-00-000Z/);
-  deepEqual(facts, { login: 'peer-login', id: 4242, home: '/home/e2epeer', userReady: true, installed: true, cloned: true, keyId: 77 });
-  const lines = s.calls.map((c) => (inner(c.argv) ? `peer: ${(inner(c.argv) as string[]).join(' ')}` : c.argv.join(' ')));
+  deepEqual(facts, {
+    login: 'peer-login',
+    id: 4242,
+    home: '/home/e2epeer',
+    userReady: true,
+    installed: true,
+    cloned: true,
+    keyId: 77,
+  });
+  const lines = s.calls.map((c) =>
+    inner(c.argv) ? `peer: ${(inner(c.argv) as string[]).join(' ')}` : c.argv.join(' '),
+  );
   const order = [
     'sudo useradd -m -s /bin/bash e2epeer',
     'sudo usermod --add-subuids 165536-231071 e2epeer',
@@ -225,22 +264,45 @@ test('preparePeer: user, ids, user manager, gh-nibfin, clone, login volume and a
     equal(i > at, true, `${o} after the previous step (got ${i}): ${lines.join('\n')}`);
     at = i;
   }
-  equal(lines.some((l) => l.includes('--add-subgids')), false, 'an existing subgid range is kept');
+  equal(
+    lines.some((l) => l.includes('--add-subgids')),
+    false,
+    'an existing subgid range is kept',
+  );
   for (const c of s.calls) {
-    equal(c.argv.some((a) => /peer-secret|claude-secret/.test(a)), false, `secret in argv: ${c.argv.join(' ')}`);
+    equal(
+      c.argv.some((a) => /peer-secret|claude-secret/.test(a)),
+      false,
+      `secret in argv: ${c.argv.join(' ')}`,
+    );
   }
-  const tokenRuns = s.calls.filter((c) => c.options.input?.startsWith('peer-secret\n')).map((c) => (inner(c.argv) as string[]).slice(0, 2).join(' '));
+  const tokenRuns = s.calls
+    .filter((c) => c.options.input?.startsWith('peer-secret\n'))
+    .map((c) => (inner(c.argv) as string[]).slice(0, 2).join(' '));
   deepEqual(tokenRuns, ['gh extension', 'gh extension', 'gh nibfin']);
-  equal(s.calls.some((c) => c.options.input?.includes('claude-secret') && inner(c.argv)?.[0] === 'podman'), true);
-  deepEqual(world.keys.map((k) => k.title), ['laptop', 'nibfin-e2e-peer-2026-11-26T10-00-00-000Z']);
-  deepEqual(s.peer.calls.find((c) => c.method === 'POST')?.body, { title: 'nibfin-e2e-peer-2026-11-26T10-00-00-000Z', key: 'ssh-ed25519 AAAAPUB' });
+  equal(
+    s.calls.some((c) => c.options.input?.includes('claude-secret') && inner(c.argv)?.[0] === 'podman'),
+    true,
+  );
+  deepEqual(
+    world.keys.map((k) => k.title),
+    ['laptop', 'nibfin-e2e-peer-2026-11-26T10-00-00-000Z'],
+  );
+  deepEqual(s.peer.calls.find((c) => c.method === 'POST')?.body, {
+    title: 'nibfin-e2e-peer-2026-11-26T10-00-00-000Z',
+    key: 'ssh-ed25519 AAAAPUB',
+  });
   equal(s.host.peer?.keyId, 77);
   equal(s.host.peer?.dir, '/home/e2epeer/sandbox');
   await rejects(s.host.peer?.readPublic('/home/e2epeer/.ssh/id_ed25519') as Promise<string>, /only public key files/);
 });
 
 test('preparePeer: admin, read and no permission fail before any host change; other platforms are refused', async () => {
-  for (const [permission, why] of [['admin', /must be a write collaborator, not admin/], ['read', /has read permission.*Issue #281/], ['missing', /has none permission.*Issue #281/]] as const) {
+  for (const [permission, why] of [
+    ['admin', /must be a write collaborator, not admin/],
+    ['read', /has read permission.*Issue #281/],
+    ['missing', /has none permission.*Issue #281/],
+  ] as const) {
     const s = services({ permission, keys: [] });
     await rejects(preparePeer(s.host, 'linux', {}), why);
     deepEqual(s.calls, []);
@@ -261,9 +323,14 @@ test('preparePeer: a missing peer token fails naming the variable', async () => 
 test('teardownPeer: no_runners counts as passed, keys are deleted and read back; a leftover is reported', async () => {
   const world: World = { permission: 'write', keys: [{ id: 9, title: 'nibfin-e2e-peer-x', key: 'ssh-ed25519 X' }] };
   const s = services(world);
-  const { exec, calls } = fakeExec((argv) => (inner(argv)?.[0] === 'gh' ? { code: 1, stderr: 'no_runners: no claude Runner on this host' } : undefined));
+  const { exec, calls } = fakeExec((argv) =>
+    inner(argv)?.[0] === 'gh' ? { code: 1, stderr: 'no_runners: no claude Runner on this host' } : undefined,
+  );
   const host = { ...s.host, exec };
-  deepEqual(await teardownPeer(host, { login: 'peer-login', installed: true, cloned: true, home: '/home/e2epeer' }), []);
+  deepEqual(
+    await teardownPeer(host, { login: 'peer-login', installed: true, cloned: true, home: '/home/e2epeer' }),
+    [],
+  );
   deepEqual(inner(calls[0]?.argv ?? []), ['gh', 'nibfin', 'runner', 'remove', 'claude', '--yes']);
   equal(calls[0]?.argv[9], '/home/e2epeer/sandbox');
   await teardownPeer(host, { login: 'peer-login', installed: true, home: '/home/e2epeer' });
@@ -272,8 +339,16 @@ test('teardownPeer: no_runners counts as passed, keys are deleted and read back;
 
   const failing = fakeExec((argv) => (inner(argv)?.[0] === 'gh' ? { code: 1, stderr: 'runner_busy' } : undefined));
   world.keys.push({ id: 10, title: 'nibfin-e2e-peer-y', key: 'ssh-ed25519 Y' });
-  const stuck = stubGitHub((method, path) => (method === 'GET' && path === '/user/keys' ? { status: 200, data: world.keys } : { status: 204 }));
-  const problems = await teardownPeer({ ...s.host, exec: failing.exec, peerGithub: stuck.gh }, { login: 'peer-login', installed: true, cloned: true, home: '/home/e2epeer' });
-  match(problems.join('; '), /runner remove claude --yes exited 1: runner_busy; SSH keys left on peer-login: nibfin-e2e-peer-y \(10\)/);
+  const stuck = stubGitHub((method, path) =>
+    method === 'GET' && path === '/user/keys' ? { status: 200, data: world.keys } : { status: 204 },
+  );
+  const problems = await teardownPeer(
+    { ...s.host, exec: failing.exec, peerGithub: stuck.gh },
+    { login: 'peer-login', installed: true, cloned: true, home: '/home/e2epeer' },
+  );
+  match(
+    problems.join('; '),
+    /runner remove claude --yes exited 1: runner_busy; SSH keys left on peer-login: nibfin-e2e-peer-y \(10\)/,
+  );
   deepEqual(await teardownPeer(s.host, undefined), []);
 });

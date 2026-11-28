@@ -28,7 +28,10 @@ export async function until(cond: () => boolean, what = 'the expected point') {
  * The fake host and GitHub with a simulated Nibfin: every fixture Issue opened gets one
  * Job container (start, then died) whose run, log, labels and comments `plan` returns.
  */
-export function simulate(plan: (repo: string, issue: number) => JobPlan, extra: { respond?: (argv: string[], o: ExecOptions) => Partial<ExecResult> | undefined } = {}) {
+export function simulate(
+  plan: (repo: string, issue: number) => JobPlan,
+  extra: { respond?: (argv: string[], o: ExecOptions) => Partial<ExecResult> | undefined } = {},
+) {
   const runs = new Map<string, { repo: string; plan: JobPlan }>();
   let next = 0;
   const h = setup({
@@ -36,7 +39,19 @@ export function simulate(plan: (repo: string, issue: number) => JobPlan, extra: 
       if (argv[1] === 'container' && argv[2] === 'inspect') {
         const run = runs.get(argv[3] ?? '');
         if (!run) return { code: 125, stderr: 'no such container' };
-        return { stdout: JSON.stringify([{ ImageName: IMAGE, HostConfig: { Memory: run.plan.memory ?? 3e9, NanoCpus: run.plan.memory === 0 ? 0 : 2e9, PidsLimit: 2048 }, Config: { Env: [`NIBFIN_RUN_ID=${argv[3]}`, `NIBFIN_RUN_REPO=o/exec`] } }]) };
+        return {
+          stdout: JSON.stringify([
+            {
+              ImageName: IMAGE,
+              HostConfig: {
+                Memory: run.plan.memory ?? 3e9,
+                NanoCpus: run.plan.memory === 0 ? 0 : 2e9,
+                PidsLimit: 2048,
+              },
+              Config: { Env: [`NIBFIN_RUN_ID=${argv[3]}`, `NIBFIN_RUN_REPO=o/exec`] },
+            },
+          ]),
+        };
       }
       return extra.respond?.(argv, o);
     },
@@ -48,7 +63,20 @@ export function simulate(plan: (repo: string, issue: number) => JobPlan, extra: 
     let m = /\/actions\/runs\/(\d+)\/jobs$/.exec(url.pathname);
     if (m) {
       const run = runs.get(m[1] as string);
-      return new Response(JSON.stringify({ total_count: 2, jobs: [{ id: 1, name: 'route', runner_name: 'GitHub Actions 1', status: 'completed' }, { id: Number(m[1]), name: 'stage', runner_name: run?.plan.runner ?? 'myhost-1a2b3c4d-claude-1', status: 'completed' }] }));
+      return new Response(
+        JSON.stringify({
+          total_count: 2,
+          jobs: [
+            { id: 1, name: 'route', runner_name: 'GitHub Actions 1', status: 'completed' },
+            {
+              id: Number(m[1]),
+              name: 'stage',
+              runner_name: run?.plan.runner ?? 'myhost-1a2b3c4d-claude-1',
+              status: 'completed',
+            },
+          ],
+        }),
+      );
     }
     m = /\/actions\/jobs\/(\d+)\/logs$/.exec(url.pathname);
     if (m) return new Response(runs.get(m[1] as string)?.plan.log ?? '');

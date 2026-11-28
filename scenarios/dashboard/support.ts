@@ -10,7 +10,17 @@ import type { Env, Running } from '../../src/host/exec.ts';
 import type { GitHub } from '../../src/host/github.ts';
 import type { Outcome, RunContext, RuleId, Scenario } from '../../src/types.ts';
 import type { Comment } from '../lifecycle/analysis.ts';
-import { autoProblem, buttonNamesFromAriaSnapshot, fieldsFromAriaSnapshot, missingButtonMessage, parseJobStarts, parseSessionUrl, redact, shownState, updateMarkerState } from './checks.ts';
+import {
+  autoProblem,
+  buttonNamesFromAriaSnapshot,
+  fieldsFromAriaSnapshot,
+  missingButtonMessage,
+  parseJobStarts,
+  parseSessionUrl,
+  redact,
+  shownState,
+  updateMarkerState,
+} from './checks.ts';
 import type { ContainerStart, FormField, LabelEvent, Reply, ResolutionState, SessionUrl } from './checks.ts';
 import { sleep, until } from './github.ts';
 
@@ -98,13 +108,20 @@ export function call(port: number, method: string, path: string, headers: Record
 const SESSION = /http:\/\/127\.0\.0\.1:\d+\/\S*#\S*proof=\S+/;
 
 /** Starts `gh nibfin dashboard --no-browser` and reads its session URL. The proof stays in memory. */
-export async function startDashboard(ctx: RunContext, secrets: Secrets, opts: { path?: string } = {}): Promise<Dashboard> {
+export async function startDashboard(
+  ctx: RunContext,
+  secrets: Secrets,
+  opts: { path?: string } = {},
+): Promise<Dashboard> {
   const attemptStart = async (port: string) => {
     const child = ctx.startGhNibfin(['dashboard', '--no-browser', '--port', port], { path: opts.path });
     try {
       const m = await child.waitFor(SESSION, 90_000);
       const parsed = parseSessionUrl(m[0]);
-      if (!parsed) throw new Error('R9.26: expected the session proof only in the URL fragment; observed a session URL without it there');
+      if (!parsed)
+        throw new Error(
+          'R9.26: expected the session proof only in the URL fragment; observed a session URL without it there',
+        );
       secrets.add(parsed.proof);
       return { ...parsed, child, stop: async () => void (await child.stop()) };
     } catch (error) {
@@ -118,7 +135,10 @@ export async function startDashboard(ctx: RunContext, secrets: Secrets, opts: { 
     try {
       return await attemptStart(String(await freePort()));
     } catch (second) {
-      throw new Error(`gh nibfin dashboard did not start: with --port 0: ${redact(String(first))}; with a free port: ${redact(String(second))}`, { cause: second });
+      throw new Error(
+        `gh nibfin dashboard did not start: with --port 0: ${redact(String(first))}; with a free port: ${redact(String(second))}`,
+        { cause: second },
+      );
     }
   }
 }
@@ -183,7 +203,8 @@ export async function openPage(ctx: RunContext, opts: BrowserOptions = {}): Prom
     context = await chromium.launchPersistentContext(dir, { ...options, channel: 'chrome' });
   } catch (error) {
     const which = await ctx.exec(['which', 'google-chrome']);
-    if (which.code !== 0) throw new Error(`cannot launch Google Chrome: ${(error as Error).message.split('\n')[0]}`, { cause: error });
+    if (which.code !== 0)
+      throw new Error(`cannot launch Google Chrome: ${(error as Error).message.split('\n')[0]}`, { cause: error });
     context = await chromium.launchPersistentContext(dir, { ...options, executablePath: which.stdout.trim() });
   }
   const close = async () => {
@@ -239,7 +260,12 @@ export async function activeView(page: Page): Promise<View | undefined> {
   for (const v of ['person', 'repo', 'runner'] as View[]) {
     const c = await viewControl(page, v).catch(() => undefined);
     if (!c) continue;
-    const marks = await c.evaluate((el) => [el.getAttribute('aria-selected'), el.getAttribute('aria-current'), el.getAttribute('aria-pressed'), el.getAttribute('data-state')]);
+    const marks = await c.evaluate((el) => [
+      el.getAttribute('aria-selected'),
+      el.getAttribute('aria-current'),
+      el.getAttribute('aria-pressed'),
+      el.getAttribute('data-state'),
+    ]);
     if (marks.some((m) => m === 'true' || m === 'page' || m === 'active')) return v;
   }
   return undefined;
@@ -250,16 +276,31 @@ export async function openDashboard(page: Page, dash: Dashboard): Promise<void> 
   await page.goto(dash.sessionUrl, { waitUntil: 'domcontentloaded' });
   const end = Date.now() + 60_000;
   for (;;) {
-    const found = await Promise.all((['person', 'repo', 'runner'] as View[]).map((v) => viewControl(page, v).then(() => true, () => false)));
+    const found = await Promise.all(
+      (['person', 'repo', 'runner'] as View[]).map((v) =>
+        viewControl(page, v).then(
+          () => true,
+          () => false,
+        ),
+      ),
+    );
     if (found.every(Boolean)) break;
-    if (Date.now() > end) throw new Error(`R9.14: expected three top-level views (person, repo, Runner); the page offers ${found.filter(Boolean).length}: ${(await bodyText(page)).slice(0, 300)}`);
+    if (Date.now() > end)
+      throw new Error(
+        `R9.14: expected three top-level views (person, repo, Runner); the page offers ${found.filter(Boolean).length}: ${(await bodyText(page)).slice(0, 300)}`,
+      );
     await sleep(500);
   }
   await markDocument(page);
 }
 
 export async function bodyText(page: Page): Promise<string> {
-  return (await page.locator('body').innerText().catch(() => '')).replace(/\s+/g, ' ');
+  return (
+    await page
+      .locator('body')
+      .innerText()
+      .catch(() => '')
+  ).replace(/\s+/g, ' ');
 }
 
 /** The minimal DOM the Issue selector engine reads; the project has no DOM typings. */
@@ -355,10 +396,12 @@ let issueEngineRegistered: Promise<void> | undefined;
  * registration. Call it before creating the browser context that uses `issueElement`.
  */
 export function registerIssueEngine(): Promise<void> {
-  issueEngineRegistered ??= selectors.register('nibfin_issue', issueEngine, { contentScript: true }).catch((error: unknown) => {
-    issueEngineRegistered = undefined;
-    throw error;
-  });
+  issueEngineRegistered ??= selectors
+    .register('nibfin_issue', issueEngine, { contentScript: true })
+    .catch((error: unknown) => {
+      issueEngineRegistered = undefined;
+      throw error;
+    });
   return issueEngineRegistered;
 }
 
@@ -375,7 +418,10 @@ export function issueElement(scope: Page | Locator, title: string): Locator {
 /** The stage the track marks current: aria-current, or "stage: X" text. */
 export async function currentStage(el: Locator): Promise<string | undefined> {
   const marked = el.locator('[aria-current="step"], [aria-current="true"], [aria-current="page"]');
-  if (await marked.count()) return (await marked.first().innerText()).trim() || ((await marked.first().getAttribute('aria-label')) ?? undefined);
+  if (await marked.count())
+    return (
+      (await marked.first().innerText()).trim() || ((await marked.first().getAttribute('aria-label')) ?? undefined)
+    );
   const m = /\b(?:stage|current)\W+(shape|deliver|done)\b/i.exec(await el.innerText());
   return m?.[1];
 }
@@ -405,9 +451,18 @@ async function headerTexts(page: Page): Promise<{ texts: string[]; text: string 
     const rs = roots as unknown as El[];
     const texts: string[] = [];
     for (const r of rs) {
-      for (const e of [r, ...Array.from(r.querySelectorAll('*'))]) if (visible(e) && ownText(e)) texts.push(norm(e.innerText));
+      for (const e of [r, ...Array.from(r.querySelectorAll('*'))])
+        if (visible(e) && ownText(e)) texts.push(norm(e.innerText));
     }
-    return { texts, text: norm(rs.filter(visible).map((r) => r.innerText ?? '').join(' ')) };
+    return {
+      texts,
+      text: norm(
+        rs
+          .filter(visible)
+          .map((r) => r.innerText ?? '')
+          .join(' '),
+      ),
+    };
   });
 }
 
@@ -430,13 +485,17 @@ export async function readUpdateMarker(page: Page): Promise<'live' | 'manual'> {
     return { ...r, body, kind: updateMarkerState(r.texts, body) };
   };
   const firstRead = (body: string) =>
-    new Error(`the Dashboard view's first read did not finish within ${FIRST_READ_WAIT_MS / 1000} s; the view still shows no loaded data: "${body.slice(0, 300)}"`);
+    new Error(
+      `the Dashboard view's first read did not finish within ${FIRST_READ_WAIT_MS / 1000} s; the view still shows no loaded data: "${body.slice(0, 300)}"`,
+    );
   const loaded = await until(read, (x) => x.kind !== 'loading', FIRST_READ_WAIT_MS, MARKER_POLL_MS);
   if (loaded.kind === 'loading') throw firstRead(loaded.body);
   const r = await until(read, (x) => x.kind === 'live' || x.kind === 'manual', MARKER_WAIT_MS, MARKER_POLL_MS);
   if (r.kind === 'live' || r.kind === 'manual') return r.kind;
   if (r.kind === 'loading') throw firstRead(r.body);
-  throw new Error(`R9.8: expected the view header to show exactly one of Live or manual refresh within ${MARKER_WAIT_MS / 1000} s; observed ${r.kind}: "${r.text.slice(0, 300)}"`);
+  throw new Error(
+    `R9.8: expected the view header to show exactly one of Live or manual refresh within ${MARKER_WAIT_MS / 1000} s; observed ${r.kind}: "${r.text.slice(0, 300)}"`,
+  );
 }
 
 /** The open dialog, after it appears. */
@@ -466,8 +525,16 @@ export async function dialogFields(d: Locator): Promise<FormField[]> {
     const el = d.getByRole(f.role as Parameters<Locator['getByRole']>[0], { name: f.name, exact: true }).first();
     if (!(await el.count())) continue;
     const info = await el.evaluate((e) => {
-      const x = e as unknown as { required?: boolean; tagName: string; getAttribute(n: string): string | null; querySelectorAll(s: string): ArrayLike<{ textContent: string | null }> };
-      const opts = x.tagName.toLowerCase() === 'select' ? Array.from(x.querySelectorAll('option'), (o) => (o.textContent ?? '').trim()) : [];
+      const x = e as unknown as {
+        required?: boolean;
+        tagName: string;
+        getAttribute(n: string): string | null;
+        querySelectorAll(s: string): ArrayLike<{ textContent: string | null }>;
+      };
+      const opts =
+        x.tagName.toLowerCase() === 'select'
+          ? Array.from(x.querySelectorAll('option'), (o) => (o.textContent ?? '').trim())
+          : [];
       return { required: x.required === true || x.getAttribute('aria-required') === 'true', options: opts };
     });
     f.required = info.required;
@@ -501,7 +568,12 @@ const SHOWN_READ_MS = 2_000;
  */
 export async function mustButton(scope: Page | Locator, name: RegExp, rule: string, where: string): Promise<Locator> {
   const b = scope.getByRole('button', { name });
-  const n = await until(() => b.count(), (c) => c > 0, BUTTON_WAIT_MS, BUTTON_POLL_MS);
+  const n = await until(
+    () => b.count(),
+    (c) => c > 0,
+    BUTTON_WAIT_MS,
+    BUTTON_POLL_MS,
+  );
   if (n > 0) return b.first();
   const root = 'goto' in scope ? scope.locator('body') : scope;
   const shown = await root.ariaSnapshot({ timeout: SHOWN_READ_MS }).then(buttonNamesFromAriaSnapshot, () => undefined);
@@ -510,12 +582,18 @@ export async function mustButton(scope: Page | Locator, name: RegExp, rule: stri
 
 /** Selects or types a repository in the repo view. */
 export async function selectRepo(page: Page, repo: string): Promise<void> {
-  const box = page.getByRole('combobox').or(page.getByRole('textbox', { name: /repo|owner/i })).or(page.getByRole('searchbox'));
+  const box = page
+    .getByRole('combobox')
+    .or(page.getByRole('textbox', { name: /repo|owner/i }))
+    .or(page.getByRole('searchbox'));
   if (await box.count()) {
     const b = box.first();
     const tag = await b.evaluate((el) => el.tagName.toLowerCase());
     if (tag === 'select') {
-      const ok = await b.selectOption({ label: repo }).then(() => true, () => false);
+      const ok = await b.selectOption({ label: repo }).then(
+        () => true,
+        () => false,
+      );
       if (!ok) throw new Error(`the repository list does not offer ${repo}`);
     } else {
       await b.click();
@@ -527,7 +605,9 @@ export async function selectRepo(page: Page, repo: string): Promise<void> {
       }
     }
   } else {
-    const link = page.getByRole('link', { name: new RegExp(escapeRe(repo), 'i') }).or(page.getByRole('button', { name: new RegExp(escapeRe(repo), 'i') }));
+    const link = page
+      .getByRole('link', { name: new RegExp(escapeRe(repo), 'i') })
+      .or(page.getByRole('button', { name: new RegExp(escapeRe(repo), 'i') }));
     if (!(await link.count())) throw new Error(`no repository picker and no entry for ${repo} in the repo view`);
     await link.first().click();
   }
@@ -548,7 +628,8 @@ export async function repoOptions(page: Page): Promise<string[]> {
     for (const t of await page.getByRole('option').allInnerTexts()) add(t);
     await page.keyboard.press('Escape');
   }
-  if (!names.size) for (const t of await page.getByRole('listbox').or(page.getByRole('navigation')).allInnerTexts()) add(t);
+  if (!names.size)
+    for (const t of await page.getByRole('listbox').or(page.getByRole('navigation')).allInnerTexts()) add(t);
   return [...names].sort();
 }
 
@@ -563,7 +644,16 @@ export interface JobWatcher {
 
 /** This scenario's own `podman events` child; it records starts of Nibfin image containers. */
 export async function watchLocalJobStarts(ctx: RunContext): Promise<JobWatcher> {
-  const child = ctx.start(['podman', 'events', '--format', 'json', '--filter', 'type=container', '--filter', 'event=start']);
+  const child = ctx.start([
+    'podman',
+    'events',
+    '--format',
+    'json',
+    '--filter',
+    'type=container',
+    '--filter',
+    'event=start',
+  ]);
   await sleep(2000);
   return { starts: () => parseJobStarts(child.output()), stop: async () => void (await child.stop()) };
 }
@@ -574,7 +664,10 @@ export const podmanPs = (ctx: RunContext) => ctx.exec(['podman', 'ps', '--format
 /** `gh nibfin status [-R repo] --json`, parsed. */
 export async function statusJson(ctx: RunContext, repo?: string): Promise<unknown> {
   const r = await ctx.ghNibfin(['status', ...(repo ? ['-R', repo] : []), '--json']);
-  if (r.code !== 0) throw new Error(`gh nibfin status${repo ? ` -R ${repo}` : ''} --json exited ${r.code}: ${(r.stderr || r.stdout).trim().slice(-1000)}`);
+  if (r.code !== 0)
+    throw new Error(
+      `gh nibfin status${repo ? ` -R ${repo}` : ''} --json exited ${r.code}: ${(r.stderr || r.stdout).trim().slice(-1000)}`,
+    );
   return JSON.parse(r.stdout);
 }
 
@@ -643,7 +736,10 @@ export async function issueHistory(gh: GitHub, repo: string, n: number): Promise
 }
 
 /** The state an Issue's element shows (R9.52), or undefined when it is not shown or names no single state. */
-export async function elementState(page: Page, title: string): Promise<{ state: ResolutionState | undefined; text: string }> {
+export async function elementState(
+  page: Page,
+  title: string,
+): Promise<{ state: ResolutionState | undefined; text: string }> {
   const el = issueElement(page, title);
   const text = (await el.count()) ? await el.innerText().catch(() => '') : '';
   return { state: shownState(text), text };
@@ -657,7 +753,11 @@ export interface AutoShown<T> {
 }
 
 /** The given Issues whose element the page shows as 自動排除中, each judged against a fresh GitHub read. */
-export async function readAutoShown<T extends { repo: string; number: number; title: string }>(page: Page, gh: GitHub, issues: T[]): Promise<AutoShown<T>[]> {
+export async function readAutoShown<T extends { repo: string; number: number; title: string }>(
+  page: Page,
+  gh: GitHub,
+  issues: T[],
+): Promise<AutoShown<T>[]> {
   const out: AutoShown<T>[] = [];
   for (const issue of issues) {
     const readAt = Date.now();

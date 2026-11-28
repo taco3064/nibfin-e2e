@@ -29,7 +29,8 @@ export async function readMachine(exec: Exec): Promise<Machine> {
   } catch {
     throw new Error(`podman machine inspect did not print JSON: ${tail(r, 200)}`);
   }
-  if (typeof first?.Name !== 'string' || !first.Name) throw new Error(`podman machine inspect reports no Name: ${tail(r, 200)}`);
+  if (typeof first?.Name !== 'string' || !first.Name)
+    throw new Error(`podman machine inspect reports no Name: ${tail(r, 200)}`);
   return { name: first.Name, state: typeof first.State === 'string' ? first.State : '' };
 }
 

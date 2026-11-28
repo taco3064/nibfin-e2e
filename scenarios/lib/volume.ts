@@ -44,9 +44,27 @@ export async function removeLoginKey(exec: Exec, key: string): Promise<LoginFact
 /** Paths (relative to the volume root) under `path` whose name matches the `find -name` pattern. */
 export async function listVolume(exec: Exec, volume: string, path = '.', name = '*'): Promise<string[]> {
   const dir = path === '.' ? '/v' : `/v/${path}`;
-  const r = await exec(['podman', 'run', '--rm', '-v', `${volume}:/v:ro`, HELPER_IMAGE, 'sh', '-c', 'if [ -e "$1" ]; then find "$1" -name "$2"; fi', 'sh', dir, name]);
+  const r = await exec([
+    'podman',
+    'run',
+    '--rm',
+    '-v',
+    `${volume}:/v:ro`,
+    HELPER_IMAGE,
+    'sh',
+    '-c',
+    'if [ -e "$1" ]; then find "$1" -name "$2"; fi',
+    'sh',
+    dir,
+    name,
+  ]);
   if (r.code !== 0) throw new Error(`listing ${volume}:${path} exited ${r.code}: ${r.stderr.trim().slice(-2000)}`);
-  return r.stdout.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => l.replace(/^\/v\/?/, '')).sort();
+  return r.stdout
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => l.replace(/^\/v\/?/, ''))
+    .sort();
 }
 
 /** One regular file of a volume: its path relative to the volume root, size in bytes and mtime in epoch seconds. */
@@ -64,7 +82,8 @@ export function parseVolumeStat(stdout: string): VolumeFile[] {
     const m = /^(\d+) (\d+) (.+)$/.exec(line);
     if (!m) throw new Error(`unexpected volume listing line: ${JSON.stringify(line.slice(0, 300))}`);
     const path = (m[3] as string).replace(/^\.\//, '');
-    if (path === '' || path === '.') throw new Error(`unexpected volume listing line: ${JSON.stringify(line.slice(0, 300))}`);
+    if (path === '' || path === '.')
+      throw new Error(`unexpected volume listing line: ${JSON.stringify(line.slice(0, 300))}`);
     out.push({ path, size: Number(m[1]), mtime: Number(m[2]) });
   }
   return out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
@@ -75,7 +94,17 @@ export function parseVolumeStat(stdout: string): VolumeFile[] {
  * mount of the pinned helper image; no file content is read.
  */
 export async function statVolume(exec: Exec, volume: string): Promise<VolumeFile[]> {
-  const r = await exec(['podman', 'run', '--rm', '-v', `${volume}:/v:ro`, HELPER_IMAGE, 'sh', '-c', 'cd /v && find . -type f -exec stat -c "%s %Y %n" {} \\;']);
+  const r = await exec([
+    'podman',
+    'run',
+    '--rm',
+    '-v',
+    `${volume}:/v:ro`,
+    HELPER_IMAGE,
+    'sh',
+    '-c',
+    'cd /v && find . -type f -exec stat -c "%s %Y %n" {} \\;',
+  ]);
   if (r.code !== 0) throw new Error(`listing the files of ${volume} exited ${r.code}: ${r.stderr.trim().slice(-2000)}`);
   return parseVolumeStat(r.stdout);
 }
@@ -116,7 +145,8 @@ export async function inspectVolume(exec: Exec, name: string): Promise<VolumeInf
     throw new Error(`podman volume inspect ${name} printed no JSON: ${r.stdout.trim().slice(0, 2000)}`);
   }
   const v = (Array.isArray(list) ? list[0] : undefined) as Record<string, unknown> | undefined;
-  if (!v || typeof v !== 'object') throw new Error(`podman volume inspect ${name} printed no volume: ${r.stdout.trim().slice(0, 2000)}`);
+  if (!v || typeof v !== 'object')
+    throw new Error(`podman volume inspect ${name} printed no volume: ${r.stdout.trim().slice(0, 2000)}`);
   return { name: String(v.Name ?? ''), driver: String(v.Driver ?? ''), mountpoint: String(v.Mountpoint ?? '') };
 }
 
