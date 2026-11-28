@@ -1,6 +1,6 @@
 import { deepEqual, equal, match, ok, rejects } from 'node:assert/strict';
 import { test } from 'node:test';
-import { createGitHub, GitHubError } from '../../src/host/github.ts';
+import { createGitHub, GitHubError, GitHubNoResponse } from '../../src/host/github.ts';
 
 test('download follows the redirect without the Authorization header and keeps its URL out of errors', async () => {
   const seen: { url: string; auth: string | null; redirect?: string }[] = [];
@@ -231,4 +231,181 @@ test('a client created without the wait option fails at once on a rate limit', a
     (e: unknown) => e instanceof GitHubError && e.status === 403 && !e.message.includes('wait'),
   );
   equal(f.calls.length, 1);
+});
+
+/** A rejection shaped like Node's: \`TypeError('fetch failed')\` with the system error in \`cause\`. */
+const noResponse = (code: string) =>
+  Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error(`read ${code}`), { code }) });
+
+function retryHarness() {
+  const slept: number[] = [];
+  const lines: string[] = [];
+  return { slept, lines, retry: { log: (l: string) => lines.push(l), sleep: async (ms: number) => void slept.push(ms) } };
+}
+
+/** A fake fetch that answers each call with the next step: a Response, or an error to reject with. */
+function steps(...answers: (Response | Error)[]) {
+  const calls: string[] = [];
+  const fetchFn: typeof fetch = async (input, init) => {
+    calls.push(`${init?.method ?? 'GET'} ${String(input)}`);
+    const next = answers.shift();
+    if (!next) throw new Error('unexpected call');
+    if (next instanceof Error) throw next;
+    return next;
+  };
+  return { calls, fetchFn };
+}
+
+test('a read that gets no response once is sent again and returns the second response', async () => {
+  const { slept, lines, retry } = retryHarness();
+  const { calls, fetchFn } = steps(noResponse('ECONNRESET'), json({ ok: 1 }));
+  const gh = createGitHub(() => 'tok', fetchFn, 'https://api.example', undefined, retry);
+  deepEqual(await gh.rest('GET', '/repos/o/r/actions/runners'), { status: 200, data: { ok: 1 } });
+  equal(calls.length, 2);
+  deepEqual(slept, [3000]);
+  equal(lines.length, 1);
+  match(String(lines[0]), /^GitHub GET \/repos\/o\/r\/actions\/runners got no response \(ECONNRESET\); trying again in 3 s \(try 2 of 3\)$/);
+  equal(String(lines[0]).includes('tok'), false);
+});
+
+test('a read that never gets a response fails after the bounded tries and names the call and the cause', async () => {
+  const { slept, lines, retry } = retryHarness();
+  const original = noResponse('ENOTFOUND');
+  const { calls, fetchFn } = steps(original, noResponse('ENOTFOUND'), noResponse('ENOTFOUND'));
+  const gh = createGitHub(() => 'tok', fetchFn, 'https://api.example', undefined, retry);
+  const err = await gh.rest('GET', '/x').catch((e: unknown) => e);
+  ok(err instanceof GitHubNoResponse);
+  equal(err instanceof GitHubError, false);
+  equal(err.message, 'GitHub GET /x got no response: ENOTFOUND (after 3 tries)');
+  ok(err.cause instanceof TypeError);
+  equal(calls.length, 3);
+  deepEqual(slept, [3000, 3000]);
+  equal(lines.length, 2);
+  equal(err.message.includes('tok'), false);
+});
+
+test('a write or GraphQL call that gets no response is not repeated', async () => {
+  const { slept, retry } = retryHarness();
+  const post = steps(noResponse('ECONNRESET'));
+  const gh = createGitHub(() => 'tok', post.fetchFn, 'https://api.example', undefined, retry);
+  await rejects(gh.rest('POST', '/repos/o/r/dispatches', {}), (e: unknown) => {
+    ok(e instanceof GitHubNoResponse);
+    equal(e.message, 'GitHub POST /repos/o/r/dispatches got no response: ECONNRESET');
+    return true;
+  });
+  equal(post.calls.length, 1);
+  const gql = steps(noResponse('UND_ERR_CONNECT_TIMEOUT'));
+  const g2 = createGitHub(() => 'tok', gql.fetchFn, 'https://api.example', undefined, retry);
+  await rejects(g2.graphql('{ viewer { login } }', {}), /^GitHubNoResponse: GitHub POST \/graphql got no response: UND_ERR_CONNECT_TIMEOUT$/);
+  equal(gql.calls.length, 1);
+  deepEqual(slept, []);
+});
+
+test('a list page that gets no response once continues from that page', async () => {
+  const { retry } = retryHarness();
+  const full = Array.from({ length: 100 }, (_, i) => i);
+  const { calls, fetchFn } = steps(json(full), noResponse('ECONNRESET'), json([100]));
+  const gh = createGitHub(() => 'tok', fetchFn, 'https://api.example', undefined, retry);
+  equal((await gh.list<number>('/r')).length, 101);
+  deepEqual(calls.slice(1), ['GET https://api.example/r?per_page=100&page=2', 'GET https://api.example/r?per_page=100&page=2']);
+});
+
+test('a listByLink cursor page that gets no response once repeats the same cursor', async () => {
+  const { retry } = retryHarness();
+  const next = 'https://api.example/r?per_page=100&cursor=abc';
+  const { calls, fetchFn } = steps(json([1], 200, { link: `<${next}>; rel="next"` }), noResponse('ECONNRESET'), json([2]));
+  const gh = createGitHub(() => 'tok', fetchFn, 'https://api.example', undefined, retry);
+  deepEqual(await gh.listByLink<number>('/r'), [1, 2]);
+  deepEqual(calls.slice(1), [`GET ${next}`, `GET ${next}`]);
+});
+
+test('a redirected download that gets no response keeps the redirect URL out of the message and the log', async () => {
+  const { lines, retry } = retryHarness();
+  const signed = 'https://logs.example/signed?sig=secret';
+  const redirect = () => new Response(null, { status: 302, headers: { Location: signed } });
+  // The cause message carries the redirect host, as Node's would; only its code may be used.
+  const reject = () =>
+    Object.assign(new TypeError('fetch failed'), {
+      cause: Object.assign(new Error('getaddrinfo ENOTFOUND logs.example'), { code: 'ENOTFOUND' }),
+    });
+  const { calls, fetchFn } = steps(redirect(), reject(), reject(), reject());
+  const gh = createGitHub(() => 'tok', fetchFn, 'https://api.example', undefined, retry);
+  const err = await gh.download('/repos/o/r/actions/jobs/1/logs').catch((e: unknown) => e);
+  ok(err instanceof GitHubNoResponse);
+  equal(
+    err.message,
+    'GitHub GET /repos/o/r/actions/jobs/1/logs: the redirected download got no response: ENOTFOUND (after 3 tries)',
+  );
+  equal(calls.length, 4);
+  for (const text of [err.message, ...lines]) {
+    equal(text.includes('sig='), false);
+    equal(text.includes('logs.example'), false);
+  }
+  const noCode = steps(redirect(), new TypeError('fetch failed', { cause: new Error('connect to logs.example failed') }));
+  const g2 = createGitHub(() => 'tok', noCode.fetchFn, 'https://api.example');
+  await rejects(g2.download('/l'), (e: unknown) => {
+    ok(e instanceof GitHubNoResponse);
+    equal(e.message, 'GitHub GET /l: the redirected download got no response: no error code');
+    return true;
+  });
+});
+
+test('the API-host download step that gets no response once is sent again', async () => {
+  const { retry } = retryHarness();
+  const { calls, fetchFn } = steps(noResponse('ECONNRESET'), new Response('log', { status: 200 }));
+  const gh = createGitHub(() => 'tok', fetchFn, 'https://api.example', undefined, retry);
+  deepEqual(await gh.download('/l'), { status: 200, text: 'log' });
+  equal(calls.length, 2);
+});
+
+test('a 500 or a plain 403 response is not treated as no response', async () => {
+  const { slept, lines, retry } = retryHarness();
+  for (const status of [500, 403]) {
+    const { calls, fetchFn } = steps(json({ message: 'nope' }, status));
+    const gh = createGitHub(() => 'tok', fetchFn, 'https://api.example', undefined, retry);
+    await rejects(gh.rest('GET', '/x'), (e: unknown) => e instanceof GitHubError && e.status === status);
+    equal(calls.length, 1);
+  }
+  deepEqual(slept, []);
+  deepEqual(lines, []);
+});
+
+test('a client without the retry option tries once and still names the call and the cause', async () => {
+  const { calls, fetchFn } = steps(noResponse('ECONNRESET'));
+  const gh = createGitHub(() => 'tok', fetchFn, 'https://api.example');
+  await rejects(gh.rest('GET', '/x'), /^GitHubNoResponse: GitHub GET \/x got no response: ECONNRESET$/);
+  equal(calls.length, 1);
+});
+
+test('a cause without a code is named by its deepest message, also through an AggregateError', async () => {
+  const bad = steps(new TypeError('fetch failed', { cause: new Error('bad port') }));
+  await rejects(createGitHub(() => 'tok', bad.fetchFn, 'https://api.example').rest('GET', '/x'), /got no response: bad port$/);
+  const dual = steps(
+    new TypeError('fetch failed', {
+      cause: new AggregateError([Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' })], ''),
+    }),
+  );
+  await rejects(createGitHub(() => 'tok', dual.fetchFn, 'https://api.example').rest('GET', '/x'), /got no response: ECONNREFUSED$/);
+});
+
+test('an abort is rethrown unchanged and not retried', async () => {
+  const { slept, retry } = retryHarness();
+  const abort = new DOMException('This operation was aborted', 'AbortError');
+  const { calls, fetchFn } = steps(abort, json({}));
+  const gh = createGitHub(() => 'tok', fetchFn, 'https://api.example', undefined, retry);
+  const err = await gh.rest('GET', '/x').catch((e: unknown) => e);
+  equal(err, abort);
+  equal(calls.length, 1);
+  deepEqual(slept, []);
+});
+
+test('a no-response retry does not count against the rate-limit wait', async () => {
+  const w = waitHarness(120_000);
+  const r = retryHarness();
+  const { calls, fetchFn } = steps(primary(60), noResponse('ECONNRESET'), noResponse('ECONNRESET'), json({ ok: 1 }));
+  const gh = createGitHub(() => 'tok', fetchFn, 'https://api.example', w.wait, r.retry);
+  deepEqual(await gh.rest('GET', '/x'), { status: 200, data: { ok: 1 } });
+  equal(calls.length, 4);
+  deepEqual(w.slept, [61_000]);
+  deepEqual(r.slept, [3000, 3000]);
 });

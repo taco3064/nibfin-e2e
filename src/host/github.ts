@@ -6,6 +6,20 @@ export class GitHubError extends Error {
   }
 }
 
+/**
+ * A request that got no response at all: `fetch` rejected before any status arrived
+ * (DNS, a reset connection, a connect timeout, TLS). Deliberately not a `GitHubError`,
+ * so callers that branch on `instanceof GitHubError` keep treating it as "no status".
+ * The message names the call and the lowest-level cause; the original rejection stays
+ * attached as `cause`.
+ */
+export class GitHubNoResponse extends Error {
+  constructor(message: string, options: { cause: unknown }) {
+    super(message, options);
+    this.name = 'GitHubNoResponse';
+  }
+}
+
 export interface GitHub {
   /** One REST call. Statuses listed in `allow` are returned instead of thrown. */
   rest<T = unknown>(
@@ -40,6 +54,44 @@ export interface RateLimitWait {
   /** Defaults to `Date.now`. */
   now?: () => number;
 }
+
+/** Opt-in retry for a `GET` that gets no response; independent of the rate-limit wait. */
+export interface NoResponseRetry {
+  /** One line per retry with the method, the path and the cause code; never the token or a redirect URL. */
+  log: (line: string) => void;
+  /** Total tries for a `GET` that gets no response; default 3. */
+  tries?: number;
+  /** Pause between tries; default 3000 ms. */
+  delayMs?: number;
+  /** Defaults to a timer; tests inject one that does not really wait. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+const DEFAULT_NO_RESPONSE_TRIES = 3;
+const DEFAULT_NO_RESPONSE_DELAY_MS = 3000;
+
+/**
+ * The lowest-level cause of a rejected `fetch`: the deepest string `code` along the
+ * `cause` chain (an `AggregateError` without its own code is followed into its first
+ * entry), otherwise the deepest message.
+ */
+function rootCause(error: unknown): { code?: string; message?: string } {
+  let code: string | undefined;
+  let message: string | undefined;
+  let cur: unknown = error;
+  for (let depth = 0; depth < 6 && cur instanceof Object; depth++) {
+    const e = cur as { code?: unknown; message?: unknown; cause?: unknown; errors?: unknown };
+    if (typeof e.code === 'string' && e.code) code = e.code;
+    if (typeof e.message === 'string' && e.message) message = e.message;
+    if (e.cause !== undefined) cur = e.cause;
+    else if (typeof e.code !== 'string' && Array.isArray(e.errors) && e.errors.length > 0) cur = e.errors[0];
+    else break;
+  }
+  return { code, message };
+}
+
+const isAbort = (error: unknown) =>
+  error instanceof Object && ['AbortError', 'TimeoutError'].includes((error as { name?: unknown }).name as string);
 
 const DEFAULT_MAX_WAIT_MS = 65 * 60_000;
 const MINUTE_MS = 60_000;
@@ -96,12 +148,18 @@ interface Attempt<R> {
  * rate-limits (403 or 429) waits until the reset or for `retry-after` and is then
  * repeated, up to `maxWaitMs` in total per request; a longer wait is not started and the
  * read fails at once. Without `wait`, every failure is thrown at once.
+ * A request that gets no response (`fetch` rejects) always fails with a
+ * `GitHubNoResponse` naming the call and its lowest-level cause. With `retry`, a `GET`
+ * that gets no response is sent again, up to `tries` times in total with `delayMs`
+ * between tries; that bound is separate from the rate-limit wait. Writes, responses of
+ * any status and aborts are never retried this way.
  */
 export function createGitHub(
   token: () => string,
   fetchFn: typeof fetch = fetch,
   api = 'https://api.github.com',
   wait?: RateLimitWait,
+  retry?: NoResponseRetry,
 ): GitHub {
   const sleep = wait?.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const now = wait?.now ?? Date.now;
@@ -113,6 +171,38 @@ export function createGitHub(
     'User-Agent': 'nibfin-e2e',
     ...extra,
   });
+  const retrySleep =
+    retry?.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const retryTries = Math.max(1, retry?.tries ?? DEFAULT_NO_RESPONSE_TRIES);
+  const retryDelayMs = retry?.delayMs ?? DEFAULT_NO_RESPONSE_DELAY_MS;
+  /**
+   * One `fetchFn` call that turns a rejection into a `GitHubNoResponse` and, with
+   * `retry`, repeats a `GET` that got no response. Any response, of any status, is
+   * returned at once. `init` is built per try, so the token is read per call. For the
+   * redirected download step only the cause code is used, so nothing from the signed URL
+   * can enter a message or a log line.
+   */
+  async function send(method: string, path: string, url: string, init: () => RequestInit, redirected = false) {
+    const call = redirected ? `GitHub ${method} ${path}: the redirected download` : `GitHub ${method} ${path}`;
+    for (let tryNo = 1; ; tryNo++) {
+      try {
+        return await fetchFn(url, init());
+      } catch (error) {
+        if (isAbort(error)) throw error;
+        const root = rootCause(error);
+        const cause = redirected ? (root.code ?? 'no error code') : (root.code ?? root.message ?? 'unknown cause');
+        if (retry && method === 'GET' && tryNo < retryTries) {
+          retry.log(
+            `${call} got no response (${cause}); trying again in ${seconds(retryDelayMs)} s (try ${tryNo + 1} of ${retryTries})`,
+          );
+          await retrySleep(retryDelayMs);
+          continue;
+        }
+        const tries = tryNo > 1 ? ` (after ${tryNo} tries)` : '';
+        throw new GitHubNoResponse(`${call} got no response: ${cause}${tries}`, { cause: error });
+      }
+    }
+  }
   function append(err: GitHubError, suffix: string) {
     err.message += suffix;
     return err;
@@ -148,11 +238,11 @@ export function createGitHub(
   }
   async function callUrl(method: string, url: string, path: string, body: unknown, allow: number[]) {
     return attempt(method, path, async () => {
-      const res = await fetchFn(url, {
+      const res = await send(method, path, url, () => ({
         method,
         headers: headers(body === undefined ? {} : { 'Content-Type': 'application/json' }),
         body: body === undefined ? undefined : JSON.stringify(body),
-      });
+      }));
       const text = await res.text();
       const data = parseBody(text);
       let error: GitHubError | undefined;
@@ -204,7 +294,7 @@ export function createGitHub(
     async download(path: string, allow: number[] = []) {
       // Only the API-host response can be waited out; the redirected one never is.
       const first = await attempt('GET', path, async () => {
-        const res = await fetchFn(api + path, { method: 'GET', headers: headers(), redirect: 'manual' });
+        const res = await send('GET', path, api + path, () => ({ method: 'GET', headers: headers(), redirect: 'manual' }));
         if (res.ok || (res.status >= 300 && res.status < 400) || allow.includes(res.status)) {
           return { res, data: undefined, error: undefined, result: res };
         }
@@ -217,7 +307,7 @@ export function createGitHub(
         const location = final.headers.get('location');
         await final.body?.cancel();
         if (!location) throw new GitHubError('GET', path, final.status, 'redirect without a Location header');
-        final = await fetchFn(location, { method: 'GET', headers: { 'User-Agent': 'nibfin-e2e' } });
+        final = await send('GET', path, location, () => ({ method: 'GET', headers: { 'User-Agent': 'nibfin-e2e' } }), true);
       }
       const text = await final.text();
       if (!final.ok && !allow.includes(final.status)) {
