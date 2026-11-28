@@ -22,6 +22,8 @@ import {
   stateOf,
   statusValue,
   pauseAppeared,
+  pauseMarkers,
+  pausePreconditionProblem,
   pauseResumePreconditions,
   describePauseView,
   quietProblems,
@@ -544,4 +546,40 @@ test('pauseAppeared: only a new Resume control or a new pause marker shows the p
   ok(pauseAppeared(B, { ...B, text: 'D Shape Deliver Done pending paused Pause' }));
   equal(describePauseView({ present: false, text: '', pauseControls: 0, resumeControls: 0 }), 'not listed');
   ok(describePauseView({ ...B, text: `a\n${'x'.repeat(300)}` }).endsWith('…"'));
+});
+
+// A pending Issue in Needs your action offers Resume only (R9.52, R9.55); the edit adds a Paused marker.
+const ACT = {
+  present: true,
+  text: '#338 D Scope Shape Deliver Done Needs your action No repair record covers this stop yet; see the pending comment Repair Resume',
+  pauseControls: 0,
+  resumeControls: 1,
+};
+
+test('pauseAppeared: a Resume control D already had does not count, a new pause marker does', () => {
+  ok(pauseAppeared(ACT, { ...ACT, text: ACT.text.replace('Repair Resume', 'Paused Repair Resume') }));
+  equal(pauseAppeared(ACT, ACT), false);
+  equal(pauseAppeared(ACT, { ...ACT, text: `${ACT.text} e2e-plain` }), false);
+  const worded = { ...ACT, text: `${ACT.text} paused by owner` };
+  equal(pauseAppeared(worded, worded), false);
+  const P = { present: true, text: 'D Shape Deliver Done pending Pause', pauseControls: 1, resumeControls: 0 };
+  equal(pauseAppeared(P, { ...P, text: 'D Shape Pause Deliver Done pending' }), false);
+});
+
+test('pauseMarkers and pausePreconditionProblem: Pause control labels are not markers', () => {
+  const P = { present: true, text: 'D Shape Deliver Done pending Pause', pauseControls: 1, resumeControls: 0 };
+  equal(pauseMarkers(P), 0);
+  equal(pausePreconditionProblem(P), undefined);
+  equal(pauseMarkers(ACT), 0);
+  equal(pausePreconditionProblem(ACT), undefined);
+  const actPaused = { ...ACT, text: `${ACT.text} Paused` };
+  equal(pauseMarkers(actPaused), 1);
+  equal(pausePreconditionProblem(actPaused), 'already shows a pause marker');
+  equal(pausePreconditionProblem({ ...P, text: `${P.text} Paused` }), 'already shows a pause marker');
+  equal(pausePreconditionProblem({ present: false, text: '', pauseControls: 0, resumeControls: 0 }), 'not listed');
+  equal(pausePreconditionProblem({ present: true, text: '  ', pauseControls: 0, resumeControls: 1 }), 'not listed');
+  equal(
+    pausePreconditionProblem({ present: true, text: 'D Shape Deliver Done', pauseControls: 0, resumeControls: 0 }),
+    'no Pause or Resume control',
+  );
 });
