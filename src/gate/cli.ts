@@ -150,7 +150,7 @@ export async function main(argv: string[], deps: GateDeps): Promise<number> {
                 {
                   subject: 'since',
                   decision: start,
-                  reason: `--since-last-retest: the newest completed, non-cancelled retest run was queued then; it covers ${ref}`,
+                  reason: `--since-last-retest for ${ref}: the newest completed, non-cancelled retest run was queued then`,
                 },
               ],
             }
