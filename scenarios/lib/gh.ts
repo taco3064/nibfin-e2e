@@ -54,7 +54,9 @@ export function isNibfinRunFor(title: string, issue: number): boolean {
 }
 
 /** Every command's `--help`, from the root down, keyed by its path (`""` for the root, `runner add`, …). */
-export async function allHelp(run: (args: string[]) => Promise<{ code: number; stdout: string; stderr: string }>): Promise<Map<string, string>> {
+export async function allHelp(
+  run: (args: string[]) => Promise<{ code: number; stdout: string; stderr: string }>,
+): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   const visit = async (path: string[]) => {
     const r = await run([...path, '--help']);

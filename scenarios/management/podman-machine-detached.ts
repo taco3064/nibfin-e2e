@@ -126,15 +126,19 @@ export function strandedConsoles(before: Snapshot, after: Snapshot): Stranded[] 
     const name = p.name.toLowerCase();
     const parent = byPid.get(p.ppid);
     const gone = !parent || createdAfter(parent, p);
-    if ((name === 'conhost.exe' || name === 'openconsole.exe') && gone) out.push({ ...p, why: 'a console whose opener is gone' });
-    else if (name === 'podman.exe') out.push({ ...p, why: `a podman.exe still alive (parent ${gone ? 'gone' : (parent?.name ?? '?')})` });
+    if ((name === 'conhost.exe' || name === 'openconsole.exe') && gone)
+      out.push({ ...p, why: 'a console whose opener is gone' });
+    else if (name === 'podman.exe')
+      out.push({ ...p, why: `a podman.exe still alive (parent ${gone ? 'gone' : (parent?.name ?? '?')})` });
   }
   return out;
 }
 
 /** The task whose action runs `podman machine start`; the same match as runner-add-setup. */
 export function startTask(details: { t: string; d: TaskDetail }[]): { t: string; d: TaskDetail } | undefined {
-  return details.find(({ d }) => d.actions.some((a) => /podman(\.exe)?"?$/i.test(a.execute.trim()) && /\bmachine\s+start\b/.test(a.arguments)));
+  return details.find(({ d }) =>
+    d.actions.some((a) => /podman(\.exe)?"?$/i.test(a.execute.trim()) && /\bmachine\s+start\b/.test(a.arguments)),
+  );
 }
 
 /** `podman machine inspect`'s first machine state; throws when it cannot be read. */
@@ -172,7 +176,9 @@ export function unitDetached(props: Record<string, string>, uid: number): string
 export function runningMachines(stdout: string): string[] {
   const v: unknown = JSON.parse(stdout.trim());
   if (!Array.isArray(v)) throw new Error(`podman machine list is not a JSON array: ${stdout.trim().slice(0, 300)}`);
-  return v.filter((m) => (m as { Running?: unknown })?.Running === true).map((m) => String((m as { Name?: unknown }).Name ?? '?'));
+  return v
+    .filter((m) => (m as { Running?: unknown })?.Running === true)
+    .map((m) => String((m as { Name?: unknown }).Name ?? '?'));
 }
 
 // ---- host reads ----
@@ -215,11 +221,19 @@ async function inspect(run: HostRun): Promise<string> {
   return machineState(r.stdout);
 }
 
-const regLine = (rs: Registration[]) => rs.map((r) => `${r.name} ${r.status}${r.busy ? ' busy' : ''}`).join(', ') || 'none';
+const regLine = (rs: Registration[]) =>
+  rs.map((r) => `${r.name} ${r.status}${r.busy ? ' busy' : ''}`).join(', ') || 'none';
 
 // ---- legs ----
 
-async function windowsLeg(ctx: RunContext, c: Check, run: HostRun, before: WindowsHostState, now: WindowsHostState, facts: NibfinFacts): Promise<{ summary?: string; pre?: string }> {
+async function windowsLeg(
+  ctx: RunContext,
+  c: Check,
+  run: HostRun,
+  before: WindowsHostState,
+  now: WindowsHostState,
+  facts: NibfinFacts,
+): Promise<{ summary?: string; pre?: string }> {
   const { execution } = ctx.sandbox;
   const regs = () => registrations(ctx.github, execution);
 
@@ -239,12 +253,29 @@ async function windowsLeg(ctx: RunContext, c: Check, run: HostRun, before: Windo
   await c.part(RULE, async () => {
     const add = facts.commands[0];
     const exited = !!add && add.args.slice(0, 2).join(' ') === 'runner add' && typeof add.code === 'number';
-    if (!c.that(exited, RULE, `the provisioning runner add has no recorded exit (first command: ${add?.args.join(' ') ?? 'none'})`) || !add) return;
+    if (
+      !c.that(
+        exited,
+        RULE,
+        `the provisioning runner add has no recorded exit (first command: ${add?.args.join(' ') ?? 'none'})`,
+      ) ||
+      !add
+    )
+      return;
     const state = await inspect(run);
-    c.that(state === 'running', RULE, `podman machine is ${state} although the runner add that started it exited (code ${add.code})`);
+    c.that(
+      state === 'running',
+      RULE,
+      `podman machine is ${state} although the runner add that started it exited (code ${add.code})`,
+    );
     const rs = await regs();
     c.that(rs.length > 0, RULE, `${execution} lists no runner registration after runner add exited`);
-    for (const r of rs) c.that(r.status === 'online', RULE, `registration ${r.name} is ${r.status} after the runner add that started the machine exited (code ${add.code})`);
+    for (const r of rs)
+      c.that(
+        r.status === 'online',
+        RULE,
+        `registration ${r.name} is ${r.status} after the runner add that started the machine exited (code ${add.code})`,
+      );
   });
 
   // Leg 2: stopped, restarted by the R5.13 task, and the task has ended.
@@ -272,7 +303,10 @@ async function windowsLeg(ctx: RunContext, c: Check, run: HostRun, before: Windo
     } catch (e) {
       seen = `unreadable (${message(e)})`;
     }
-    c.fail(RULE, `a Job keeps a Runner busy or a Runner is offline, so the machine was not stopped: ${seen} (${message(error)})`);
+    c.fail(
+      RULE,
+      `a Job keeps a Runner busy or a Runner is offline, so the machine was not stopped: ${seen} (${message(error)})`,
+    );
     return {};
   }
 
@@ -283,23 +317,39 @@ async function windowsLeg(ctx: RunContext, c: Check, run: HostRun, before: Windo
     const stop = await run(['podman', 'machine', 'stop']);
     const stopped = stop.code === 0 ? await inspect(run) : undefined;
     if (stop.code !== 0 || stopped === 'running') {
-      return { pre: `podman machine stop did not stop the machine (exit ${stop.code}, state ${stopped ?? 'unread'}): ${tail(stop, 300)}` };
+      return {
+        pre: `podman machine stop did not stop the machine (exit ${stop.code}, state ${stopped ?? 'unread'}): ${tail(stop, 300)}`,
+      };
     }
 
     const started = await run([...PS, START_TASK], taskEnv(name));
-    if (!c.that(started.code === 0, RULE, `Start-ScheduledTask for task ${name} exited ${started.code}: ${tail(started, 300)}`)) return {};
+    if (
+      !c.that(
+        started.code === 0,
+        RULE,
+        `Start-ScheduledTask for task ${name} exited ${started.code}: ${tail(started, 300)}`,
+      )
+    )
+      return {};
 
     let last: TaskRun = runBefore;
     try {
-      last = await waitFor(async () => (last = await readTaskRun(run, name)), (r) => taskEnded(r, runBefore), {
-        what: `task ${name} to end`,
-        deadlineMs: 5 * 60_000,
-        intervalMs: 5_000,
-        signal: ctx.signal,
-      });
+      last = await waitFor(
+        async () => (last = await readTaskRun(run, name)),
+        (r) => taskEnded(r, runBefore),
+        {
+          what: `task ${name} to end`,
+          deadlineMs: 5 * 60_000,
+          intervalMs: 5_000,
+          signal: ctx.signal,
+        },
+      );
     } catch (error) {
       if (ctx.signal.aborted) throw error;
-      c.fail(RULE, `task ${name} still ${last.state} after 300 s (last run ${last.lastRunTime || 'never'}, last result ${hex(last.lastResult)}; ${message(error)})`);
+      c.fail(
+        RULE,
+        `task ${name} still ${last.state} after 300 s (last run ${last.lastRunTime || 'never'}, last result ${hex(last.lastResult)}; ${message(error)})`,
+      );
       return {};
     }
 
@@ -308,12 +358,25 @@ async function windowsLeg(ctx: RunContext, c: Check, run: HostRun, before: Windo
 
     await c.part(RULE, async () => {
       const state = await inspect(run);
-      c.that(state === 'running', RULE, `podman machine is ${state} ${secs} s after task ${name} ended (last result ${hex(last.lastResult)})`);
+      c.that(
+        state === 'running',
+        RULE,
+        `podman machine is ${state} ${secs} s after task ${name} ended (last result ${hex(last.lastResult)})`,
+      );
     });
     await c.part(RULE, async () => {
       const rs = await regs();
-      c.that(rs.length > 0, RULE, `${execution} lists no runner registration ${secs} s after task ${name} restarted the machine`);
-      for (const r of rs) c.that(r.status === 'online', RULE, `registration ${r.name} is ${r.status} ${secs} s after task ${name} restarted the machine`);
+      c.that(
+        rs.length > 0,
+        RULE,
+        `${execution} lists no runner registration ${secs} s after task ${name} restarted the machine`,
+      );
+      for (const r of rs)
+        c.that(
+          r.status === 'online',
+          RULE,
+          `registration ${r.name} is ${r.status} ${secs} s after task ${name} restarted the machine`,
+        );
     });
     await c.part(RULE, async () => {
       const snap2 = await snapshot(run);
@@ -351,7 +414,12 @@ async function windowsLeg(ctx: RunContext, c: Check, run: HostRun, before: Windo
   }
 }
 
-async function linuxLeg(ctx: RunContext, c: Check, before: HostState & { platform: 'linux' }, now: HostState & { platform: 'linux' }): Promise<void> {
+async function linuxLeg(
+  ctx: RunContext,
+  c: Check,
+  before: HostState & { platform: 'linux' },
+  now: HostState & { platform: 'linux' },
+): Promise<void> {
   const units = newEnabledUnits(before, now);
   c.that(units.length > 0, RULE, 'runner add enabled no user unit to check');
   const uid = process.getuid?.();
@@ -363,14 +431,19 @@ async function linuxLeg(ctx: RunContext, c: Check, before: HostState & { platfor
       const r = await ctx.exec(['systemctl', '--user', 'show', u, '--property=ActiveState,ControlGroup'], env);
       if (r.code !== 0) throw failed(`systemctl --user show ${u}`, r);
       const problem = unitDetached(parseUnitShow(r.stdout), uid);
-      c.that(problem === undefined, RULE, `user unit ${u} ${problem ?? ''}; it must run under user@${uid}.service, not in a login session`);
+      c.that(
+        problem === undefined,
+        RULE,
+        `user unit ${u} ${problem ?? ''}; it must run under user@${uid}.service, not in a login session`,
+      );
     });
   }
   c.that(now.linger === 'yes', RULE, `Linger is "${now.linger}"; the user manager would stop with the last session`);
   await c.part(RULE, async () => {
     const r = await ctx.exec(['podman', 'machine', 'list', '--format', 'json']);
     if (r.code !== 0) throw failed('podman machine list', r);
-    for (const m of runningMachines(r.stdout)) c.fail(RULE, `podman machine ${m} is running; the Runners' Podman must not use one on Linux`);
+    for (const m of runningMachines(r.stdout))
+      c.fail(RULE, `podman machine ${m} is running; the Runners' Podman must not use one on Linux`);
   });
 }
 
@@ -386,7 +459,9 @@ export const podmanMachineDetached: Scenario = {
     const now = await readHostState(run, ctx.target.platform);
     const before = facts.hostBefore;
     if (now.platform !== ctx.target.platform || before.platform !== ctx.target.platform) {
-      return precondition(`host state is ${now.platform} now and ${before.platform} before runner add, target ${ctx.target.platform}`);
+      return precondition(
+        `host state is ${now.platform} now and ${before.platform} before runner add, target ${ctx.target.platform}`,
+      );
     }
     if (now.platform === 'linux' && before.platform === 'linux') {
       await linuxLeg(ctx, c, before, now);

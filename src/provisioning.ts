@@ -5,7 +5,16 @@ import { MAX_REASON } from './gate/file.ts';
 import { mustRun } from './host/exec.ts';
 import type { ExecResult } from './host/exec.ts';
 import { installGhNibfin } from './host/ghnibfin.ts';
-import { baselineOf, hasUserManager, hostPeriodicRun, readHostState, readPeriodic, readVmPeriodic, seedWslconfig, userRuntimeDir } from './host/hoststate.ts';
+import {
+  baselineOf,
+  hasUserManager,
+  hostPeriodicRun,
+  readHostState,
+  readPeriodic,
+  readVmPeriodic,
+  seedWslconfig,
+  userRuntimeDir,
+} from './host/hoststate.ts';
 import type { HostRun, HostState } from './host/hoststate.ts';
 import type { GitHub } from './host/github.ts';
 import { writeClaudeLogin } from './host/login.ts';
@@ -77,12 +86,18 @@ export async function readInitPr(gh: GitHub, repo: string): Promise<InitPr> {
   const r = `/repos/${repo}`;
   const pulls = await gh.list<{ number: number; head: { sha: string } }>(`${r}/pulls?state=open`);
   const [pr] = pulls;
-  if (pulls.length !== 1 || !pr) throw new Error(`${repo}: expected exactly one open pull request after init, found ${pulls.length}`);
+  if (pulls.length !== 1 || !pr)
+    throw new Error(`${repo}: expected exactly one open pull request after init, found ${pulls.length}`);
   const files = await gh.list<{ filename: string; status: string }>(`${r}/pulls/${pr.number}/files`);
-  const workflows = files.filter((f) => f.status !== 'removed' && f.filename.startsWith('.github/workflows/')).map((f) => f.filename);
+  const workflows = files
+    .filter((f) => f.status !== 'removed' && f.filename.startsWith('.github/workflows/'))
+    .map((f) => f.filename);
   const digests = new Set<string>();
   for (const path of workflows) {
-    const { data } = await gh.rest<{ content: string }>('GET', `${r}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${pr.head.sha}`);
+    const { data } = await gh.rest<{ content: string }>(
+      'GET',
+      `${r}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${pr.head.sha}`,
+    );
     const text = Buffer.from(data.content, 'base64').toString('utf8');
     for (const m of text.matchAll(IMAGE_DIGEST)) digests.add(m[1] as string);
   }
@@ -94,7 +109,12 @@ async function mergeInitPr(gh: GitHub, repo: string, pr: InitPr): Promise<void> 
   const r = `/repos/${repo}`;
   await gh.rest('PUT', `${r}/pulls/${pr.number}/merge`, { merge_method: 'rebase', sha: pr.headSha });
   for (const path of pr.workflows) {
-    const got = await gh.rest('GET', `${r}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=main`, undefined, [404]);
+    const got = await gh.rest(
+      'GET',
+      `${r}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=main`,
+      undefined,
+      [404],
+    );
     if (got.status === 404) throw new Error(`${repo}: ${path} is not on main after merging #${pr.number}`);
   }
 }
@@ -112,10 +132,16 @@ async function baseline(gh: GitHub, repo: string): Promise<{ commit: string; tre
  * podman machine is started to read inside the VM and stopped again, so that runner add
  * still finds it stopped; a failed stop throws.
  */
-export async function readPeriodicBaseline(run: HostRun, host: Pick<HostServices, 'env' | 'exec'>, before: HostState): Promise<void> {
+export async function readPeriodicBaseline(
+  run: HostRun,
+  host: Pick<HostServices, 'env' | 'exec'>,
+  before: HostState,
+): Promise<void> {
   if (before.platform === 'linux') {
     const runtime = userRuntimeDir(host.env);
-    before.periodic = await baselineOf(() => readPeriodic(hostPeriodicRun(run, runtime), { noManagerOk: !hasUserManager(runtime, existsSync) }));
+    before.periodic = await baselineOf(() =>
+      readPeriodic(hostPeriodicRun(run, runtime), { noManagerOk: !hasUserManager(runtime, existsSync) }),
+    );
     return;
   }
   const start = await startPodmanMachine(host.exec);
@@ -125,7 +151,8 @@ export async function readPeriodicBaseline(run: HostRun, host: Pick<HostServices
   }
   before.vm = await baselineOf(() => readVmPeriodic(run));
   const stop = await host.exec(['podman', 'machine', 'stop']);
-  if (stop.code !== 0) throw new Error(`podman machine stop after reading the VM baseline exited ${stop.code}: ${outputOf(stop)}`);
+  if (stop.code !== 0)
+    throw new Error(`podman machine stop after reading the VM baseline exited ${stop.code}: ${outputOf(stop)}`);
 }
 
 /** Host provisioning, in the order the steps run (Issue #283). */
@@ -133,7 +160,10 @@ export function createProvisioning(host: HostServices): ProvisioningStep[] {
   return [
     {
       id: 'gh-nibfin',
-      run: async (ctx) => ({ status: 'passed', reason: await installGhNibfin(host, ctx.target.ghNibfinCommit, ctx.target.platform) }),
+      run: async (ctx) => ({
+        status: 'passed',
+        reason: await installGhNibfin(host, ctx.target.ghNibfinCommit, ctx.target.platform),
+      }),
     },
     {
       id: 'podman',
@@ -164,7 +194,8 @@ export function createProvisioning(host: HostServices): ProvisioningStep[] {
         }
       },
       async teardown(ctx) {
-        if (ctx.facts('sandboxes')?.guard !== 'passed') return { status: 'passed', reason: 'this host did not reset the sandboxes; nothing to clean' };
+        if (ctx.facts('sandboxes')?.guard !== 'passed')
+          return { status: 'passed', reason: 'this host did not reset the sandboxes; nothing to clean' };
         return { status: 'passed', reason: await resetBoth(host, ctx) };
       },
     },
@@ -180,7 +211,13 @@ export function createProvisioning(host: HostServices): ProvisioningStep[] {
           if (r.code !== 0) throw new Error(`gh nibfin ${args.join(' ')} exited ${r.code}: ${outputOf(r)}`);
         };
         try {
-          await mustRun(host.exec, ['git', 'clone', '--quiet', `https://github.com/${SANDBOX.execution}.git`, ctx.executionDir]);
+          await mustRun(host.exec, [
+            'git',
+            'clone',
+            '--quiet',
+            `https://github.com/${SANDBOX.execution}.git`,
+            ctx.executionDir,
+          ]);
           // The host state before runner add, so scenarios can see what the always-on setup changed.
           if (ctx.target.platform === 'windows') seedWslconfig();
           const run: HostRun = (argv, env) => host.exec(argv, { env });
@@ -208,18 +245,25 @@ export function createProvisioning(host: HostServices): ProvisioningStep[] {
           // Fixtures start from these trees (scenarios/lib/fixture.ts).
           facts.executionBaseline = await baseline(host.github, SANDBOX.execution);
           facts.peerBaseline = await baseline(host.github, SANDBOX.peer);
-          return { status: 'passed', reason: `Runners added; init PRs #${execution.number} and #${peer.number} merged; image ${digest}`, facts };
+          return {
+            status: 'passed',
+            reason: `Runners added; init PRs #${execution.number} and #${peer.number} merged; image ${digest}`,
+            facts,
+          };
         } catch (error) {
           return { status: 'failed', reason: message(error), facts };
         }
       },
       async teardown(ctx) {
-        if (ctx.facts('nibfin')?.runnerAdd !== true) return { status: 'passed', reason: 'runner add did not run; nothing to remove' };
+        if (ctx.facts('nibfin')?.runnerAdd !== true)
+          return { status: 'passed', reason: 'runner add did not run; nothing to remove' };
         // A scenario may already have removed every Runner (runner-remove); then runner remove has nothing to do.
         const status = await ctx.ghNibfin(['status', '--json']);
-        if (status.code === 0 && claudeRunnersLeft(status.stdout) === false) return { status: 'passed', reason: 'no local Runners left' };
+        if (status.code === 0 && claudeRunnersLeft(status.stdout) === false)
+          return { status: 'passed', reason: 'no local Runners left' };
         const r = await ctx.ghNibfin(['runner', 'remove', 'claude', '--yes']);
-        if (r.code !== 0) return { status: 'failed', reason: `gh nibfin runner remove claude --yes exited ${r.code}: ${outputOf(r)}` };
+        if (r.code !== 0)
+          return { status: 'failed', reason: `gh nibfin runner remove claude --yes exited ${r.code}: ${outputOf(r)}` };
         return { status: 'passed', reason: 'local Runners removed' };
       },
     },

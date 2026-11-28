@@ -13,7 +13,12 @@ function delivered(gh: FakeGate, body: string, comments: FakeIssue['comments'] =
   return gh.addIssue(CORE, { title: 'work', state: 'closed', labels: ['delivered'], body, comments });
 }
 
-const shape = (text: string, user = 'taco3064') => ({ body: `<!-- nibfin:shape -->\n## Goal\n${text}\n`, user, updated_at: '2026-11-26T00:00:00Z', html_url: 'https://github.com/taco3064/nibfin-core/issues/1#shape' });
+const shape = (text: string, user = 'taco3064') => ({
+  body: `<!-- nibfin:shape -->\n## Goal\n${text}\n`,
+  user,
+  updated_at: '2026-11-26T00:00:00Z',
+  html_url: 'https://github.com/taco3064/nibfin-core/issues/1#shape',
+});
 
 async function plan(gh: FakeGate, request: PlanRequest): Promise<Plan> {
   const out = await makePlan(gh, map, scenarios, request);
@@ -37,7 +42,10 @@ test('a delivered Issue selects the Shape line; rules cited by open scope Issues
   deepEqual(p.waiting, [{ id: 'R3.2', issues: ['https://github.com/taco3064/gh-nibfin/issues/1'] }]);
   deepEqual(p.excluded, [{ id: 'R0.1', reason: '文件定位' }]);
   deepEqual(p.unknown, ['R9.9']);
-  deepEqual(p.gaps, [{ id: 'R9.9', missing: 'not in coverage-map.json' }, { id: 'R5.14', missing: ['macos'] }]);
+  deepEqual(p.gaps, [
+    { id: 'R9.9', missing: 'not in coverage-map.json' },
+    { id: 'R5.14', missing: ['macos'] },
+  ]);
   deepEqual(p.unselectedGaps, []);
   deepEqual(p.coverage, { passed: false, covered: 3, total: 4 });
   equal(p.execute, true);
@@ -80,7 +88,11 @@ test('a missing, malformed, absent or duplicated Shape falls back to ## Authorit
 });
 
 test('an Issue not closed with delivered selects nothing', async () => {
-  for (const issue of [{ state: 'open' as const, labels: ['delivered'] }, { state: 'closed' as const, labels: [] }, { state: 'closed' as const, labels: ['delivered'], pull_request: true }]) {
+  for (const issue of [
+    { state: 'open' as const, labels: ['delivered'] },
+    { state: 'closed' as const, labels: [] },
+    { state: 'closed' as const, labels: ['delivered'], pull_request: true },
+  ]) {
     const gh = new FakeGate();
     gh.addIssue(CORE, { title: 'x', body: '## Authority\nR3.1', comments: [shape('Proposal rules: R3.1')], ...issue });
     const p = await plan(gh, ref);
@@ -88,7 +100,10 @@ test('an Issue not closed with delivered selects nothing', async () => {
     deepEqual(p.selection, { all: false, rules: [] });
     equal(p.execute, false);
     match(p.decisions[0]?.decision ?? '', /not delivered/);
-    deepEqual(gh.reads.filter((r) => r.includes('scope')), []);
+    deepEqual(
+      gh.reads.filter((r) => r.includes('scope')),
+      [],
+    );
   }
 });
 

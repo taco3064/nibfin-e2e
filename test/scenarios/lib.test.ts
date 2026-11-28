@@ -15,15 +15,31 @@ import { EXEC, setup } from './kit.ts';
 const TOKEN = 'nibfin-token-value-123';
 
 test('the inspect projection keeps only allowlisted fields and the two run ids', () => {
-  const raw = [{
-    ImageName: 'ghcr.io/taco3064/nibfin@sha256:abc',
-    HostConfig: { Memory: 3221225472, NanoCpus: 2e9, CpuQuota: 0, PidsLimit: 2048, Binds: ['x'] },
-    Config: { Env: ['NIBFIN_GITHUB_TOKEN=' + TOKEN, 'NIBFIN_RUN_ID=42', 'NIBFIN_RUN_REPO=o/exec', 'PATH=/bin', 'ANTHROPIC_API_KEY=' + TOKEN, 'CLAUDE_CODE_OAUTH_TOKEN=' + TOKEN] },
-    Mounts: [
-      { Type: 'volume', Name: 'nibfin-home-claude', Source: '/home/u/.local/share/containers/storage/volumes/nibfin-home-claude/_data', Destination: '/home/nibfin/.claude' },
-      { Type: 'bind', Name: '', Source: '/home/u/work', Destination: '/workspace' },
-    ],
-  }];
+  const raw = [
+    {
+      ImageName: 'ghcr.io/taco3064/nibfin@sha256:abc',
+      HostConfig: { Memory: 3221225472, NanoCpus: 2e9, CpuQuota: 0, PidsLimit: 2048, Binds: ['x'] },
+      Config: {
+        Env: [
+          'NIBFIN_GITHUB_TOKEN=' + TOKEN,
+          'NIBFIN_RUN_ID=42',
+          'NIBFIN_RUN_REPO=o/exec',
+          'PATH=/bin',
+          'ANTHROPIC_API_KEY=' + TOKEN,
+          'CLAUDE_CODE_OAUTH_TOKEN=' + TOKEN,
+        ],
+      },
+      Mounts: [
+        {
+          Type: 'volume',
+          Name: 'nibfin-home-claude',
+          Source: '/home/u/.local/share/containers/storage/volumes/nibfin-home-claude/_data',
+          Destination: '/home/nibfin/.claude',
+        },
+        { Type: 'bind', Name: '', Source: '/home/u/work', Destination: '/workspace' },
+      ],
+    },
+  ];
   const p = project(raw);
   deepEqual(p, {
     imageName: 'ghcr.io/taco3064/nibfin@sha256:abc',
@@ -32,7 +48,12 @@ test('the inspect projection keeps only allowlisted fields and the two run ids',
     cpuQuota: 0,
     pidsLimit: 2048,
     mounts: [
-      { source: '/home/u/.local/share/containers/storage/volumes/nibfin-home-claude/_data', destination: '/home/nibfin/.claude', name: 'nibfin-home-claude', type: 'volume' },
+      {
+        source: '/home/u/.local/share/containers/storage/volumes/nibfin-home-claude/_data',
+        destination: '/home/nibfin/.claude',
+        name: 'nibfin-home-claude',
+        type: 'volume',
+      },
       { source: '/home/u/work', destination: '/workspace', type: 'bind' },
     ],
     credentialEnv: ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'],
@@ -51,8 +72,16 @@ test('the events parser keeps start and died only', () => {
 });
 
 test('a watch inspects on start, keeps the projection, counts died events and fails at the deadline naming the stage', async () => {
-  const inspectOut = JSON.stringify([{ ImageName: 'img', HostConfig: { Memory: 1 }, Config: { Env: ['NIBFIN_RUN_ID=7', 'NIBFIN_GITHUB_TOKEN=' + TOKEN] } }]);
-  const h = setup({ respond: (argv) => (argv[1] === 'container' && argv[2] === 'inspect' ? { stdout: inspectOut } : undefined) });
+  const inspectOut = JSON.stringify([
+    {
+      ImageName: 'img',
+      HostConfig: { Memory: 1 },
+      Config: { Env: ['NIBFIN_RUN_ID=7', 'NIBFIN_GITHUB_TOKEN=' + TOKEN] },
+    },
+  ]);
+  const h = setup({
+    respond: (argv) => (argv[1] === 'container' && argv[2] === 'inspect' ? { stdout: inspectOut } : undefined),
+  });
   const starts: number[] = [];
   const w = watchJobContainers(h.kit, EXEC, 9, (_e, i) => void starts.push(i));
   deepEqual(h.events.argvs[0]?.slice(0, 6), ['podman', 'events', '--format', 'json', '--since', '10s']);
@@ -63,7 +92,10 @@ test('a watch inspects on start, keeps the projection, counts died events and fa
   h.events.emit('{"ID":"c1","Status":"died"}');
   await w.died(1, 1000, 'Shape');
   deepEqual(starts, [0]);
-  await rejects(w.died(2, 20, 'the Deliver Job container of o/exec#9 to end'), /timed out after 0 s waiting for the Deliver Job container of o\/exec#9 to end/);
+  await rejects(
+    w.died(2, 20, 'the Deliver Job container of o/exec#9 to end'),
+    /timed out after 0 s waiting for the Deliver Job container of o\/exec#9 to end/,
+  );
   w.stop();
   await rejects(w.died(2, 1000, 'Review'), /the watch was stopped while waiting for Review/);
   equal(h.logs.join('\n').includes(TOKEN), false);
@@ -105,14 +137,27 @@ test('the stage Job is the one on a local Runner; its runner_name maps to a slot
   const original = h.fake.fetch;
   let logAuth: string | null = 'unset';
   let logBody = 'the log\n';
-  h.kit.github = (await import('../../src/host/github.ts')).createGitHub(() => 'tok', async (input, init) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith('/runs/42/jobs')) return new Response(JSON.stringify({ total_count: jobs.length, jobs }), { status: 200 });
-    if (url.pathname.endsWith('/jobs/2/logs')) return new Response(null, { status: 302, headers: { Location: 'https://logs.example/x' } });
-    if (url.host === 'logs.example') return ((logAuth = new Headers(init?.headers).get('authorization')), new Response(logBody));
-    return original(input, init);
+  h.kit.github = (await import('../../src/host/github.ts')).createGitHub(
+    () => 'tok',
+    async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/runs/42/jobs'))
+        return new Response(JSON.stringify({ total_count: jobs.length, jobs }), { status: 200 });
+      if (url.pathname.endsWith('/jobs/2/logs'))
+        return new Response(null, { status: 302, headers: { Location: 'https://logs.example/x' } });
+      if (url.host === 'logs.example')
+        return ((logAuth = new Headers(init?.headers).get('authorization')), new Response(logBody));
+      return original(input, init);
+    },
+  );
+  deepEqual(await stageJob(h.kit, EXEC, '42'), {
+    id: 2,
+    name: 'stage',
+    runnerName: 'myhost-1a2b3c4d-claude-2',
+    slot: 'claude-2',
+    status: 'completed',
+    conclusion: null,
   });
-  deepEqual(await stageJob(h.kit, EXEC, '42'), { id: 2, name: 'stage', runnerName: 'myhost-1a2b3c4d-claude-2', slot: 'claude-2', status: 'completed', conclusion: null });
   const work = mkdtempSync(join(tmpdir(), 'e2e-joblog-'));
   const got = await jobLog({ ...h.kit, workDir: work }, EXEC, '42', 'case-1');
   equal(got.text, 'the log\n');
@@ -131,7 +176,8 @@ test('the stage Job is the one on a local Runner; its runner_name maps to a slot
 
 test('the probe script prints no environment value but the memory switch, and the last block is parsed', () => {
   equal(/\$\{?(NIBFIN|GH|GITHUB|CLAUDE_CODE_OAUTH)/.test(PROBE_SCRIPT), false);
-  const text = 'Shape\n```e2e-probe\nuid=1\n```\nlater\n```e2e-probe\nuid=1000\nancestor=sh\nancestor=claude\nexists:CLAUDE.md=yes\nfirst_instruction_line=# Shape\n```\n';
+  const text =
+    'Shape\n```e2e-probe\nuid=1\n```\nlater\n```e2e-probe\nuid=1000\nancestor=sh\nancestor=claude\nexists:CLAUDE.md=yes\nfirst_instruction_line=# Shape\n```\n';
   const p = parseProbe(text);
   deepEqual(p?.get('uid'), ['1000']);
   deepEqual(p?.get('ancestor'), ['sh', 'claude']);
@@ -140,21 +186,37 @@ test('the probe script prints no environment value but the memory switch, and th
 });
 
 test('the login settings reader returns derived values, never the token', () => {
-  const f = loginFacts({ env: { CLAUDE_CODE_OAUTH_TOKEN: TOKEN }, enableAllProjectMcpServers: true, sandbox: { enabled: false } });
-  deepEqual(f, { exists: true, hasToken: true, enableAllProjectMcpServers: true, sandboxEnabled: false, keys: ['enableAllProjectMcpServers', 'env', 'sandbox'] });
+  const f = loginFacts({
+    env: { CLAUDE_CODE_OAUTH_TOKEN: TOKEN },
+    enableAllProjectMcpServers: true,
+    sandbox: { enabled: false },
+  });
+  deepEqual(f, {
+    exists: true,
+    hasToken: true,
+    enableAllProjectMcpServers: true,
+    sandboxEnabled: false,
+    keys: ['enableAllProjectMcpServers', 'env', 'sandbox'],
+  });
   equal(JSON.stringify(f).includes(TOKEN), false);
   deepEqual(loginFacts(undefined).exists, false);
 });
 
 test('the Runner .env edit keeps other lines and is idempotent', () => {
   equal(withEnvLine('A=1\nB=2\n', 'NIBFIN_MODEL', 'sonnet'), 'A=1\nB=2\nNIBFIN_MODEL=sonnet\n');
-  equal(withEnvLine(withEnvLine('A=1\nNIBFIN_MODEL=opus\n', 'NIBFIN_MODEL', 'sonnet'), 'NIBFIN_MODEL', 'sonnet'), 'A=1\nNIBFIN_MODEL=sonnet\n');
+  equal(
+    withEnvLine(withEnvLine('A=1\nNIBFIN_MODEL=opus\n', 'NIBFIN_MODEL', 'sonnet'), 'NIBFIN_MODEL', 'sonnet'),
+    'A=1\nNIBFIN_MODEL=sonnet\n',
+  );
   equal(withEnvLine('A=1\nNIBFIN_MODEL=sonnet\n', 'NIBFIN_MODEL', undefined), 'A=1\n');
   equal(withEnvLine('A=1\n', 'NIBFIN_MODEL', undefined), 'A=1\n');
   const data = mkdtempSync(join(tmpdir(), 'e2e-runner-'));
   const env = { XDG_DATA_HOME: data };
   equal(runnerDir(env, 'claude-1'), join(data, 'nibfin', 'runners', 'claude-1'));
-  equal(runnerDir({ HOME: '/home/u' }, 'claude-1'), join('/home/u', '.local', 'share', 'nibfin', 'runners', 'claude-1'));
+  equal(
+    runnerDir({ HOME: '/home/u' }, 'claude-1'),
+    join('/home/u', '.local', 'share', 'nibfin', 'runners', 'claude-1'),
+  );
   mkdirSync(runnerDir(env, 'claude-1'), { recursive: true });
   writeFileSync(join(runnerDir(env, 'claude-1'), '.env'), 'LANG=C.UTF-8\n');
   editRunnerEnv(env, 'claude-1', 'NIBFIN_MODEL', 'sonnet');
@@ -163,11 +225,19 @@ test('the Runner .env edit keeps other lines and is idempotent', () => {
 });
 
 test('index platforms ignore attestation entries; predicate types come from the DSSE payloads', () => {
-  const index = { manifests: [{ platform: { os: 'linux', architecture: 'amd64' } }, { platform: { os: 'linux', architecture: 'arm64' } }, { platform: { os: 'unknown', architecture: 'unknown' } }] };
+  const index = {
+    manifests: [
+      { platform: { os: 'linux', architecture: 'amd64' } },
+      { platform: { os: 'linux', architecture: 'arm64' } },
+      { platform: { os: 'unknown', architecture: 'unknown' } },
+    ],
+  };
   deepEqual(indexPlatforms(index), ['linux/amd64', 'linux/arm64']);
   deepEqual(indexPlatforms({}), []);
   const payload = Buffer.from(JSON.stringify({ predicateType: 'https://slsa.dev/provenance/v1' })).toString('base64');
-  deepEqual(predicateTypes({ attestations: [{ bundle: { dsseEnvelope: { payload } } }, { bundle: {} }] }), ['https://slsa.dev/provenance/v1']);
+  deepEqual(predicateTypes({ attestations: [{ bundle: { dsseEnvelope: { payload } } }, { bundle: {} }] }), [
+    'https://slsa.dev/provenance/v1',
+  ]);
 });
 
 test('secret absence is checked in memory', () => {
@@ -177,7 +247,10 @@ test('secret absence is checked in memory', () => {
 
 test('redact, excerpt and Checks remove secret values from every printed detail', () => {
   const secret = 'abcdefgh-secret';
-  equal(redact(`x ${secret} y ${secret}`, [secret]), 'x [secret value removed by nibfin-e2e] y [secret value removed by nibfin-e2e]');
+  equal(
+    redact(`x ${secret} y ${secret}`, [secret]),
+    'x [secret value removed by nibfin-e2e] y [secret value removed by nibfin-e2e]',
+  );
   equal(redact('short abc kept', ['abc']), 'short abc kept');
   // Redacted before cutting, so no prefix of the value survives a cut through it.
   equal(excerpt(`0123 ${secret}`, 9, [secret]), '0123 [sec');
@@ -197,7 +270,10 @@ test('redact, excerpt and Checks remove secret values from every printed detail'
 test('redactDeep redacts every string, key and nested value, and leaves other values', () => {
   const secret = 'deep-secret-value';
   const out = redactDeep({ a: [`x${secret}`, 1, null], [secret]: { b: secret, c: true } }, [secret]);
-  deepEqual(out, { a: ['x[secret value removed by nibfin-e2e]', 1, null], '[secret value removed by nibfin-e2e]': { b: '[secret value removed by nibfin-e2e]', c: true } });
+  deepEqual(out, {
+    a: ['x[secret value removed by nibfin-e2e]', 1, null],
+    '[secret value removed by nibfin-e2e]': { b: '[secret value removed by nibfin-e2e]', c: true },
+  });
 });
 
 test('a container watch and a remote wait end with the abort reason when the run is aborted', async () => {

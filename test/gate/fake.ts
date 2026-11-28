@@ -135,7 +135,13 @@ export class FakeGate implements GitHub {
       const owner = repo.split('/')[0];
       return list
         .filter((p) => (state === 'all' || p.state === state) && (!head || head === `${owner}:${p.head}`))
-        .map((p) => ({ number: p.number, html_url: `https://github.com/${repo}/pull/${p.number}`, state: p.state, merged_at: p.merged_at, base: { ref: p.base, repo: { default_branch: 'main' } } }));
+        .map((p) => ({
+          number: p.number,
+          html_url: `https://github.com/${repo}/pull/${p.number}`,
+          state: p.state,
+          merged_at: p.merged_at,
+          base: { ref: p.base, repo: { default_branch: 'main' } },
+        }));
     }
     m = /^\/repos\/([^/]+\/[^/]+)\/issues(?:\/(\d+))?(\/comments)?$/.exec(path);
     if (!m) throw new GitHubError(method, path, 404, 'Not Found');
@@ -149,15 +155,25 @@ export class FakeGate implements GitHub {
       const state = q.get('state') ?? 'open';
       const labels = (q.get('labels') ?? '').split(',').filter(Boolean);
       const since = q.get('since');
-      let out = list.filter((i) => (state === 'all' || i.state === state) && labels.every((l) => i.labels.includes(l)) && (!since || i.updated_at >= since));
-      if (q.get('sort') === 'updated') out = [...out].sort((a, b) => (q.get('direction') === 'asc' ? 1 : -1) * a.updated_at.localeCompare(b.updated_at));
+      let out = list.filter(
+        (i) =>
+          (state === 'all' || i.state === state) &&
+          labels.every((l) => i.labels.includes(l)) &&
+          (!since || i.updated_at >= since),
+      );
+      if (q.get('sort') === 'updated')
+        out = [...out].sort(
+          (a, b) => (q.get('direction') === 'asc' ? 1 : -1) * a.updated_at.localeCompare(b.updated_at),
+        );
       else out = [...out].sort((a, b) => b.number - a.number);
       return out.map((i) => this.view(repo, i));
     }
     if (method === 'GET' && issue && !m[3]) return this.view(repo, issue);
     if (method === 'GET' && issue && m[3]) {
       const since = q.get('since');
-      return issue.comments.filter((c) => !since || c.updated_at >= since).map((c) => ({ body: c.body, user: { login: c.user }, html_url: c.html_url, updated_at: c.updated_at }));
+      return issue.comments
+        .filter((c) => !since || c.updated_at >= since)
+        .map((c) => ({ body: c.body, user: { login: c.user }, html_url: c.html_url, updated_at: c.updated_at }));
     }
     if (method === 'POST' && n === undefined) {
       const created = this.addIssue(repo, {
@@ -169,7 +185,12 @@ export class FakeGate implements GitHub {
       return this.view(repo, created);
     }
     if (method === 'POST' && issue && m[3]) {
-      const c = { body: body?.body as string, user: this.login, updated_at: this.now(), html_url: `https://github.com/${repo}/issues/${issue.number}#c${issue.comments.length + 1}` };
+      const c = {
+        body: body?.body as string,
+        user: this.login,
+        updated_at: this.now(),
+        html_url: `https://github.com/${repo}/issues/${issue.number}#c${issue.comments.length + 1}`,
+      };
       issue.comments.push(c);
       issue.updated_at = c.updated_at;
       return c;

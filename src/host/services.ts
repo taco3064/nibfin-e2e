@@ -27,7 +27,11 @@ export interface HostServices {
   peer?: PeerHandle;
 }
 
-export function createServices(repoRoot: string, log: (message: string) => void, env: Env = { ...process.env }): HostServices {
+export function createServices(
+  repoRoot: string,
+  log: (message: string) => void,
+  env: Env = { ...process.env },
+): HostServices {
   let fresh = false;
   const sandboxToken = () => requireEnv(env, 'E2E_SANDBOX_TOKEN');
   const peerToken = () => requireEnv(env, 'E2E_PEER_GITHUB_TOKEN');

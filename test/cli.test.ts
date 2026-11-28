@@ -6,7 +6,16 @@ import { fakeHostContext, map, passed, scenario, scenarioA, scenarioB, scenarios
 
 const commit = ['--gh-nibfin-commit', 'c'.repeat(40)];
 
-async function cli(argv: string[], opts: { entries?: MapEntry[]; scenarios?: Scenario[]; steps?: ProvisioningStep[]; errors?: string[]; nodePlatform?: string } = {}) {
+async function cli(
+  argv: string[],
+  opts: {
+    entries?: MapEntry[];
+    scenarios?: Scenario[];
+    steps?: ProvisioningStep[];
+    errors?: string[];
+    nodePlatform?: string;
+  } = {},
+) {
   let stdout = '';
   let stderr = '';
   const code = await main(argv, {
@@ -60,7 +69,10 @@ test('--list and --uncovered report without running', async () => {
   equal(list.code, 0);
   deepEqual(list.json.rules, ['R3.1']);
   deepEqual(list.json.excluded, [{ id: 'R0.1', reason: '文件定位' }]);
-  deepEqual(list.json.scenarios.map((s: { id: string }) => s.id), ['a']);
+  deepEqual(
+    list.json.scenarios.map((s: { id: string }) => s.id),
+    ['a'],
+  );
   const unc = await cli(['--uncovered'], { scenarios: spy });
   equal(unc.code, 0);
   deepEqual(unc.json.selection, { all: true });
@@ -71,7 +83,10 @@ test('--list and --uncovered report without running', async () => {
 test('execution exits 0 when selected scenarios pass and 1 when the gate fails', async () => {
   const sel = await cli(['--rule', 'R3.1', ...commit]);
   equal(sel.code, 0);
-  deepEqual(sel.json.scenarios.map((s: { id: string; status: string }) => [s.id, s.status]), [['a', 'passed']]);
+  deepEqual(
+    sel.json.scenarios.map((s: { id: string; status: string }) => [s.id, s.status]),
+    [['a', 'passed']],
+  );
   equal(sel.json.meta.imageDigest, null);
   equal(sel.json.meta.ghNibfinCommit, 'c'.repeat(40));
   deepEqual(sel.json.teardown, []);
@@ -89,11 +104,16 @@ test('execution exits 1 when a scenario fails', async () => {
 });
 
 test('execution exits 1 when a teardown fails, even if every scenario passed', async () => {
-  const steps = [step('host', passed, undefined, { teardown: async () => ({ status: 'failed', reason: 'Issues left' }) })];
+  const steps = [
+    step('host', passed, undefined, { teardown: async () => ({ status: 'failed', reason: 'Issues left' }) }),
+  ];
   const withStep = [scenario('a', ['R3.1', 'R3.2'], ['linux'], passed, ['host']), scenarioB];
   const r = await cli(['--rule', 'R3.1', ...commit], { scenarios: withStep, steps });
   equal(r.code, 1);
-  deepEqual(r.json.scenarios.map((s: { status: string }) => s.status), ['passed']);
+  deepEqual(
+    r.json.scenarios.map((s: { status: string }) => s.status),
+    ['passed'],
+  );
   deepEqual(r.json.teardown, [{ id: 'host', status: 'failed', reason: 'Issues left' }]);
 });
 
@@ -118,15 +138,31 @@ async function planCli(argv: string[], plan: unknown, runner?: string) {
 }
 
 test('--plan runs the plan selection, reports waiting-only scenarios and records the runner', async () => {
-  const r = await planCli(['--plan', 'plan.json', ...commit], { selection: { all: false, rules: ['R3.1', 'R3.2'] }, waiting: [] }, 'host-1');
+  const r = await planCli(
+    ['--plan', 'plan.json', ...commit],
+    { selection: { all: false, rules: ['R3.1', 'R3.2'] }, waiting: [] },
+    'host-1',
+  );
   equal(r.code, 0);
   deepEqual(r.json.meta.selection, { all: false, rules: ['R3.1', 'R3.2'], sections: [] });
   equal(r.json.meta.runner, 'host-1');
-  deepEqual(r.json.scenarios.map((s: { id: string; status: string }) => [s.id, s.status]), [['a', 'passed']]);
+  deepEqual(
+    r.json.scenarios.map((s: { id: string; status: string }) => [s.id, s.status]),
+    [['a', 'passed']],
+  );
 
-  const w = await planCli(['--plan', 'plan.json', ...commit], { selection: { all: true }, waiting: [{ id: 'R3.1', issues: ['u1'] }, { id: 'R3.2', issues: ['u2'] }] });
+  const w = await planCli(['--plan', 'plan.json', ...commit], {
+    selection: { all: true },
+    waiting: [
+      { id: 'R3.1', issues: ['u1'] },
+      { id: 'R3.2', issues: ['u2'] },
+    ],
+  });
   equal(w.code, 1);
-  deepEqual(w.json.scenarios.map((s: { id: string; status: string }) => [s.id, s.status]), [['a', 'waiting']]);
+  deepEqual(
+    w.json.scenarios.map((s: { id: string; status: string }) => [s.id, s.status]),
+    [['a', 'waiting']],
+  );
   match(w.json.scenarios[0].reason, /rule R3\.1 is waiting on u1; rule R3\.2 is waiting on u2/);
   equal(w.json.gate.passed, false);
   equal(w.json.meta.runner, null);
@@ -147,7 +183,11 @@ test('--plan is exclusive with other selections and is validated', async () => {
     [['--plan', 'plan.json', ...commit], 'not json', /cannot read/],
     [['--plan', 'plan.json', ...commit], { selection: { all: false }, waiting: [] }, /selection must be/],
     [['--plan', 'plan.json', ...commit], { selection: { all: true } }, /waiting must be/],
-    [['--plan', 'plan.json', ...commit], { selection: { all: false, rules: ['R9.9'] }, waiting: [] }, /not in the coverage map/],
+    [
+      ['--plan', 'plan.json', ...commit],
+      { selection: { all: false, rules: ['R9.9'] }, waiting: [] },
+      /not in the coverage map/,
+    ],
   ];
   for (const [argv, plan, expected] of cases) {
     const r = await planCli(argv, plan);
@@ -175,7 +215,10 @@ async function budgetCli(argv: string[], startedAt: number) {
 
 test('--budget-minutes must be an integer above the teardown reserve and is only for execution', async () => {
   for (const [argv, expected] of [
-    [['--all', ...commit, '--budget-minutes', '30'], /--budget-minutes must be an integer above the teardown reserve of 30/],
+    [
+      ['--all', ...commit, '--budget-minutes', '30'],
+      /--budget-minutes must be an integer above the teardown reserve of 30/,
+    ],
     [['--all', ...commit, '--budget-minutes', '90.5'], /--budget-minutes must be an integer/],
     [['--all', ...commit, '--budget-minutes', 'soon'], /--budget-minutes must be an integer/],
     [['--list', '--budget-minutes', '100'], /--budget-minutes is only for execution/],
@@ -193,7 +236,10 @@ test('the budget counts from the harness start: 220 min by default, or --budget-
   deepEqual([early.code, early.exits, early.json.scenarios[0].status], [0, [], 'passed']);
   // 191 min after the start it has: the scenario is not run.
   const late = await budgetCli(['--rule', 'R3.1', ...commit], Date.now() - 191 * min);
-  deepEqual([late.code, late.json.scenarios[0].status, late.json.scenarios[0].reason], [1, 'failed', 'not run: harness budget of 190 min ran out']);
+  deepEqual(
+    [late.code, late.json.scenarios[0].status, late.json.scenarios[0].reason],
+    [1, 'failed', 'not run: harness budget of 190 min ran out'],
+  );
   // With 40 min, the work limit is 10 min after the start.
   const given = await budgetCli(['--rule', 'R3.1', ...commit, '--budget-minutes', '40'], Date.now() - 11 * min);
   equal(given.json.scenarios[0].reason, 'not run: harness budget of 10 min ran out');

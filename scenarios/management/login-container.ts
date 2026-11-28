@@ -22,7 +22,8 @@ export interface LoginContainer {
 }
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '');
-const strings = (v: unknown): string[] => (typeof v === 'string' ? (v ? [v] : []) : Array.isArray(v) ? v.map((s) => String(s)) : []);
+const strings = (v: unknown): string[] =>
+  typeof v === 'string' ? (v ? [v] : []) : Array.isArray(v) ? v.map((s) => String(s)) : [];
 
 export function projectLogin(raw: unknown): LoginContainer | undefined {
   const c = (Array.isArray(raw) ? raw[0] : raw) as Record<string, unknown> | undefined;
@@ -57,7 +58,10 @@ export function isCliLogin(argv: string[]): boolean {
 
 /** IDs from `podman ps --format {{.ID}}` output. */
 export function parseIds(stdout: string): string[] {
-  return stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+  return stdout
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 /** A container or image id without the `sha256:` prefix, lower case. */
@@ -75,7 +79,7 @@ function shapeMisses(c: LoginContainer): string[] {
   if (c.job) misses.push(`carries the Job label ${LABEL_REPO}`);
   if (!c.running) misses.push('not running');
   if (!c.openStdin && !c.tty) misses.push('not interactive');
-  if (!isCliLogin(c.argv)) misses.push('not the CLI\'s own login (codex login [--device-auth])');
+  if (!isCliLogin(c.argv)) misses.push("not the CLI's own login (codex login [--device-auth])");
   return misses;
 }
 
@@ -91,7 +95,8 @@ export function shapeMiss(c: LoginContainer): string | undefined {
 /** Why `c` is not the login container, or undefined when it is. */
 export function loginMiss(c: LoginContainer, jobImageId: string): string | undefined {
   const misses = shapeMisses(c);
-  if (!c.imageId || bareImageId(c.imageId) !== bareImageId(jobImageId)) misses.push(`image id differs from the Jobs' image id ${shortId(jobImageId)}`);
+  if (!c.imageId || bareImageId(c.imageId) !== bareImageId(jobImageId))
+    misses.push(`image id differs from the Jobs' image id ${shortId(jobImageId)}`);
   return misses.length ? misses.join(', ') : undefined;
 }
 
@@ -140,12 +145,17 @@ export function loginVerdict(input: LoginVerdictInput): { failure: string } {
   const observed = problems.length ? problems.join('; ') : `no running container mounting ${volume}`;
   const r611 = `R6.11: expected an interactive container from the Jobs' image ${ref} running the CLI's own login (codex login [--device-auth]) while the guide was shown; observed: ${observed} ${waitText}`;
   if (!current) return { failure: r611 };
-  if ('error' in current) return { failure: `${r611} (GHCR :main could not be read to rule out a newer image: ${current.error})` };
+  if ('error' in current)
+    return { failure: `${r611} (GHCR :main could not be read to rule out a newer image: ${current.error})` };
   if (current.digest === initDigest) return { failure: r611 };
   const fromCurrent = (c: LoginContainer) =>
-    (!!c.imageDigest && c.imageDigest === current.digest) || (!!current.imageId && !!c.imageId && bareImageId(c.imageId) === bareImageId(current.imageId));
+    (!!c.imageDigest && c.imageDigest === current.digest) ||
+    (!!current.imageId && !!c.imageId && bareImageId(c.imageId) === bareImageId(current.imageId));
   const proven = seen.find((c) => otherImageLogin(c, jobImageId) && fromCurrent(c));
-  if (!proven) return { failure: `${r611} (GHCR :main is ${current.digest}, init resolved ${initDigest}; no login candidate is from it)` };
+  if (!proven)
+    return {
+      failure: `${r611} (GHCR :main is ${current.digest}, init resolved ${initDigest}; no login candidate is from it)`,
+    };
   const why = `GHCR :main is ${current.digest}, init resolved ${initDigest}; a newer main image appeared after init and login candidate ${describeLogin(proven)} is from it, not from the Jobs' image ${ref}; observed: ${observed} ${waitText}`;
   return { failure: `run state: ${precondition(why).reason}` };
 }

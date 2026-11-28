@@ -1,7 +1,13 @@
 import type { MapEntry, Outcome, Platform, ProvisioningStep, Scenario, StepOutcome } from '../src/types.ts';
 export { fakeHostContext } from './host/fakes.ts';
 
-export function scenario(id: string, rules: string[], platforms: Platform[], outcome: Outcome | Error, requires?: string[]): Scenario {
+export function scenario(
+  id: string,
+  rules: string[],
+  platforms: Platform[],
+  outcome: Outcome | Error,
+  requires?: string[],
+): Scenario {
   return {
     id,
     rules,
@@ -14,7 +20,12 @@ export function scenario(id: string, rules: string[], platforms: Platform[], out
   };
 }
 
-export function step(id: string, outcome: StepOutcome | Error, calls?: string[], extra: Partial<ProvisioningStep> = {}): ProvisioningStep {
+export function step(
+  id: string,
+  outcome: StepOutcome | Error,
+  calls?: string[],
+  extra: Partial<ProvisioningStep> = {},
+): ProvisioningStep {
   return {
     id,
     ...extra,

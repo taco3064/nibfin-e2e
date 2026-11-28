@@ -31,7 +31,11 @@ let skipped = '';
 /** Launches Chrome the way `openPage` does: the Chrome channel, then `which google-chrome`. */
 async function launch(): Promise<BrowserContext> {
   await registerIssueEngine();
-  const { profileDir, options } = browserLaunchOptions(join(ROOT, '.e2e-work', 'test-browser'), childEnv(process.env), {});
+  const { profileDir, options } = browserLaunchOptions(
+    join(ROOT, '.e2e-work', 'test-browser'),
+    childEnv(process.env),
+    {},
+  );
   try {
     return await chromium.launchPersistentContext(profileDir, { ...options, channel: 'chrome' });
   } catch (error) {
@@ -79,8 +83,14 @@ async function only(p: Page, title: string) {
 const shapes: [string, string][] = [
   ['a Waiting-on entry that is a list item', `<section>${cardA}${cardB(waitingList)}${cardP}</section>`],
   ['a Waiting-on entry that is a bare link', `<section>${cardA}${cardB(waitingBare)}${cardP}</section>`],
-  ['cards inside a repository group list item', `<ul><li><h2>o/r</h2><a href="https://github.com/o/r">o/r</a><div>${cardA}${cardB(waitingList)}${cardP}</div></li></ul>`],
-  ['B before A and bare Waiting-on links inside a group list item', `<ul><li><h2>o/r</h2>${cardB(waitingBare)}${cardA}${cardP}</li></ul>`],
+  [
+    'cards inside a repository group list item',
+    `<ul><li><h2>o/r</h2><a href="https://github.com/o/r">o/r</a><div>${cardA}${cardB(waitingList)}${cardP}</div></li></ul>`,
+  ],
+  [
+    'B before A and bare Waiting-on links inside a group list item',
+    `<ul><li><h2>o/r</h2>${cardB(waitingBare)}${cardA}${cardP}</li></ul>`,
+  ],
 ];
 
 for (const [what, html] of shapes) {

@@ -9,7 +9,11 @@ const target: RunTarget = { ghNibfinCommit: 'a'.repeat(40), platform: 'linux' };
 
 function entriesFor(list: Scenario[]): MapEntry[] {
   const rules = [...new Set(list.flatMap((s) => s.rules))].sort();
-  return rules.map((id) => ({ id, platforms: ['linux'], scenarios: list.filter((s) => s.rules.includes(id)).map((s) => s.id) }));
+  return rules.map((id) => ({
+    id,
+    platforms: ['linux'],
+    scenarios: list.filter((s) => s.rules.includes(id)).map((s) => s.id),
+  }));
 }
 
 async function runAll(list: Scenario[], steps: ProvisioningStep[] = [], entries = entriesFor(list)) {
@@ -44,7 +48,12 @@ test('scenario outcomes passed, failed, waiting and thrown are reported with rea
 });
 
 test('a malformed outcome is failed', async () => {
-  const bad = { id: 'x', rules: ['R1.1'], platforms: ['linux'], run: async () => ({ status: 'ok' }) } as unknown as Scenario;
+  const bad = {
+    id: 'x',
+    rules: ['R1.1'],
+    platforms: ['linux'],
+    run: async () => ({ status: 'ok' }),
+  } as unknown as Scenario;
   equal((await runAll([bad])).scenarios[0]?.status, 'failed');
 });
 
@@ -65,12 +74,22 @@ test('required provisioning runs once, in registry order; failure and waiting pr
     steps,
   );
   deepEqual(calls, ['ok', 'broken', 'later']);
-  deepEqual(r.provisioning.map((p) => [p.id, p.status]), [['ok', 'passed'], ['broken', 'failed'], ['later', 'waiting']]);
-  deepEqual(r.scenarios.map((s) => [s.id, s.status, s.reason]), [
-    ['a', 'waiting', 'provisioning step later is waiting: not released'],
-    ['b', 'failed', 'provisioning step broken failed: no podman'],
-    ['c', 'passed', 'ok'],
-  ]);
+  deepEqual(
+    r.provisioning.map((p) => [p.id, p.status]),
+    [
+      ['ok', 'passed'],
+      ['broken', 'failed'],
+      ['later', 'waiting'],
+    ],
+  );
+  deepEqual(
+    r.scenarios.map((s) => [s.id, s.status, s.reason]),
+    [
+      ['a', 'waiting', 'provisioning step later is waiting: not released'],
+      ['b', 'failed', 'provisioning step broken failed: no podman'],
+      ['c', 'passed', 'ok'],
+    ],
+  );
 });
 
 test('only scenarios for this platform run; rules without one are listed', async () => {
@@ -80,7 +99,10 @@ test('only scenarios for this platform run; rules without one are listed', async
     { id: 'R5.15', platforms: ['linux'], scenarios: ['l'] },
   ];
   const r = await runAll(list, [], entries);
-  deepEqual(r.scenarios.map((s) => s.id), ['l']);
+  deepEqual(
+    r.scenarios.map((s) => s.id),
+    ['l'],
+  );
   deepEqual(r.rulesWithoutScenarioOnPlatform, ['R5.13']);
   deepEqual(r.gate, { passed: true, reasons: [] });
 });
@@ -116,13 +138,19 @@ test('requires is transitive; a step behind a failed or waiting prerequisite doe
   ];
   const r = await runAll([scenario('a', ['R1.1'], ['linux'], passed, ['top'])], steps);
   deepEqual(calls, ['base', 'pending']);
-  deepEqual(r.provisioning.map((p) => [p.id, p.status, p.reason]), [
-    ['base', 'failed', 'no podman'],
-    ['pending', 'waiting', 'not released'],
-    ['login', 'failed', 'provisioning step base failed: no podman'],
-    ['top', 'failed', 'provisioning step login failed: provisioning step base failed: no podman'],
-  ]);
-  deepEqual(r.scenarios.map((s) => [s.id, s.status]), [['a', 'failed']]);
+  deepEqual(
+    r.provisioning.map((p) => [p.id, p.status, p.reason]),
+    [
+      ['base', 'failed', 'no podman'],
+      ['pending', 'waiting', 'not released'],
+      ['login', 'failed', 'provisioning step base failed: no podman'],
+      ['top', 'failed', 'provisioning step login failed: provisioning step base failed: no podman'],
+    ],
+  );
+  deepEqual(
+    r.scenarios.map((s) => [s.id, s.status]),
+    [['a', 'failed']],
+  );
 });
 
 test('teardowns of the steps that ran run in reverse order after the scenarios, also after failures', async () => {
@@ -134,11 +162,16 @@ test('teardowns of the steps that ran run in reverse order after the scenarios, 
   };
   const steps = [
     step('one', passed, calls, { teardown: down('one', passed) }),
-    step('two', { status: 'failed', reason: 'half done', facts: { imageDigest: 'sha256:' + 'f'.repeat(64) } }, calls, { teardown: down('two', new Error('left a runner')) }),
+    step('two', { status: 'failed', reason: 'half done', facts: { imageDigest: 'sha256:' + 'f'.repeat(64) } }, calls, {
+      teardown: down('two', new Error('left a runner')),
+    }),
     step('three', passed, calls, { requires: ['two'], teardown: down('three', passed) }),
     step('unused', passed, calls, { teardown: down('unused', passed) }),
   ];
-  const s = { ...scenario('a', ['R1.1'], ['linux'], passed, ['one', 'three']), run: async () => (calls.push('scenario'), passed) };
+  const s = {
+    ...scenario('a', ['R1.1'], ['linux'], passed, ['one', 'three']),
+    run: async () => (calls.push('scenario'), passed),
+  };
   const r = await runAll([s], steps);
   deepEqual(calls, ['one', 'two', 'down:two', 'down:one']);
   deepEqual(r.teardown, [
@@ -148,12 +181,18 @@ test('teardowns of the steps that ran run in reverse order after the scenarios, 
   equal(r.meta.imageDigest, 'sha256:' + 'f'.repeat(64));
   deepEqual(r.provisioning[1]?.facts, { imageDigest: 'sha256:' + 'f'.repeat(64) });
   equal(r.gate?.passed, false);
-  equal(r.gate?.reasons.some((x) => x === 'teardown two failed: left a runner'), true);
+  equal(
+    r.gate?.reasons.some((x) => x === 'teardown two failed: left a runner'),
+    true,
+  );
 });
 
 test('scenarios get the facts of the steps that ran', async () => {
   let seen: unknown;
-  const s = { ...scenario('a', ['R1.1'], ['linux'], passed, ['one']), run: async (ctx: RunContext) => ((seen = ctx.facts('one')), passed) };
+  const s = {
+    ...scenario('a', ['R1.1'], ['linux'], passed, ['one']),
+    run: async (ctx: RunContext) => ((seen = ctx.facts('one')), passed),
+  };
   await runAll([s], [step('one', { ...passed, facts: { n: 1 } })]);
   deepEqual(seen, { n: 1 });
 });
@@ -161,7 +200,12 @@ test('scenarios get the facts of the steps that ran', async () => {
 test('deferred cleanups run after each scenario in reverse order, also when it throws; a hanging or throwing one is bounded and logged', async () => {
   const order: string[] = [];
   const logs: string[] = [];
-  const mk = (id: string, body: (ctx: RunContext) => Promise<Outcome>): Scenario => ({ id, rules: ['R1.1'], platforms: ['linux'], run: body });
+  const mk = (id: string, body: (ctx: RunContext) => Promise<Outcome>): Scenario => ({
+    id,
+    rules: ['R1.1'],
+    platforms: ['linux'],
+    run: body,
+  });
   const list = [
     mk('a', async (ctx) => {
       ctx.defer(async () => order.push('a1'));
@@ -179,10 +223,24 @@ test('deferred cleanups run after each scenario in reverse order, also when it t
     mk('c', async () => (order.push('c-run'), passed)),
   ];
   const { selected } = select([{ id: 'R1.1', platforms: ['linux'], scenarios: ['a', 'b', 'c'] }], list, { all: true });
-  const r = await run({ selection: { all: true }, selected, steps: [], target, host, log: (m) => logs.push(m), cleanupTimeoutMs: 20 });
+  const r = await run({
+    selection: { all: true },
+    selected,
+    steps: [],
+    target,
+    host,
+    log: (m) => logs.push(m),
+    cleanupTimeoutMs: 20,
+  });
   deepEqual(order, ['a2', 'a1', 'b-run', 'c-run']);
-  deepEqual(r.scenarios.map((s) => s.status), ['failed', 'passed', 'passed']);
-  deepEqual(logs.filter((l) => l.startsWith('cleanup')), ['cleanup of scenario b: cleanup broke', 'cleanup of scenario b: did not finish within 20 ms']);
+  deepEqual(
+    r.scenarios.map((s) => s.status),
+    ['failed', 'passed', 'passed'],
+  );
+  deepEqual(
+    logs.filter((l) => l.startsWith('cleanup')),
+    ['cleanup of scenario b: cleanup broke', 'cleanup of scenario b: did not finish within 20 ms'],
+  );
 });
 
 test('children a scenario starts are stopped when it ends', async () => {
@@ -190,15 +248,28 @@ test('children a scenario starts are stopped when it ends', async () => {
   const counting = {
     ...host,
     start: () => {
-      const c = { stops: 0, output: () => '', waitFor: async () => [] as unknown as RegExpExecArray, stop: async () => (c.stops++, { code: 0, stdout: '', stderr: '' }) };
+      const c = {
+        stops: 0,
+        output: () => '',
+        waitFor: async () => [] as unknown as RegExpExecArray,
+        stop: async () => (c.stops++, { code: 0, stdout: '', stderr: '' }),
+      };
       started.push(c);
       return c;
     },
   };
-  const s: Scenario = { id: 's', rules: ['R1.1'], platforms: ['linux'], run: async (ctx) => (ctx.start(['podman', 'events']), passed) };
+  const s: Scenario = {
+    id: 's',
+    rules: ['R1.1'],
+    platforms: ['linux'],
+    run: async (ctx) => (ctx.start(['podman', 'events']), passed),
+  };
   const { selected } = select([{ id: 'R1.1', platforms: ['linux'], scenarios: ['s'] }], [s], { all: true });
   await run({ selection: { all: true }, selected, steps: [], target, host: counting, log: () => {} });
-  deepEqual(started.map((c) => c.stops), [1]);
+  deepEqual(
+    started.map((c) => c.stops),
+    [1],
+  );
 });
 
 /** A scenario that records when it starts and ends; it ends after a short delay. */
@@ -230,7 +301,16 @@ test('consecutive concurrent scenarios overlap; others run alone; results keep r
   deepEqual(events.slice(0, 2), ['start a', 'end a']);
   deepEqual(events.slice(2, 5), ['start b', 'start c', 'start d']);
   deepEqual(events.slice(-2), ['start e', 'end e']);
-  deepEqual(r.scenarios.map((s) => [s.id, s.status]), [['a', 'passed'], ['b', 'passed'], ['c', 'passed'], ['d', 'failed'], ['e', 'passed']]);
+  deepEqual(
+    r.scenarios.map((s) => [s.id, s.status]),
+    [
+      ['a', 'passed'],
+      ['b', 'passed'],
+      ['c', 'passed'],
+      ['d', 'failed'],
+      ['e', 'passed'],
+    ],
+  );
   equal(r.scenarios[3]?.reason, 'group member broke');
 });
 
@@ -270,12 +350,24 @@ test('a scenario whose selected rules are all waiting is reported waiting and no
   const entries = entriesFor(list);
   const { selected } = select(entries, list, { all: true });
   const waiting = [{ id: 'R1.1', issues: ['https://github.com/taco3064/nibfin-core/issues/9'] }];
-  const r = await run({ selection: { all: true }, selected, steps, target, host, log: () => {}, waiting, runner: 'GitHub Actions 7' });
+  const r = await run({
+    selection: { all: true },
+    selected,
+    steps,
+    target,
+    host,
+    log: () => {},
+    waiting,
+    runner: 'GitHub Actions 7',
+  });
   deepEqual(calls, ['shared', 'm']);
-  deepEqual(r.scenarios.map((s) => [s.id, s.status, s.reason]), [
-    ['w', 'waiting', 'not run: rule R1.1 is waiting on https://github.com/taco3064/nibfin-core/issues/9'],
-    ['m', 'passed', 'ok'],
-  ]);
+  deepEqual(
+    r.scenarios.map((s) => [s.id, s.status, s.reason]),
+    [
+      ['w', 'waiting', 'not run: rule R1.1 is waiting on https://github.com/taco3064/nibfin-core/issues/9'],
+      ['m', 'passed', 'ok'],
+    ],
+  );
   equal(r.scenarios[0]?.blockedBy, undefined);
   equal(r.meta.runner, 'GitHub Actions 7');
   equal(r.gate?.passed, false);
@@ -285,16 +377,47 @@ test('a waiting rule outside the selection does not hold back a scenario', async
   const list = [scenario('m', ['R1.1', 'R1.2'], ['linux'], passed)];
   const selection = { all: false as const, rules: ['R1.2'], sections: [] };
   const { selected } = select(entriesFor(list), list, selection);
-  const r = await run({ selection, selected, steps: [], target, host, log: () => {}, waiting: [{ id: 'R1.1', issues: ['u'] }] });
-  deepEqual(r.scenarios.map((s) => s.status), ['passed']);
+  const r = await run({
+    selection,
+    selected,
+    steps: [],
+    target,
+    host,
+    log: () => {},
+    waiting: [{ id: 'R1.1', issues: ['u'] }],
+  });
+  deepEqual(
+    r.scenarios.map((s) => s.status),
+    ['passed'],
+  );
   equal(r.meta.runner, null);
 });
 
 test('blocked steps and scenarios name the step that blocked them', async () => {
-  const steps = [step('base', new Error('no podman')), step('login', passed, undefined, { requires: ['base'] }), step('later', { status: 'waiting', reason: 'x' })];
-  const r = await runAll([scenario('a', ['R1.1'], ['linux'], passed, ['login']), scenario('b', ['R1.2'], ['linux'], passed, ['later'])], steps);
-  deepEqual(r.provisioning.map((p) => [p.id, p.blockedBy]), [['base', undefined], ['login', 'base'], ['later', undefined]]);
-  deepEqual(r.scenarios.map((s) => [s.id, s.blockedBy]), [['a', 'login'], ['b', 'later']]);
+  const steps = [
+    step('base', new Error('no podman')),
+    step('login', passed, undefined, { requires: ['base'] }),
+    step('later', { status: 'waiting', reason: 'x' }),
+  ];
+  const r = await runAll(
+    [scenario('a', ['R1.1'], ['linux'], passed, ['login']), scenario('b', ['R1.2'], ['linux'], passed, ['later'])],
+    steps,
+  );
+  deepEqual(
+    r.provisioning.map((p) => [p.id, p.blockedBy]),
+    [
+      ['base', undefined],
+      ['login', 'base'],
+      ['later', undefined],
+    ],
+  );
+  deepEqual(
+    r.scenarios.map((s) => [s.id, s.blockedBy]),
+    [
+      ['a', 'login'],
+      ['b', 'later'],
+    ],
+  );
 });
 
 test('a waiting scenario among concurrent ones is not run; the others still start together and order is kept', async () => {
@@ -304,7 +427,14 @@ test('a waiting scenario among concurrent ones is not run; the others still star
   const waiting = [{ id: 'R1.98', issues: ['u'] }];
   const r = await run({ selection: { all: true }, selected, steps: [], target, host, log: () => {}, waiting });
   deepEqual(events.slice(0, 2), ['start a', 'start c']);
-  deepEqual(r.scenarios.map((s) => [s.id, s.status]), [['a', 'passed'], ['b', 'waiting'], ['c', 'passed']]);
+  deepEqual(
+    r.scenarios.map((s) => [s.id, s.status]),
+    [
+      ['a', 'passed'],
+      ['b', 'waiting'],
+      ['c', 'passed'],
+    ],
+  );
 });
 
 test('upcoming lists the scenarios still to start: all for a step, the later groups for a scenario, none for a teardown', async () => {
@@ -317,7 +447,13 @@ test('upcoming lists the scenarios still to start: all for a step, the later gro
     requires: ['s'],
     run: async (ctx) => ((seen[id] = ctx.upcoming()), passed),
   });
-  const steps: ProvisioningStep[] = [{ id: 's', run: async (ctx) => ((seen.step = ctx.upcoming()), passed), teardown: async (ctx) => ((seen.teardown = ctx.upcoming()), passed) }];
+  const steps: ProvisioningStep[] = [
+    {
+      id: 's',
+      run: async (ctx) => ((seen.step = ctx.upcoming()), passed),
+      teardown: async (ctx) => ((seen.teardown = ctx.upcoming()), passed),
+    },
+  ];
   await runAll([probe('a'), probe('b', true), probe('c', true), probe('d')], steps);
   deepEqual(seen, { step: ['a', 'b', 'c', 'd'], a: ['b', 'c', 'd'], b: ['d'], c: ['d'], d: [], teardown: [] });
 });
@@ -332,7 +468,17 @@ async function runBudget(list: Scenario[], steps: ProvisioningStep[], logs: stri
   const { selected } = select(entriesFor(list), list, { all: true });
   let limits = 0;
   const start = Date.now();
-  const r = await run({ selection: { all: true }, selected, steps, target, host, log: (m) => logs.push(m), ...BUDGET, budgetStart: start, onLimit: () => limits++ });
+  const r = await run({
+    selection: { all: true },
+    selected,
+    steps,
+    target,
+    host,
+    log: (m) => logs.push(m),
+    ...BUDGET,
+    budgetStart: start,
+    onLimit: () => limits++,
+  });
   return { r, limits, took: Date.now() - start };
 }
 
@@ -342,12 +488,21 @@ test('a provisioning step cut off by the budget fails; its dependants are blocke
     { id: 'stuck', run: never, teardown: async () => (calls.push('down:stuck'), passed) },
     step('later', passed, calls),
   ];
-  const { r, limits } = await runBudget([scenario('a', ['R1.1'], ['linux'], passed, ['stuck']), scenario('b', ['R1.2'], ['linux'], passed, ['later'])], steps);
+  const { r, limits } = await runBudget(
+    [scenario('a', ['R1.1'], ['linux'], passed, ['stuck']), scenario('b', ['R1.2'], ['linux'], passed, ['later'])],
+    steps,
+  );
   deepEqual(r.provisioning, [
     { id: 'stuck', status: 'failed', reason: 'harness budget of 0.01 min ran out during this step' },
     { id: 'later', status: 'failed', reason: 'not run: harness budget of 0.01 min ran out' },
   ]);
-  deepEqual(r.scenarios.map((s) => [s.id, s.status, s.blockedBy]), [['a', 'failed', 'stuck'], ['b', 'failed', 'later']]);
+  deepEqual(
+    r.scenarios.map((s) => [s.id, s.status, s.blockedBy]),
+    [
+      ['a', 'failed', 'stuck'],
+      ['b', 'failed', 'later'],
+    ],
+  );
   deepEqual(calls, ['down:stuck']);
   deepEqual(r.teardown, [{ id: 'stuck', status: 'passed', reason: 'ok' }]);
   equal(limits, 1);
@@ -364,15 +519,24 @@ test('a scenario cut off by the budget fails, later scenarios are not run, and i
     run: (ctx) =>
       new Promise((_resolve, reject) => {
         signalled = ctx.signal;
-        ctx.signal.addEventListener('abort', () => setTimeout(() => (calls.push('finally'), reject(ctx.signal.reason as Error)), 10));
+        ctx.signal.addEventListener('abort', () =>
+          setTimeout(() => (calls.push('finally'), reject(ctx.signal.reason as Error)), 10),
+        );
       }),
   };
-  const steps = [step('host', passed, calls, { teardown: async (ctx: RunContext) => (calls.push(`down:host aborted=${String(ctx.signal.aborted)}`), passed) })];
+  const steps = [
+    step('host', passed, calls, {
+      teardown: async (ctx: RunContext) => (calls.push(`down:host aborted=${String(ctx.signal.aborted)}`), passed),
+    }),
+  ];
   const { r } = await runBudget([stuck, scenario('later', ['R1.2'], ['linux'], passed)], steps);
-  deepEqual(r.scenarios.map((s) => [s.id, s.status, s.reason]), [
-    ['stuck', 'failed', 'harness budget of 0.01 min ran out during this scenario'],
-    ['later', 'failed', 'not run: harness budget of 0.01 min ran out'],
-  ]);
+  deepEqual(
+    r.scenarios.map((s) => [s.id, s.status, s.reason]),
+    [
+      ['stuck', 'failed', 'harness budget of 0.01 min ran out during this scenario'],
+      ['later', 'failed', 'not run: harness budget of 0.01 min ran out'],
+    ],
+  );
   equal(signalled?.aborted, true);
   deepEqual(calls, ['host', 'finally', 'down:host aborted=false']);
   equal(r.gate?.passed, false);
@@ -386,20 +550,36 @@ test('a scenario that ignores the abort is logged after the settle time and tear
   const { r } = await runBudget([ignoring], steps, logs);
   equal(r.scenarios[0]?.status, 'failed');
   deepEqual(calls, ['host', 'down:host']);
-  equal(logs.some((l) => /scenario deaf did not settle within 0 s after the budget ran out/.test(l)), true, logs.join('\n'));
+  equal(
+    logs.some((l) => /scenario deaf did not settle within 0 s after the budget ran out/.test(l)),
+    true,
+    logs.join('\n'),
+  );
 });
 
 test('every scenario of a concurrent group cut off by the budget gets the budget reason', async () => {
   // 'aware' rejects as soon as the signal aborts, which may be before its own timer fires.
-  const aware = (ctx: RunContext) => new Promise<Outcome>((_res, reject) => ctx.signal.addEventListener('abort', () => reject(ctx.signal.reason as Error)));
-  const c = (id: string, out: Outcome | 'never' | 'aware'): Scenario => ({ id, rules: [`R1.${id.length}`], platforms: ['linux'], concurrent: true, run: out === 'never' ? never : out === 'aware' ? aware : async () => out });
+  const aware = (ctx: RunContext) =>
+    new Promise<Outcome>((_res, reject) =>
+      ctx.signal.addEventListener('abort', () => reject(ctx.signal.reason as Error)),
+    );
+  const c = (id: string, out: Outcome | 'never' | 'aware'): Scenario => ({
+    id,
+    rules: [`R1.${id.length}`],
+    platforms: ['linux'],
+    concurrent: true,
+    run: out === 'never' ? never : out === 'aware' ? aware : async () => out,
+  });
   const { r } = await runBudget([c('x', passed), c('yy', 'never'), c('zzz', 'aware'), c('wwww', 'never')], []);
-  deepEqual(r.scenarios.map((s) => [s.id, s.status, s.reason]), [
-    ['x', 'passed', 'ok'],
-    ['yy', 'failed', 'harness budget of 0.01 min ran out during this scenario'],
-    ['zzz', 'failed', 'harness budget of 0.01 min ran out during this scenario'],
-    ['wwww', 'failed', 'harness budget of 0.01 min ran out during this scenario'],
-  ]);
+  deepEqual(
+    r.scenarios.map((s) => [s.id, s.status, s.reason]),
+    [
+      ['x', 'passed', 'ok'],
+      ['yy', 'failed', 'harness budget of 0.01 min ran out during this scenario'],
+      ['zzz', 'failed', 'harness budget of 0.01 min ran out during this scenario'],
+      ['wwww', 'failed', 'harness budget of 0.01 min ran out during this scenario'],
+    ],
+  );
 });
 
 test('a teardown step still running at the final limit fails, the ones after it are not run, and the result comes by the final limit', async () => {
@@ -421,7 +601,12 @@ test('a teardown step still running at the final limit fails, the ones after it 
 
 test('without a budget nothing is bounded and the signal never aborts', async () => {
   let aborted: boolean | undefined;
-  const s: Scenario = { id: 'a', rules: ['R1.1'], platforms: ['linux'], run: async (ctx) => (await new Promise((res) => setTimeout(res, 20)), (aborted = ctx.signal.aborted), passed) };
+  const s: Scenario = {
+    id: 'a',
+    rules: ['R1.1'],
+    platforms: ['linux'],
+    run: async (ctx) => (await new Promise((res) => setTimeout(res, 20)), (aborted = ctx.signal.aborted), passed),
+  };
   const r = await runAll([s]);
   equal(r.scenarios[0]?.status, 'passed');
   equal(aborted, false);

@@ -91,7 +91,8 @@ export function validateRegistry(scenarios: Scenario[], steps: ProvisioningStep[
     for (const r of s.rules) if (!parseRuleId(r)) errors.push(`${at}: malformed rule id ${JSON.stringify(r)}`);
     if (s.platforms.length === 0) errors.push(`${at}: must declare at least one platform`);
     for (const p of s.platforms) if (!isPlatform(p)) errors.push(`${at}: unknown platform ${JSON.stringify(p)}`);
-    for (const r of s.requires ?? []) if (!stepIds.has(r)) errors.push(`${at}: requires unknown provisioning step ${r}`);
+    for (const r of s.requires ?? [])
+      if (!stepIds.has(r)) errors.push(`${at}: requires unknown provisioning step ${r}`);
   }
   return errors;
 }
@@ -114,7 +115,8 @@ export function crossCheck(entries: MapEntry[], scenarios: Scenario[]): string[]
       const e = entryById.get(r);
       if (!e) errors.push(`scenario ${s.id}: declares ${r}, which is not in the coverage map`);
       else if (isExcluded(e)) errors.push(`scenario ${s.id}: declares ${r}, which the Proposal marks 不測`);
-      else if (!e.scenarios.includes(s.id)) errors.push(`scenario ${s.id}: declares ${r}, but the map does not list it`);
+      else if (!e.scenarios.includes(s.id))
+        errors.push(`scenario ${s.id}: declares ${r}, but the map does not list it`);
     }
   }
   return errors;

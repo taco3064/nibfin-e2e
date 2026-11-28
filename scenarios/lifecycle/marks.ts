@@ -11,7 +11,10 @@ const VALIDATOR_RESULT = String.raw`\b(?:approv\w*|pass\w*|verdict|accept\w*|ok)
  * word on one line, in either order. The leading word boundary keeps `invalidate` and
  * `revalidated` out; a bare subject or a bare result word does not count.
  */
-export const VALIDATOR_VERDICT = new RegExp(`${VALIDATOR_SUBJECT}.*${VALIDATOR_RESULT}|${VALIDATOR_RESULT}.*${VALIDATOR_SUBJECT}`, 'i');
+export const VALIDATOR_VERDICT = new RegExp(
+  `${VALIDATOR_SUBJECT}.*${VALIDATOR_RESULT}|${VALIDATOR_RESULT}.*${VALIDATOR_SUBJECT}`,
+  'i',
+);
 
 /** The start and end of the Accept check inside a `deliver` job log (Proposal R3.19, R6.5). */
 export const ACCEPT_START = /\baccept(or|ance)?\b.*\b(start\w*|begin\w*|running|launch\w*|review\w*)\b/i;
@@ -28,7 +31,8 @@ export const SHAPE_MARKER = /^shape\b/;
 export const RELOGIN = /gh nibfin login/;
 
 /** A PR comment saying the merge waits for an approving review (Proposal R3.26), not just any review comment. */
-export const AWAITS_REVIEW = /\b(wait\w*|await\w*|requir\w*|need\w*)\b[\s\S]*\bapprov\w*|\bapprov\w*[\s\S]*\b(wait\w*|await\w*|requir\w*|need\w*|missing)\b/i;
+export const AWAITS_REVIEW =
+  /\b(wait\w*|await\w*|requir\w*|need\w*)\b[\s\S]*\bapprov\w*|\bapprov\w*[\s\S]*\b(wait\w*|await\w*|requir\w*|need\w*|missing)\b/i;
 
 /** The `pending` comment (marker `<!-- nibfin:pending -->`). */
 export const PENDING_MARKER = /^pending\b/;

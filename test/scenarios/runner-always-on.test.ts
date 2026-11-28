@@ -41,13 +41,21 @@ test('parseInhibitors reads busctl a(ssssuu) JSON and throws on anything else', 
 });
 
 test('parseShow, cgroupOf and inUserManager place a unit under the user manager, not a session', () => {
-  deepEqual(parseShow('ActiveState=active\nSubState=running\nControlGroup=/user.slice/user-1001.slice/user@1001.service/app.slice/x.service\nMainPID=77\n'), {
-    ActiveState: 'active',
-    SubState: 'running',
-    ControlGroup: '/user.slice/user-1001.slice/user@1001.service/app.slice/x.service',
-    MainPID: '77',
-  });
-  equal(cgroupOf('0::/user.slice/user-1001.slice/user@1001.service/app.slice/x.service\n'), '/user.slice/user-1001.slice/user@1001.service/app.slice/x.service');
+  deepEqual(
+    parseShow(
+      'ActiveState=active\nSubState=running\nControlGroup=/user.slice/user-1001.slice/user@1001.service/app.slice/x.service\nMainPID=77\n',
+    ),
+    {
+      ActiveState: 'active',
+      SubState: 'running',
+      ControlGroup: '/user.slice/user-1001.slice/user@1001.service/app.slice/x.service',
+      MainPID: '77',
+    },
+  );
+  equal(
+    cgroupOf('0::/user.slice/user-1001.slice/user@1001.service/app.slice/x.service\n'),
+    '/user.slice/user-1001.slice/user@1001.service/app.slice/x.service',
+  );
   equal(cgroupOf('12:pids:/user.slice\n1:name=systemd:/user.slice/user-1001.slice/session-3.scope\n'), undefined);
   equal(inUserManager('/user.slice/user-1001.slice/user@1001.service/app.slice/x.service', 1001), true);
   equal(inUserManager('/user.slice/user-1001.slice/user@1001.service/app.slice/x.service', 1002), false);
@@ -57,14 +65,52 @@ test('parseShow, cgroupOf and inUserManager place a unit under the user manager,
 });
 
 test('parsePowerRequests reads sections, entries and their reason lines, CRLF too; no header throws', () => {
-  const none = ['DISPLAY:', 'None.', '', 'SYSTEM:', 'None.', '', 'AWAYMODE:', 'None.', '', 'EXECUTION:', 'None.', '', 'PERFBOOST:', 'None.', '', 'ACTIVELOCKSCREEN:', 'None.', ''].join('\r\n');
+  const none = [
+    'DISPLAY:',
+    'None.',
+    '',
+    'SYSTEM:',
+    'None.',
+    '',
+    'AWAYMODE:',
+    'None.',
+    '',
+    'EXECUTION:',
+    'None.',
+    '',
+    'PERFBOOST:',
+    'None.',
+    '',
+    'ACTIVELOCKSCREEN:',
+    'None.',
+    '',
+  ].join('\r\n');
   deepEqual(parsePowerRequests(none), []);
-  const held = ['DISPLAY:', 'None.', '', 'SYSTEM:', '[DRIVER] Legacy Kernel Caller', '[PROCESS] \\Device\\HarddiskVolume3\\Windows\\System32\\vmmem', 'Virtual machine running', '', 'EXECUTION:', 'None.', ''].join('\r\n');
+  const held = [
+    'DISPLAY:',
+    'None.',
+    '',
+    'SYSTEM:',
+    '[DRIVER] Legacy Kernel Caller',
+    '[PROCESS] \\Device\\HarddiskVolume3\\Windows\\System32\\vmmem',
+    'Virtual machine running',
+    '',
+    'EXECUTION:',
+    'None.',
+    '',
+  ].join('\r\n');
   deepEqual(parsePowerRequests(held), [
     { section: 'SYSTEM', entry: '[DRIVER] Legacy Kernel Caller', detail: '' },
-    { section: 'SYSTEM', entry: '[PROCESS] \\Device\\HarddiskVolume3\\Windows\\System32\\vmmem', detail: 'Virtual machine running' },
+    {
+      section: 'SYSTEM',
+      entry: '[PROCESS] \\Device\\HarddiskVolume3\\Windows\\System32\\vmmem',
+      detail: 'Virtual machine running',
+    },
   ]);
-  throws(() => parsePowerRequests('This command requires administrator privileges'), /no known section header: This command requires/);
+  throws(
+    () => parsePowerRequests('This command requires administrator privileges'),
+    /no known section header: This command requires/,
+  );
   throws(() => parsePowerRequests(''), /no known section header: \(empty\)/);
 });
 
@@ -77,7 +123,8 @@ test('nibfinPowerCaller matches Podman, WSL and Nibfin but not the hosted agent 
     '[PROCESS] vmmem',
     '[SERVICE] LxssManager',
     '[PROCESS] \\Device\\HarddiskVolume3\\Users\\runner\\AppData\\Local\\GitHub CLI\\extensions\\gh-nibfin\\gh-nibfin.exe',
-  ]) equal(nibfinPowerCaller(s), true, s);
+  ])
+    equal(nibfinPowerCaller(s), true, s);
   equal(nibfinPowerCaller('[PROCESS] \\Device\\HarddiskVolume2\\actions-runner\\bin\\Runner.Listener.exe'), false);
   equal(nibfinPowerCaller('[DRIVER] Legacy Kernel Caller'), false);
 });
@@ -87,14 +134,34 @@ test('overrideLines skips headers and blanks; gained lines are found', () => {
   deepEqual(overrideLines(before), []);
   const now = '[SERVICE]\r\n\r\n[PROCESS]\r\nwsl.exe SYSTEM\r\n\r\n[DRIVER]\r\n';
   const had = new Set(overrideLines(before));
-  deepEqual(overrideLines(now).filter((l) => !had.has(l)), ['[PROCESS] wsl.exe SYSTEM']);
+  deepEqual(
+    overrideLines(now).filter((l) => !had.has(l)),
+    ['[PROCESS] wsl.exe SYSTEM'],
+  );
 });
 
 test('registrations: a listed offline one is reported before the wait and again only when it changes', () => {
-  deepEqual(notOnline([{ name: 'a', status: 'online' }, { name: 'b', status: 'offline' }]), [{ name: 'b', status: 'offline' }]);
+  deepEqual(
+    notOnline([
+      { name: 'a', status: 'online' },
+      { name: 'b', status: 'offline' },
+    ]),
+    [{ name: 'b', status: 'offline' }],
+  );
   deepEqual(notOnline([]), []);
-  const before = [{ name: 'a', status: 'online' }, { name: 'b', status: 'offline' }, { name: 'c', status: 'online' }];
-  const p = afterWaitProblems(before, [{ name: 'a', status: 'offline' }, { name: 'b', status: 'offline' }], 300);
+  const before = [
+    { name: 'a', status: 'online' },
+    { name: 'b', status: 'offline' },
+    { name: 'c', status: 'online' },
+  ];
+  const p = afterWaitProblems(
+    before,
+    [
+      { name: 'a', status: 'offline' },
+      { name: 'b', status: 'offline' },
+    ],
+    300,
+  );
   equal(p.length, 2);
   match(p[0] as string, /registration a is offline after 300 s idle .* \(it was online before the wait\)/);
   match(p[1] as string, /registration c is no longer listed/);
@@ -117,5 +184,8 @@ test('readHostState on Windows records requestsOverride instead of throwing when
     throw new Error('spawn powercfg ENOENT');
   });
   deepEqual(thrown, { ok: false, output: 'powercfg /requestsoverride: spawn powercfg ENOENT' });
-  deepEqual(await readRequestsOverride(async () => ({ code: 0, stdout: '[SERVICE]\n', stderr: '' })), { ok: true, output: '[SERVICE]\n' });
+  deepEqual(await readRequestsOverride(async () => ({ code: 0, stdout: '[SERVICE]\n', stderr: '' })), {
+    ok: true,
+    output: '[SERVICE]\n',
+  });
 });

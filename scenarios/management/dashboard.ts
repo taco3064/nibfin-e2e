@@ -14,7 +14,8 @@ interface ApiCommand {
 
 /** cobra prints no `(default …)` for zero values, so those compare as empty. */
 export function normalDefault(v: unknown): string {
-  if (v === undefined || v === null || v === '' || v === false || v === 0 || v === 'false' || v === '0' || v === '[]') return '';
+  if (v === undefined || v === null || v === '' || v === false || v === 0 || v === 'false' || v === '0' || v === '[]')
+    return '';
   if (Array.isArray(v)) return v.length ? `[${v.join(',')}]` : '';
   return String(v);
 }
@@ -24,12 +25,19 @@ export function flagDiff(helpText: string, api: ApiCommand): string[] {
   const help = parseHelp(helpText).flags;
   const apiFlags = (api.flags ?? []).filter((f) => f.name !== 'help');
   const out: string[] = [];
-  const names = (l: { name: string }[]) => l.map((f) => f.name).sort().join(', ');
-  if (names(help) !== names(apiFlags)) out.push(`flags in --help [${names(help)}] differ from /api/commands [${names(apiFlags)}]`);
+  const names = (l: { name: string }[]) =>
+    l
+      .map((f) => f.name)
+      .sort()
+      .join(', ');
+  if (names(help) !== names(apiFlags))
+    out.push(`flags in --help [${names(help)}] differ from /api/commands [${names(apiFlags)}]`);
   for (const f of help) {
     const a = apiFlags.find((x) => x.name === f.name);
     if (a && normalDefault(f.default) !== normalDefault(a.default)) {
-      out.push(`--${f.name} default is ${JSON.stringify(f.default ?? '')} in --help and ${JSON.stringify(a.default ?? '')} in /api/commands`);
+      out.push(
+        `--${f.name} default is ${JSON.stringify(f.default ?? '')} in --help and ${JSON.stringify(a.default ?? '')} in /api/commands`,
+      );
     }
   }
   return out;
@@ -90,7 +98,13 @@ export const dashboard: Scenario = {
         return c.outcome('');
       }
       proof = address.proof;
-      if (!c.that(address.host === '127.0.0.1', 'R5.53', `the Dashboard address is ${address.origin}/, expected http://127.0.0.1:<port>/`)) {
+      if (
+        !c.that(
+          address.host === '127.0.0.1',
+          'R5.53',
+          `the Dashboard address is ${address.origin}/, expected http://127.0.0.1:<port>/`,
+        )
+      ) {
         return c.outcome('');
       }
       const base = address.origin;
@@ -106,27 +120,46 @@ export const dashboard: Scenario = {
         return JSON.parse(text) as unknown;
       };
       const { session } = (await call('POST', '/api/session', { 'X-Nibfin-Proof': proof })) as { session?: string };
-      if (!session) return { status: 'failed', reason: 'R5.53: the Dashboard returned no session for the printed proof' };
+      if (!session)
+        return { status: 'failed', reason: 'R5.53: the Dashboard returned no session for the printed proof' };
       const auth = { 'X-Nibfin-Session': session };
 
       const api = ((await call('GET', '/api/commands', auth)) as { commands?: ApiCommand[] }).commands ?? [];
       for (const path of commands) {
         const entry = api.find((a) => a.path === path);
-        if (!c.that(!!entry && typeof entry.api === 'string' && entry.api !== '', 'R5.20', `the Dashboard has no operation for gh nibfin ${path}`) || !entry) continue;
+        if (
+          !c.that(
+            !!entry && typeof entry.api === 'string' && entry.api !== '',
+            'R5.20',
+            `the Dashboard has no operation for gh nibfin ${path}`,
+          ) ||
+          !entry
+        )
+          continue;
         for (const d of flagDiff(help.get(path) ?? '', entry)) c.fail('R5.23', `${path}: ${d}`);
       }
 
       const planned = (await call('POST', '/api/commands/status/plan', auth, { repo: '' })) as { result?: unknown };
       const errors = validate(planned.result);
-      c.that(!errors.length, 'R5.20', `the Dashboard status result does not match status.schema.json: ${errors.join('; ')}`);
+      c.that(
+        !errors.length,
+        'R5.20',
+        `the Dashboard status result does not match status.schema.json: ${errors.join('; ')}`,
+      );
       const keys = Object.keys((planned.result ?? {}) as object).sort();
-      c.that(keys.join(',') === statusKeys.join(','), 'R5.20', `the Dashboard status result has keys [${keys.join(', ')}], status --json [${statusKeys.join(', ')}]`);
+      c.that(
+        keys.join(',') === statusKeys.join(','),
+        'R5.20',
+        `the Dashboard status result has keys [${keys.join(', ')}], status --json [${statusKeys.join(', ')}]`,
+      );
     } catch (error) {
       const detail = `${message(error)}${server ? ` (server output: ${tail({ stdout: server.output(), stderr: '' }, 300)})` : ''}`;
       c.fail('R5.20', redact(detail, proof ? [proof] : []));
     } finally {
       await server?.stop();
     }
-    return c.outcome(`the Dashboard on 127.0.0.1 offers all ${commands.length} commands with the CLI's flags, and its status matches status --json`);
+    return c.outcome(
+      `the Dashboard on 127.0.0.1 offers all ${commands.length} commands with the CLI's flags, and its status matches status --json`,
+    );
   },
 };

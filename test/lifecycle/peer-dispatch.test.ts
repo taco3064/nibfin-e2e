@@ -22,7 +22,10 @@ const run = (id: number, title: string, extra: Partial<Run> = {}): Run => ({
 });
 
 test('workflowFile drops an @ref suffix and is undefined without path', () => {
-  equal(workflowFile(run(1, 't', { path: '.github/workflows/nibfin-issue.yml@main' })), '.github/workflows/nibfin-issue.yml');
+  equal(
+    workflowFile(run(1, 't', { path: '.github/workflows/nibfin-issue.yml@main' })),
+    '.github/workflows/nibfin-issue.yml',
+  );
   equal(workflowFile(run(1, 't')), '.github/workflows/nibfin-issue.yml');
   equal(workflowFile(run(1, 't', { path: undefined })), undefined);
   equal(workflowFile(run(1, 't', { path: '' })), undefined);
@@ -50,7 +53,13 @@ test('R4.32: a run of another workflow file is named by its file, title and id',
 });
 
 test('R4.32: a path-less run outside the fallback is named by its name', () => {
-  const out = peerForeignRuns([run(9, 'Deploy prod', { name: 'Deploy', path: undefined }), run(8, `Nibfin · ${PEER}#42 · wake`, { path: undefined })], PEER);
+  const out = peerForeignRuns(
+    [
+      run(9, 'Deploy prod', { name: 'Deploy', path: undefined }),
+      run(8, `Nibfin · ${PEER}#42 · wake`, { path: undefined }),
+    ],
+    PEER,
+  );
   deepEqual(out, ['Deploy "Deploy prod" (run 9)']);
 });
 

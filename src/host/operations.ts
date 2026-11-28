@@ -60,7 +60,8 @@ export function createHostOperations(host: HostServices, platform: string = proc
   return {
     async claudeLogin(state) {
       linuxOnly('claudeLogin');
-      const token = state === 'valid' ? requireEnv(host.env, 'E2E_CLAUDE_TOKEN') : `e2e-invalid-${randomBytes(12).toString('hex')}`;
+      const token =
+        state === 'valid' ? requireEnv(host.env, 'E2E_CLAUDE_TOKEN') : `e2e-invalid-${randomBytes(12).toString('hex')}`;
       const done = await writeClaudeToken(host, token, { manageMachine: false });
       return state === 'valid' ? done : `${CLAUDE_VOLUME}/settings.json holds a random invalid token (read back)`;
     },
@@ -68,12 +69,18 @@ export function createHostOperations(host: HostServices, platform: string = proc
     async runnerServices(action) {
       linuxOnly('runnerServices');
       const listed = await systemctl(['list-units', '--all', '--plain', '--no-legend', UNITS]);
-      if (listed.code !== 0) throw new Error(`systemctl --user list-units exited ${listed.code}: ${(listed.stderr || listed.stdout).trim().slice(-2000)}`);
+      if (listed.code !== 0)
+        throw new Error(
+          `systemctl --user list-units exited ${listed.code}: ${(listed.stderr || listed.stdout).trim().slice(-2000)}`,
+        );
       const units = parseUnits(listed.stdout);
       if (!units.length) throw new Error(`no ${UNITS} unit is loaded in the user manager`);
       for (const unit of units) {
         const r = await systemctl([action, unit]);
-        if (r.code !== 0) throw new Error(`systemctl --user ${action} ${unit} exited ${r.code}: ${(r.stderr || r.stdout).trim().slice(-2000)}`);
+        if (r.code !== 0)
+          throw new Error(
+            `systemctl --user ${action} ${unit} exited ${r.code}: ${(r.stderr || r.stdout).trim().slice(-2000)}`,
+          );
       }
       const want = action === 'start' ? ['active'] : ['inactive', 'failed'];
       const wrong: string[] = [];
@@ -90,14 +97,22 @@ export function createHostOperations(host: HostServices, platform: string = proc
       // The repo label may hold the full name or only the repository name.
       const names = new Set([repo, repo.split('/')[1] ?? repo]);
       const list = async () => {
-        const r = await mustRun(exec, ['podman', 'ps', '--filter', `label=${JOB_LABELS.issue}=${issue}`, '--format', 'json']);
+        const r = await mustRun(exec, [
+          'podman',
+          'ps',
+          '--filter',
+          `label=${JOB_LABELS.issue}=${issue}`,
+          '--format',
+          'json',
+        ]);
         const items = JSON.parse(r.stdout.trim() || '[]') as { Id: string; Labels?: Record<string, string> | null }[];
         return items.filter((c) => names.has(c.Labels?.[JOB_LABELS.repo] ?? '')).map((c) => c.Id);
       };
       const ids = await list();
       for (const id of ids) await mustRun(exec, ['podman', 'stop', '--time', '0', id]);
       const left = await list();
-      if (left.length) throw new Error(`${left.length} Job container(s) of ${repo}#${issue} are still running after podman stop`);
+      if (left.length)
+        throw new Error(`${left.length} Job container(s) of ${repo}#${issue} are still running after podman stop`);
       return ids.length;
     },
 

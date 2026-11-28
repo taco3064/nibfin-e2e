@@ -24,7 +24,13 @@ export const DEADLINE = {
  * deadline passes, then throws naming `what`. They observe the system under test and
  * drive no Nibfin work. They end with the abort reason once `kit.signal` aborts.
  */
-export async function remoteWait<T>(kit: Kit, what: string, deadlineMs: number, intervalMs: number, check: () => Promise<T | undefined>): Promise<T> {
+export async function remoteWait<T>(
+  kit: Kit,
+  what: string,
+  deadlineMs: number,
+  intervalMs: number,
+  check: () => Promise<T | undefined>,
+): Promise<T> {
   const end = kit.now() + deadlineMs;
   for (;;) {
     throwIfAborted(kit.signal);

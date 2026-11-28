@@ -71,7 +71,11 @@ export function parseJobStarts(output: string): ContainerStart[] {
     if (status !== 'start' || type !== 'container' || !image.startsWith(NIBFIN_IMAGE)) continue;
     const nano = e.timeNano ?? e.TimeNano;
     const at =
-      typeof nano === 'number' ? Math.floor(nano / 1e6) : typeof e.time === 'number' ? e.time * 1000 : Date.parse(String(e.Time ?? e.time ?? ''));
+      typeof nano === 'number'
+        ? Math.floor(nano / 1e6)
+        : typeof e.time === 'number'
+          ? e.time * 1000
+          : Date.parse(String(e.Time ?? e.time ?? ''));
     out.push({ at: Number.isFinite(at) ? at : Date.now(), name: String(e.Name ?? e.name ?? ''), image });
   }
   return out;
@@ -108,13 +112,17 @@ export interface QuietInput {
 /** What could start a local agent Job outside the fixtures; empty means quiet. */
 export function quietProblems(input: QuietInput): string[] {
   const out: string[] = [];
-  for (const c of input.containers) if (c.image.startsWith(NIBFIN_IMAGE)) out.push(`Nibfin container ${c.name} is running`);
+  for (const c of input.containers)
+    if (c.image.startsWith(NIBFIN_IMAGE)) out.push(`Nibfin container ${c.name} is running`);
   for (const { repo, issues } of input.issues) {
     for (const i of issues) {
       if (input.fixtures.includes(i.title)) continue;
       const staged = i.labels.includes('scope') || i.labels.includes('request');
       const held = i.labels.includes('pause') || i.labels.includes('pending');
-      if (staged && !held) out.push(`${repo}#${i.number} is open with ${i.labels.filter((l) => l === 'scope' || l === 'request').join('+')} and neither pause nor pending`);
+      if (staged && !held)
+        out.push(
+          `${repo}#${i.number} is open with ${i.labels.filter((l) => l === 'scope' || l === 'request').join('+')} and neither pause nor pending`,
+        );
     }
   }
   for (const p of input.pulls) out.push(`pull request #${p} is open`);
@@ -155,7 +163,9 @@ export const ALL_FIXTURE_TITLES = [...FIXTURES, FIXTURE_E].map((f) => fixtureTit
 export function labelMismatch(spec: FixtureSpec, labels: string[]): string | undefined {
   const have = labels.filter((l) => (NIBFIN_LABELS as readonly string[]).includes(l)).sort();
   const want = [...spec.labels].sort();
-  return have.join(',') === want.join(',') ? undefined : `has Nibfin labels [${have.join(', ')}], expected [${want.join(', ')}]`;
+  return have.join(',') === want.join(',')
+    ? undefined
+    : `has Nibfin labels [${have.join(', ')}], expected [${want.join(', ')}]`;
 }
 
 /** Stage of an open Issue by labels only (Proposal R9.2). */
@@ -187,10 +197,17 @@ export interface TrackPick<T extends IssueState = IssueState> {
 export function pickTrackIssue<T extends IssueState>(repos: TrackRepo<T>[], shown?: string): TrackPick<T> | undefined {
   const rank = (labels: string[]) => (stageOf(labels) ? 0 : labels.includes('request') ? 1 : 2);
   const candidates = repos.flatMap((r, order) =>
-    r.issues.filter((i) => r.live.includes(i.number)).map((issue) => ({ repo: r.repo, issue, key: [rank(issue.labels), r.repo === shown ? 0 : 1, order, issue.number] })),
+    r.issues
+      .filter((i) => r.live.includes(i.number))
+      .map((issue) => ({
+        repo: r.repo,
+        issue,
+        key: [rank(issue.labels), r.repo === shown ? 0 : 1, order, issue.number],
+      })),
   );
   candidates.sort((a, b) => {
-    for (let k = 0; k < a.key.length; k++) if (a.key[k] !== b.key[k]) return (a.key[k] as number) - (b.key[k] as number);
+    for (let k = 0; k < a.key.length; k++)
+      if (a.key[k] !== b.key[k]) return (a.key[k] as number) - (b.key[k] as number);
     return 0;
   });
   const best = candidates[0];
@@ -200,7 +217,10 @@ export function pickTrackIssue<T extends IssueState>(repos: TrackRepo<T>[], show
 /** The failure when no Live repository has an open Issue to check R9.2 on. */
 export function noTrackIssueMessage(counts: { repo: string; open: number }[]): string {
   const names = counts.map((c) => c.repo);
-  const list = names.length > 1 ? `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}` : (names[0] ?? 'any repository');
+  const list =
+    names.length > 1
+      ? `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}`
+      : (names[0] ?? 'any repository');
   return `R9.2: could not be checked: no open Issue in ${list} (open Issues: ${counts.map((c) => `${c.repo} ${c.open}`).join(', ')})`;
 }
 
@@ -216,10 +236,15 @@ export function issueHeading(number: number, title: string): RegExp {
 }
 
 /** What is wrong with a stage track: its step texts and the current step against the label-given stage. */
-export function trackProblem(steps: string[], current: string | undefined, want: string | undefined): string | undefined {
+export function trackProblem(
+  steps: string[],
+  current: string | undefined,
+  want: string | undefined,
+): string | undefined {
   const missing = ['Shape', 'Deliver', 'Done'].filter((s) => !steps.some((t) => new RegExp(`\\b${s}\\b`, 'i').test(t)));
   if (missing.length) return `no ${missing.join(', ')} step among [${steps.map((s) => s.trim()).join(' | ')}]`;
-  if (want && !(current && new RegExp(`\\b${want}\\b`, 'i').test(current))) return `current step ${current === undefined ? 'none' : `"${current.trim()}"`}, labels give ${want}`;
+  if (want && !(current && new RegExp(`\\b${want}\\b`, 'i').test(current)))
+    return `current step ${current === undefined ? 'none' : `"${current.trim()}"`}, labels give ${want}`;
   return undefined;
 }
 
@@ -240,7 +265,8 @@ const asArray = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 export function commandInputs(json: unknown): Map<string, SchemaInput[]> {
   const list = Array.isArray(json)
     ? json
-    : (Object.values((json ?? {}) as Record<string, unknown>).find((v) => Array.isArray(v)) as unknown[] | undefined) ?? [];
+    : ((Object.values((json ?? {}) as Record<string, unknown>).find((v) => Array.isArray(v)) as
+        unknown[] | undefined) ?? []);
   const out = new Map<string, SchemaInput[]>();
   for (const raw of list) {
     const c = raw as Record<string, unknown>;
@@ -284,7 +310,8 @@ export function sessionFrom(reply: Reply): string | undefined {
  */
 export function commandSchemaFrom(reply: { status: number; body: string }): Map<string, SchemaInput[]> {
   const expected = 'GET /api/commands to return the command schema';
-  if (reply.status < 200 || reply.status >= 300) fail('R9.13 (R5.23)', expected, `HTTP ${reply.status}: ${reply.body.slice(0, 200)}`);
+  if (reply.status < 200 || reply.status >= 300)
+    fail('R9.13 (R5.23)', expected, `HTTP ${reply.status}: ${reply.body.slice(0, 200)}`);
   let parsed: unknown;
   try {
     parsed = JSON.parse(reply.body);
@@ -320,14 +347,19 @@ export function fieldProblems(command: string, inputs: SchemaInput[], fields: Fo
       continue;
     }
     if (input.required && f.required === false) out.push(`${command}: field ${f.name} is not marked required`);
-    if (!input.required && f.required === true) out.push(`${command}: field ${f.name} is marked required, the schema says optional`);
-    if (input.values.length && !f.options) out.push(`${command}: field ${f.name} offers no choice of ${input.values.join(', ')}`);
+    if (!input.required && f.required === true)
+      out.push(`${command}: field ${f.name} is marked required, the schema says optional`);
+    if (input.values.length && !f.options)
+      out.push(`${command}: field ${f.name} offers no choice of ${input.values.join(', ')}`);
     if (input.values.length && f.options) {
       const opts = f.options.map(normalizeName);
-      for (const v of input.values) if (!opts.some((o) => o.includes(normalizeName(v)))) out.push(`${command}: field ${f.name} does not offer ${v}`);
+      for (const v of input.values)
+        if (!opts.some((o) => o.includes(normalizeName(v))))
+          out.push(`${command}: field ${f.name} does not offer ${v}`);
     }
   }
-  for (const f of fields) if (!inputs.some((i) => matches(i, f))) out.push(`${command}: field ${f.name} is not in the parameter schema`);
+  for (const f of fields)
+    if (!inputs.some((i) => matches(i, f))) out.push(`${command}: field ${f.name} is not in the parameter schema`);
   return out;
 }
 
@@ -391,7 +423,10 @@ export function missingButtonMessage(rule: string, name: RegExp, where: string, 
     const t = s.replace(/\s+/g, ' ').trim();
     return t.length > SHOWN_NAME_MAX ? `${t.slice(0, SHOWN_NAME_MAX - 1)}…` : t;
   };
-  const listed = shown.slice(0, SHOWN_MAX).map((s) => `"${trim(s)}"`).join(', ');
+  const listed = shown
+    .slice(0, SHOWN_MAX)
+    .map((s) => `"${trim(s)}"`)
+    .join(', ');
   const more = shown.length > SHOWN_MAX ? ` … and ${shown.length - SHOWN_MAX} more` : '';
   return `${head}; buttons shown: ${listed}${more}`;
 }
@@ -402,7 +437,12 @@ export const TOKEN_PATTERN = /\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-
 const HOST_KEY = /^(host|hostname|host_name|machine|machine_name|computer|computer_name|computername)$/i;
 
 /** Walks every value of a JSON document. */
-function walk(v: unknown, visit: (key: string, value: unknown, parentKey: string) => void, key = '', parentKey = ''): void {
+function walk(
+  v: unknown,
+  visit: (key: string, value: unknown, parentKey: string) => void,
+  key = '',
+  parentKey = '',
+): void {
   visit(key, v, parentKey);
   if (Array.isArray(v)) v.forEach((x) => walk(x, visit, `${key}[]`, parentKey));
   else if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) walk(x, visit, k, key);
@@ -414,9 +454,13 @@ export function liveLeaks(message: unknown, runnerNames: string[]): string[] {
   const text = JSON.stringify(message);
   for (const n of runnerNames) if (n && text.includes(n)) out.push(`Runner name ${n} appears`);
   walk(message, (key, value, parentKey) => {
-    const filled = typeof value === 'string' ? value.trim() !== '' : value !== null && value !== undefined && typeof value !== 'object';
+    const filled =
+      typeof value === 'string'
+        ? value.trim() !== ''
+        : value !== null && value !== undefined && typeof value !== 'object';
     if (HOST_KEY.test(key) && filled) out.push(`key ${key} has a value`);
-    if (/^runners?(\[\])?$/i.test(parentKey) && /^(name|runner_name|runnerName)$/.test(key) && filled) out.push(`a runner entry has ${key}`);
+    if (/^runners?(\[\])?$/i.test(parentKey) && /^(name|runner_name|runnerName)$/.test(key) && filled)
+      out.push(`a runner entry has ${key}`);
   });
   return out;
 }
@@ -442,12 +486,16 @@ export function snapshotOpenIssues(snapshot: unknown, repos: string[]): Map<stri
         if (state === 'open') nums.add(o.number);
       }
     });
-    out.set(repo, [...nums].sort((a, b) => a - b));
+    out.set(
+      repo,
+      [...nums].sort((a, b) => a - b),
+    );
   };
   walk(snapshot, (_key, value) => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return;
     const o = value as Record<string, unknown>;
-    const id = [o.repo, o.repository, o.name, o.full_name, o.nameWithOwner].find((x) => typeof x === 'string') as string | undefined;
+    const id = [o.repo, o.repository, o.name, o.full_name, o.nameWithOwner].find((x) => typeof x === 'string') as
+      string | undefined;
     if (!id) return;
     const repo = repos.find((r) => id === r || id.endsWith(`/${r}`));
     if (repo && !out.has(repo)) visitRepo(repo, o);
@@ -474,7 +522,9 @@ export function snapshotRepos(snapshot: unknown, candidates: RegExp = /^(?:[\w.-
     if (Array.isArray(value)) {
       for (const r of value) {
         const o = r as Record<string, unknown>;
-        const id = [o?.repo, o?.repository, o?.full_name, o?.nameWithOwner, o?.name].find((x) => typeof x === 'string') as string | undefined;
+        const id = [o?.repo, o?.repository, o?.full_name, o?.nameWithOwner, o?.name].find(
+          (x) => typeof x === 'string',
+        ) as string | undefined;
         const m = id ? candidates.exec(id) : null;
         if (m?.[1]) names.add(m[1]);
       }
@@ -495,7 +545,10 @@ export function workflowTriggers(yaml: string): { events: string[]; pushBranches
   const lines = yaml.replace(/\r/g, '').split('\n');
   const idx = lines.findIndex((l) => /^["']?on["']?\s*:/.test(l));
   if (idx < 0) return { events: [] };
-  const inline = (lines[idx] as string).replace(/^["']?on["']?\s*:/, '').replace(/#.*$/, '').trim();
+  const inline = (lines[idx] as string)
+    .replace(/^["']?on["']?\s*:/, '')
+    .replace(/#.*$/, '')
+    .trim();
   const list = (s: string) =>
     s
       .replace(/^\[|\]$/g, '')
@@ -509,7 +562,7 @@ export function workflowTriggers(yaml: string): { events: string[]; pushBranches
     if (!/^\s/.test(l)) break;
     block.push(l);
   }
-  const indent = (l: string) => (/^\s*/.exec(l)?.[0].length ?? 0);
+  const indent = (l: string) => /^\s*/.exec(l)?.[0].length ?? 0;
   const top = Math.min(...block.map(indent));
   const events: string[] = [];
   let pushBranches: string[] | undefined;
@@ -527,7 +580,13 @@ export function workflowTriggers(yaml: string): { events: string[]; pushBranches
         else {
           pushBranches = [];
           for (let k = j + 1; k < block.length && /^\s*-\s+/.test(block[k] as string); k++) {
-            pushBranches.push((block[k] as string).replace(/^\s*-\s+/, '').replace(/#.*$/, '').trim().replace(/^["']|["']$/g, ''));
+            pushBranches.push(
+              (block[k] as string)
+                .replace(/^\s*-\s+/, '')
+                .replace(/#.*$/, '')
+                .trim()
+                .replace(/^["']|["']$/g, ''),
+            );
           }
         }
       }
@@ -537,16 +596,23 @@ export function workflowTriggers(yaml: string): { events: string[]; pushBranches
 }
 
 /** Problems with a deploy workflow's triggers and runs on main (Proposal R9.48). */
-export function deployProblems(file: string, yaml: string, runs: { event: string; head_branch: string; head_sha: string }[]): string[] {
+export function deployProblems(
+  file: string,
+  yaml: string,
+  runs: { event: string; head_branch: string; head_sha: string }[],
+): string[] {
   const out: string[] = [];
   const t = workflowTriggers(yaml);
-  if (!t.events.includes('push')) out.push(`${file}: push is not among its triggers (${t.events.join(', ') || 'none'})`);
-  else if (t.pushBranches && !t.pushBranches.includes('main')) out.push(`${file}: push is limited to branches ${t.pushBranches.join(', ')}, without main`);
+  if (!t.events.includes('push'))
+    out.push(`${file}: push is not among its triggers (${t.events.join(', ') || 'none'})`);
+  else if (t.pushBranches && !t.pushBranches.includes('main'))
+    out.push(`${file}: push is limited to branches ${t.pushBranches.join(', ')}, without main`);
   const onMain = runs.filter((r) => r.head_branch === 'main');
   if (!onMain.some((r) => r.event === 'push')) out.push(`${file}: no push run on main`);
   for (const sha of new Set(onMain.map((r) => r.head_sha))) {
     const events = onMain.filter((r) => r.head_sha === sha).map((r) => r.event);
-    if (!events.includes('push')) out.push(`${file}: main commit ${sha.slice(0, 12)} has only ${[...new Set(events)].join(', ')} runs`);
+    if (!events.includes('push'))
+      out.push(`${file}: main commit ${sha.slice(0, 12)} has only ${[...new Set(events)].join(', ')} runs`);
   }
   return out;
 }
@@ -558,7 +624,9 @@ const CLOCK = /\b([01]?\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?\s*(AM|PM)?\b/i;
 
 /** Date and time texts on a page: texts with a clock time or an English month. */
 export function dateTexts(texts: string[]): string[] {
-  return texts.map((t) => t.replace(/\s+/g, ' ').trim()).filter((t) => t && t.length < 80 && (CLOCK.test(t) || MONTH.test(t)));
+  return texts
+    .map((t) => t.replace(/\s+/g, ' ').trim())
+    .filter((t) => t && t.length < 80 && (CLOCK.test(t) || MONTH.test(t)));
 }
 
 /** Minutes after midnight of the first clock time in a text. */
@@ -576,7 +644,8 @@ export function clockMinutes(text: string): number | undefined {
 export function localeProblems(a: string[], b: string[]): string[] {
   const out: string[] = [];
   if (!a.length) out.push('no date or time text on the page');
-  if (a.join('\n') !== b.join('\n')) out.push(`texts differ between locales: [${a.slice(0, 5).join(' | ')}] vs [${b.slice(0, 5).join(' | ')}]`);
+  if (a.join('\n') !== b.join('\n'))
+    out.push(`texts differ between locales: [${a.slice(0, 5).join(' | ')}] vs [${b.slice(0, 5).join(' | ')}]`);
   for (const t of [...a, ...b]) if (/[^\u0020-\u024f\s·–—→]/.test(t)) out.push(`"${t}" is not in an English format`);
   return out;
 }
@@ -594,7 +663,12 @@ export function shiftedBy(a: string[], b: string[], offsetMinutes: number): bool
 }
 
 /** True when the shown clock times bracket the job within a minute (UTC times shown in UTC). */
-export function intervalMatches(shown: string[], startedAt: string, completedAt: string, toleranceMs = 60_000): boolean {
+export function intervalMatches(
+  shown: string[],
+  startedAt: string,
+  completedAt: string,
+  toleranceMs = 60_000,
+): boolean {
   const minuteOf = (iso: string) => {
     const d = new Date(iso);
     return d.getUTCHours() * 60 + d.getUTCMinutes() + d.getUTCSeconds() / 60;
@@ -603,16 +677,24 @@ export function intervalMatches(shown: string[], startedAt: string, completedAt:
     const diff = Math.abs(shownMin - minuteOf(iso));
     return Math.min(diff, 1440 - diff) * 60_000 <= toleranceMs;
   };
-  const mins = shown.flatMap((t) => [...t.matchAll(new RegExp(CLOCK.source, 'gi'))].map((m) => clockMinutes(m[0]) as number));
+  const mins = shown.flatMap((t) =>
+    [...t.matchAll(new RegExp(CLOCK.source, 'gi'))].map((m) => clockMinutes(m[0]) as number),
+  );
   return mins.some((s) => near(s, startedAt)) && mins.some((e) => near(e, completedAt));
 }
 
 /** Why fixture F cannot be the R9.20 target: F must be scope+pause without shaped and Blocked by the open, undelivered, paused A. */
-export function pauseResumePreconditions(F: IssueState, A: IssueState & { id: number; state: string }, fBlockers: { id: number }[]): string[] {
+export function pauseResumePreconditions(
+  F: IssueState,
+  A: IssueState & { id: number; state: string },
+  fBlockers: { id: number }[],
+): string[] {
   const out: string[] = [];
-  if (!(F.labels.includes('scope') && F.labels.includes('pause') && !F.labels.includes('shaped'))) out.push(`F has [${F.labels.join(', ')}]`);
+  if (!(F.labels.includes('scope') && F.labels.includes('pause') && !F.labels.includes('shaped')))
+    out.push(`F has [${F.labels.join(', ')}]`);
   if (!fBlockers.some((b) => b.id === A.id)) out.push('F is not Blocked by A');
-  if (A.state !== 'open' || A.labels.includes('delivered') || !A.labels.includes('pause')) out.push(`A is ${A.state} with [${A.labels.join(', ')}]`);
+  if (A.state !== 'open' || A.labels.includes('delivered') || !A.labels.includes('pause'))
+    out.push(`A is ${A.state} with [${A.labels.join(', ')}]`);
   return out;
 }
 
@@ -660,8 +742,10 @@ export function statusValue(json: unknown, key: RegExp): string | number | boole
   return found;
 }
 
-const GOOD = /^(ok|true|yes|running|healthy|success|succeeded|passed|active|up[ _-]?to[ _-]?date|current|latest|green|good)$/i;
-const BAD = /^(false|no|fail(ed|ure)?|error|missing|stale|outdated|inactive|broken|never|red|bad|none|not[ _-].*|upgrade[ _-]available)$/i;
+const GOOD =
+  /^(ok|true|yes|running|healthy|success|succeeded|passed|active|up[ _-]?to[ _-]?date|current|latest|green|good)$/i;
+const BAD =
+  /^(false|no|fail(ed|ure)?|error|missing|stale|outdated|inactive|broken|never|red|bad|none|not[ _-].*|upgrade[ _-]available)$/i;
 
 /** `good`, `bad` or undefined for a status value. */
 export function stateOf(v: string | number | boolean | undefined): 'good' | 'bad' | undefined {
@@ -670,8 +754,10 @@ export function stateOf(v: string | number | boolean | undefined): 'good' | 'bad
   return GOOD.test(v.trim()) ? 'good' : BAD.test(v.trim()) ? 'bad' : undefined;
 }
 
-const LIGHT_GOOD = /\b(ok|running|healthy|success|succeeded|pass(ed|ing)?|active|up to date|current|latest|good|working)\b/i;
-const LIGHT_BAD = /\b(fail(ed|ing|ure)?|error|missing|not|stale|outdated|inactive|broken|never|warning|upgrade|unknown)\b/i;
+const LIGHT_GOOD =
+  /\b(ok|running|healthy|success|succeeded|pass(ed|ing)?|active|up to date|current|latest|good|working)\b/i;
+const LIGHT_BAD =
+  /\b(fail(ed|ing|ure)?|error|missing|not|stale|outdated|inactive|broken|never|warning|upgrade|unknown)\b/i;
 
 /** Problem when a light's text or label does not say the state the status reports (Proposal R9.4). */
 export function lightProblem(name: string, lightText: string, state: 'good' | 'bad' | undefined): string | undefined {
@@ -748,7 +834,11 @@ export function hasCount(text: string): boolean {
  */
 export function countNear(text: string, word: RegExp): number | undefined {
   const t = text.replace(/\s+/g, ' ');
-  const counts = [...t.matchAll(new RegExp(COUNT.source, COUNT.flags))].map((m) => ({ start: m.index, end: m.index + m[0].length, n: Number(m[0]) }));
+  const counts = [...t.matchAll(new RegExp(COUNT.source, COUNT.flags))].map((m) => ({
+    start: m.index,
+    end: m.index + m[0].length,
+    n: Number(m[0]),
+  }));
   const gapOk = (gap: string) => gap.length <= COUNT_GAP && !/\d/.test(gap);
   for (const w of t.matchAll(new RegExp(`\\b(?:${word.source})\\b`, 'gi'))) {
     if (!w[0]) continue;
@@ -827,19 +917,31 @@ export function nibfinPending(labels: string[], events: LabelEvent[], comments: 
  * has `pause`, its latest `pending` is not Nibfin's, or a record written after that
  * `pending` is older than the Dashboard's lag. Records from before it are ignored.
  */
-export function autoProblem(issue: { labels: string[] }, events: LabelEvent[], comments: Comment[], readAt: number): string | undefined {
+export function autoProblem(
+  issue: { labels: string[] },
+  events: LabelEvent[],
+  comments: Comment[],
+  readAt: number,
+): string | undefined {
   if (issue.labels.includes('pause')) return 'it has pause';
   const at = latestPending(issue.labels, events);
   if (at === undefined) return `it has no pending label with a labeled event (labels [${issue.labels.join(', ')}])`;
   const since = new Date(at).toISOString();
-  if (!nibfinPending(issue.labels, events, comments)) return `no Nibfin pending comment was written for its pending added at ${since}`;
+  if (!nibfinPending(issue.labels, events, comments))
+    return `no Nibfin pending comment was written for its pending added at ${since}`;
   const r = resolutionRecord(comments, at);
-  if (r && r.at <= readAt - LAG_MS) return `its resolution record ${r.url} (written ${new Date(r.at).toISOString()}) is more than ${LAG_MS / 1000} s older than the read at ${new Date(readAt).toISOString()}`;
+  if (r && r.at <= readAt - LAG_MS)
+    return `its resolution record ${r.url} (written ${new Date(r.at).toISOString()}) is more than ${LAG_MS / 1000} s older than the read at ${new Date(readAt).toISOString()}`;
   return undefined;
 }
 
 /** Whether an Issue may show 自動排除中 when read at `readAt` (see `autoProblem`). */
-export function autoEligible(issue: { labels: string[] }, events: LabelEvent[], comments: Comment[], readAt: number): boolean {
+export function autoEligible(
+  issue: { labels: string[] },
+  events: LabelEvent[],
+  comments: Comment[],
+  readAt: number,
+): boolean {
   return autoProblem(issue, events, comments, readAt) === undefined;
 }
 
@@ -850,12 +952,7 @@ export function needsExpected<T extends { html_url: string }>(held: T[], autoSho
 }
 
 /** Text for loose comparison: no markdown emphasis or code marks, whitespace collapsed, lower case. */
-export const normalText = (t: string) =>
-  t
-    .replace(/[`*_]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
+export const normalText = (t: string) => t.replace(/[`*_]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
 
 /** Whether `text` shows `cause`: its first 20 characters (the Dashboard may shorten the rest). */
 export function causeShown(text: string, cause: string): boolean {
@@ -876,7 +973,10 @@ const plainLine = (line: string) =>
 /** Whether a line is a heading, and its text: a markdown heading, a wholly bold line, or a label ending in a colon. */
 function headingText(line: string): string | undefined {
   const t = line.trim();
-  if (/^#{1,6}\s/.test(t) || /^\*\*[^*]+\*\*[:：]?$/.test(t)) return plainLine(t).replace(/[:：]$/, '').trim();
+  if (/^#{1,6}\s/.test(t) || /^\*\*[^*]+\*\*[:：]?$/.test(t))
+    return plainLine(t)
+      .replace(/[:：]$/, '')
+      .trim();
   const m = /^([^:：]{1,30}?)\s*[:：]\s*$/.exec(plainLine(t));
   return m ? (m[1] ?? '').trim() : undefined;
 }

@@ -1,7 +1,14 @@
 import { deepEqual, equal, match, rejects } from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Comment } from '../../scenarios/lifecycle/analysis.ts';
-import { briefRecord, labelAddedAt, RESOLUTION_ISSUES, resolutionGate, resolutionRecord, resolutionRecords } from '../../scenarios/lib/resolution.ts';
+import {
+  briefRecord,
+  labelAddedAt,
+  RESOLUTION_ISSUES,
+  resolutionGate,
+  resolutionRecord,
+  resolutionRecords,
+} from '../../scenarios/lib/resolution.ts';
 import { routes } from '../lifecycle/fake.ts';
 
 const PENDING_AT = Date.parse('2026-11-27T10:00:00Z');
@@ -24,7 +31,8 @@ test('the resolution gate is waiting and names the delivering Issues not closed 
   table['GET /repos/taco3064/gh-nibfin/issues/508'] = { state: 'closed', labels: [] };
   deepEqual(await resolutionGate(routes(table).github, 'stage'), {
     status: 'waiting',
-    reason: 'the pending resolution stage (R4.40–R4.52) is not delivered yet: taco3064/nibfin-core#778, taco3064/gh-nibfin#508 not closed with delivered',
+    reason:
+      'the pending resolution stage (R4.40–R4.52) is not delivered yet: taco3064/nibfin-core#778, taco3064/gh-nibfin#508 not closed with delivered',
   });
   table['GET /repos/taco3064/nibfin-core/issues/778'] = delivered;
   table['GET /repos/taco3064/gh-nibfin/issues/508'] = delivered;
@@ -32,7 +40,10 @@ test('the resolution gate is waiting and names the delivering Issues not closed 
   equal(await resolutionGate(routes(table).github, 'dashboard'), undefined);
   table['GET /repos/taco3064/gh-nibfin/issues/509'] = { state: 'open', labels: [] };
   equal(await resolutionGate(routes(table).github, 'stage'), undefined);
-  match((await resolutionGate(routes(table).github, 'dashboard'))?.reason ?? '', /Dashboard .*gh-nibfin#509 not closed with delivered/);
+  match(
+    (await resolutionGate(routes(table).github, 'dashboard'))?.reason ?? '',
+    /Dashboard .*gh-nibfin#509 not closed with delivered/,
+  );
 });
 
 test('the resolution gate is waiting when no delivering Issue is listed, and a read error is never waiting', async () => {
@@ -82,12 +93,19 @@ Reply with the option number.
 `;
 
 test('the record reader finds the record after pending and ignores the pending comment, unmarked comments and older records', () => {
-  const pending = comment('<!-- nibfin:pending -->\nThe Job failed: .nibfin.json is invalid (維運或人為操作).', '2026-11-27T09:59:58Z', '2026-11-27T10:00:05Z');
+  const pending = comment(
+    '<!-- nibfin:pending -->\nThe Job failed: .nibfin.json is invalid (維運或人為操作).',
+    '2026-11-27T09:59:58Z',
+    '2026-11-27T10:00:05Z',
+  );
   const plain = comment('分類：產品決策 — a person typing', '2026-11-27T10:01:00Z');
   const old = comment('<!-- nibfin:repair -->\n分類：外部暫時性問題', '2026-11-27T09:00:00Z');
   const record = comment(ZH, '2026-11-27T10:02:00Z');
   const cs = [pending, plain, old, record];
-  deepEqual(resolutionRecords(cs, PENDING_AT).map((x) => x.id), [record.id]);
+  deepEqual(
+    resolutionRecords(cs, PENDING_AT).map((x) => x.id),
+    [record.id],
+  );
   const r = resolutionRecord(cs, PENDING_AT);
   equal(r?.id, record.id);
   equal(r?.key, 'repair');
@@ -95,10 +113,20 @@ test('the record reader finds the record after pending and ignores the pending c
 });
 
 test('an older record updated after pending counts, and a marked comment naming a class counts without the repair key', () => {
-  const updated = comment('<!-- nibfin:repair -->\n分類：外部暫時性問題\n原因：GitHub 回 502。', '2026-11-27T09:00:00Z', '2026-11-27T10:03:00Z');
+  const updated = comment(
+    '<!-- nibfin:repair -->\n分類：外部暫時性問題\n原因：GitHub 回 502。',
+    '2026-11-27T09:00:00Z',
+    '2026-11-27T10:03:00Z',
+  );
   equal(resolutionRecord([updated], PENDING_AT)?.class, 'external-temporary');
-  const other = comment('<!-- nibfin:resolution -->\nClass: operations or manual action\nCause: the config is invalid.', '2026-11-27T10:04:00Z');
-  deepEqual(resolutionRecords([updated, other], PENDING_AT).map((x) => x.id), [updated.id, other.id]);
+  const other = comment(
+    '<!-- nibfin:resolution -->\nClass: operations or manual action\nCause: the config is invalid.',
+    '2026-11-27T10:04:00Z',
+  );
+  deepEqual(
+    resolutionRecords([updated, other], PENDING_AT).map((x) => x.id),
+    [updated.id, other.id],
+  );
   equal(resolutionRecord([updated, other], PENDING_AT)?.class, 'operations-or-manual');
   const unrelated = comment('<!-- nibfin:shape -->\n## Goal\nAdd a flag.', '2026-11-27T10:05:00Z');
   equal(resolutionRecords([unrelated], PENDING_AT).length, 0);
@@ -144,7 +172,10 @@ test('options written as 選項 N, headings on their own line, and English next 
   const r = resolutionRecord([comment(zh, '2026-11-27T10:02:00Z')], PENDING_AT);
   equal(r?.class, 'product-decision');
   equal(r?.cause, '兩個需求互相矛盾。');
-  deepEqual(r?.options.map((o) => o.n), [1, 2]);
+  deepEqual(
+    r?.options.map((o) => o.n),
+    [1, 2],
+  );
   equal(r?.recommended, 2);
   const en = `<!-- nibfin:repair -->
 Classification: Nibfin's own flow error
@@ -157,14 +188,20 @@ Next steps:
   equal(e?.class, 'nibfin-flow-error');
   equal(e?.nextSteps, true);
   deepEqual(e?.options, []);
-  const bare = resolutionRecord([comment('<!-- nibfin:repair -->\nSomething happened.', '2026-11-27T10:02:00Z')], PENDING_AT);
+  const bare = resolutionRecord(
+    [comment('<!-- nibfin:repair -->\nSomething happened.', '2026-11-27T10:02:00Z')],
+    PENDING_AT,
+  );
   equal(bare?.class, undefined);
   equal(bare?.cause, undefined);
   equal(bare?.nextSteps, false);
 });
 
 test('an unknown class keeps its label and gives no class', () => {
-  const r = resolutionRecord([comment('<!-- nibfin:repair -->\n分類：其他\n原因：不明。', '2026-11-27T10:02:00Z')], PENDING_AT);
+  const r = resolutionRecord(
+    [comment('<!-- nibfin:repair -->\n分類：其他\n原因：不明。', '2026-11-27T10:02:00Z')],
+    PENDING_AT,
+  );
   equal(r?.classLabel, '其他');
   equal(r?.class, undefined);
 });

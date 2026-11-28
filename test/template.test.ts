@@ -9,7 +9,13 @@ interface Hook {
   HOLD_LIMIT_MS: number;
   evaluate(
     env: Record<string, string | undefined>,
-    deps?: { git?: Git; readFile?: (f: string) => string; now?: () => number; sleep?: (ms: number) => Promise<void>; log?: (m: string) => void },
+    deps?: {
+      git?: Git;
+      readFile?: (f: string) => string;
+      now?: () => number;
+      sleep?: (ms: number) => Promise<void>;
+      log?: (m: string) => void;
+    },
   ): Promise<string[]>;
 }
 
@@ -40,17 +46,40 @@ test('no rules or an empty list passes without running git', async () => {
 
 test('a pull_request diffs the merge commit against its first parent; push diffs against before', async () => {
   const pr = fakeGit(['src/x.js']);
-  await hook.evaluate({ E2E_RULES: rules([{ when: 'src/x.js', require: { file: 'CHANGELOG.md', contains: 'x' } }]), E2E_EVENT: 'pull_request' }, { git: pr.git, readFile: () => 'x' });
+  await hook.evaluate(
+    {
+      E2E_RULES: rules([{ when: 'src/x.js', require: { file: 'CHANGELOG.md', contains: 'x' } }]),
+      E2E_EVENT: 'pull_request',
+    },
+    { git: pr.git, readFile: () => 'x' },
+  );
   deepEqual(pr.calls[0], ['diff', '--name-only', 'HEAD^1', 'HEAD']);
   const push = fakeGit(['src/x.js']);
-  await hook.evaluate({ E2E_RULES: rules([{ when: 'src/x.js', require: { file: 'README.md', contains: 'x' } }]), E2E_EVENT: 'push', E2E_BEFORE: 'b'.repeat(40) }, { git: push.git, readFile: () => 'x' });
+  await hook.evaluate(
+    {
+      E2E_RULES: rules([{ when: 'src/x.js', require: { file: 'README.md', contains: 'x' } }]),
+      E2E_EVENT: 'push',
+      E2E_BEFORE: 'b'.repeat(40),
+    },
+    { git: push.git, readFile: () => 'x' },
+  );
   deepEqual(push.calls[0], ['diff', '--name-only', 'b'.repeat(40), 'HEAD']);
 });
 
 test('require fails only when its when path changed and the file lacks the text', async () => {
-  const env = { E2E_RULES: rules([{ when: 'src/f.js', event: 'pull_request', require: { file: 'CHANGELOG.md', contains: 'f-r1' } }]), E2E_EVENT: 'pull_request' };
-  deepEqual(await hook.evaluate(env, { git: fakeGit(['src/f.js']).git, readFile: () => '' }), ['CHANGELOG.md must mention f-r1 because src/f.js changed']);
-  deepEqual(await hook.evaluate(env, { git: fakeGit(['src/f.js', 'CHANGELOG.md']).git, readFile: () => '- f-r1\n' }), []);
+  const env = {
+    E2E_RULES: rules([
+      { when: 'src/f.js', event: 'pull_request', require: { file: 'CHANGELOG.md', contains: 'f-r1' } },
+    ]),
+    E2E_EVENT: 'pull_request',
+  };
+  deepEqual(await hook.evaluate(env, { git: fakeGit(['src/f.js']).git, readFile: () => '' }), [
+    'CHANGELOG.md must mention f-r1 because src/f.js changed',
+  ]);
+  deepEqual(
+    await hook.evaluate(env, { git: fakeGit(['src/f.js', 'CHANGELOG.md']).git, readFile: () => '- f-r1\n' }),
+    [],
+  );
   deepEqual(await hook.evaluate(env, { git: fakeGit(['src/other.js']).git, readFile: () => '' }), []);
   const missing = await hook.evaluate(env, {
     git: fakeGit(['src/f.js']).git,
@@ -62,7 +91,11 @@ test('require fails only when its when path changed and the file lacks the text'
 });
 
 test('a merge that does not change the when path passes', async () => {
-  const env = { E2E_RULES: rules([{ when: 'src/f.js', event: 'push', require: { file: 'README.md', contains: 'f-r1' } }]), E2E_EVENT: 'push', E2E_BEFORE: 'a'.repeat(40) };
+  const env = {
+    E2E_RULES: rules([{ when: 'src/f.js', event: 'push', require: { file: 'README.md', contains: 'f-r1' } }]),
+    E2E_EVENT: 'push',
+    E2E_BEFORE: 'a'.repeat(40),
+  };
   deepEqual(await hook.evaluate(env, { git: fakeGit(['README.md']).git, readFile: () => '' }), []);
 });
 
@@ -70,29 +103,53 @@ test('event and attempt filters', async () => {
   const r = rules([{ when: 'src/a.js', event: 'push', attempt: 2, require: { file: 'X', contains: 'y' } }]);
   const git = fakeGit(['src/a.js']).git;
   const base = { E2E_RULES: r, E2E_BEFORE: 'a'.repeat(40) };
-  deepEqual(await hook.evaluate({ ...base, E2E_EVENT: 'pull_request', GITHUB_RUN_ATTEMPT: '2' }, { git, readFile: () => '' }), []);
-  deepEqual(await hook.evaluate({ ...base, E2E_EVENT: 'push', GITHUB_RUN_ATTEMPT: '1' }, { git, readFile: () => '' }), []);
-  equal((await hook.evaluate({ ...base, E2E_EVENT: 'push', GITHUB_RUN_ATTEMPT: '2' }, { git, readFile: () => '' })).length, 1);
+  deepEqual(
+    await hook.evaluate({ ...base, E2E_EVENT: 'pull_request', GITHUB_RUN_ATTEMPT: '2' }, { git, readFile: () => '' }),
+    [],
+  );
+  deepEqual(
+    await hook.evaluate({ ...base, E2E_EVENT: 'push', GITHUB_RUN_ATTEMPT: '1' }, { git, readFile: () => '' }),
+    [],
+  );
+  equal(
+    (await hook.evaluate({ ...base, E2E_EVENT: 'push', GITHUB_RUN_ATTEMPT: '2' }, { git, readFile: () => '' })).length,
+    1,
+  );
 });
 
 test('a diff that cannot be computed fails and names the command', async () => {
   const r = rules([{ when: 'src/a.js', holdTag: 't' }]);
   const failing: Git = () => ({ code: 128, stdout: '', stderr: 'bad revision' });
-  await rejects(hook.evaluate({ E2E_RULES: r, E2E_EVENT: 'push', E2E_BEFORE: 'a'.repeat(40) }, { git: failing }), /git diff --name-only a+ HEAD failed: bad revision/);
-  await rejects(hook.evaluate({ E2E_RULES: r, E2E_EVENT: 'push', E2E_BEFORE: '0'.repeat(40) }, { git: failing }), /cannot compute the changed paths/);
-  await rejects(hook.evaluate({ E2E_RULES: r, E2E_EVENT: 'workflow_dispatch' }, { git: failing }), /cannot compute the changed paths/);
+  await rejects(
+    hook.evaluate({ E2E_RULES: r, E2E_EVENT: 'push', E2E_BEFORE: 'a'.repeat(40) }, { git: failing }),
+    /git diff --name-only a+ HEAD failed: bad revision/,
+  );
+  await rejects(
+    hook.evaluate({ E2E_RULES: r, E2E_EVENT: 'push', E2E_BEFORE: '0'.repeat(40) }, { git: failing }),
+    /cannot compute the changed paths/,
+  );
+  await rejects(
+    hook.evaluate({ E2E_RULES: r, E2E_EVENT: 'workflow_dispatch' }, { git: failing }),
+    /cannot compute the changed paths/,
+  );
 });
 
 test('holdTag passes once the tag exists and fails at the 25-minute limit', async () => {
   let t = 0;
   const clock = { now: () => t, sleep: async (ms: number) => void (t += ms), log: () => {} };
-  const env = { E2E_RULES: rules([{ when: 'src/a.js', holdTag: 'r1-a-cd' }]), E2E_EVENT: 'push', E2E_BEFORE: 'a'.repeat(40) };
+  const env = {
+    E2E_RULES: rules([{ when: 'src/a.js', holdTag: 'r1-a-cd' }]),
+    E2E_EVENT: 'push',
+    E2E_BEFORE: 'a'.repeat(40),
+  };
   const held = fakeGit(['src/a.js'], 4);
   deepEqual(await hook.evaluate(env, { git: held.git, ...clock }), []);
   deepEqual(held.calls.at(-1), ['ls-remote', '--tags', 'origin', 'refs/tags/r1-a-cd']);
   equal(t, 30_000);
   t = 0;
-  deepEqual(await hook.evaluate(env, { git: fakeGit(['src/a.js']).git, ...clock }), ['tag r1-a-cd did not appear within 25 minutes']);
+  deepEqual(await hook.evaluate(env, { git: fakeGit(['src/a.js']).git, ...clock }), [
+    'tag r1-a-cd did not appear within 25 minutes',
+  ]);
   equal(t >= 25 * 60_000, true);
 });
 
@@ -106,6 +163,12 @@ test('the template workflows run the hook and time out after the hold limit', ()
     match(text, /persist-credentials: false/);
     match(text, /E2E_BEFORE: \$\{\{ github\.event\.before \}\}/);
   }
-  match(readFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'utf8'), /E2E_RULES: \$\{\{ vars\.E2E_CI_RULES \}\}/);
-  match(readFileSync(join(root, '.github', 'workflows', 'cd.yml'), 'utf8'), /E2E_RULES: \$\{\{ vars\.E2E_CD_RULES \}\}/);
+  match(
+    readFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'utf8'),
+    /E2E_RULES: \$\{\{ vars\.E2E_CI_RULES \}\}/,
+  );
+  match(
+    readFileSync(join(root, '.github', 'workflows', 'cd.yml'), 'utf8'),
+    /E2E_RULES: \$\{\{ vars\.E2E_CD_RULES \}\}/,
+  );
 });

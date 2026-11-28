@@ -37,15 +37,22 @@ const WHAT: Record<ResolutionGroup, string> = {
  * `waiting` (Proposal R8.20) naming the group's delivering Issues not closed with
  * `delivered`, or undefined once all are. A read error propagates; it is never `waiting`.
  */
-export async function resolutionGate(gh: GitHub, group: ResolutionGroup, issues: Record<ResolutionGroup, [string, number][]> = RESOLUTION_ISSUES): Promise<Outcome | undefined> {
+export async function resolutionGate(
+  gh: GitHub,
+  group: ResolutionGroup,
+  issues: Record<ResolutionGroup, [string, number][]> = RESOLUTION_ISSUES,
+): Promise<Outcome | undefined> {
   const list = issues[group];
-  if (!list.length) return { status: 'waiting', reason: `${WHAT[group]} is not delivered yet: no delivering product Issue is listed` };
+  if (!list.length)
+    return { status: 'waiting', reason: `${WHAT[group]} is not delivered yet: no delivering product Issue is listed` };
   const open: string[] = [];
   for (const [repo, n] of list) {
     const { data } = await gh.rest<Issue>('GET', `/repos/${repo}/issues/${n}`);
     if (!(data.state === 'closed' && data.labels.some((l) => l.name === 'delivered'))) open.push(`${repo}#${n}`);
   }
-  return open.length ? { status: 'waiting', reason: `${WHAT[group]} is not delivered yet: ${open.join(', ')} not closed with delivered` } : undefined;
+  return open.length
+    ? { status: 'waiting', reason: `${WHAT[group]} is not delivered yet: ${open.join(', ')} not closed with delivered` }
+    : undefined;
 }
 
 interface IssueEvent {
@@ -67,16 +74,46 @@ export async function pendingAddedAt(gh: GitHub, repo: string, n: number): Promi
   return at;
 }
 
-export type ResolutionClassId = 'external-temporary' | 'unrelated-flaky-test' | 'nibfin-flow-error' | 'issue-correction' | 'product-decision' | 'operations-or-manual';
+export type ResolutionClassId =
+  | 'external-temporary'
+  | 'unrelated-flaky-test'
+  | 'nibfin-flow-error'
+  | 'issue-correction'
+  | 'product-decision'
+  | 'operations-or-manual';
 
 /** The six cause classes of Proposal R4.41, each matched loosely in Chinese or English. */
 export const RESOLUTION_CLASSES: { id: ResolutionClassId; name: string; pattern: RegExp }[] = [
-  { id: 'external-temporary', name: '外部暫時性問題', pattern: /外部.{0,3}暫時|external[\s-]+(temporary|transient)|transient[\s-]+external|external-temporary/i },
-  { id: 'unrelated-flaky-test', name: '與該 Issue 無關的偶發測試失敗', pattern: /偶發.{0,3}測試|無關.{0,12}測試失敗|(unrelated|flaky|intermittent)[\s-]+(\w+[\s-]+)?tests?\b|unrelated-flaky-test/i },
-  { id: 'nibfin-flow-error', name: 'Nibfin 自身的流程錯誤', pattern: /流程錯誤|nibfin(['’]s)?[\s-]+(own[\s-]+)?(flow|process|workflow)[\s-]+(error|failure|fault)|nibfin-flow-error/i },
-  { id: 'issue-correction', name: 'Issue 規格需修正', pattern: /規格.{0,2}修正|issue[\s-]+(spec(ification)?|text|body)[\s-]+(needs?[\s-]+)?(fix|correct|amend)\w*|spec(ification)?[\s-]+(fix|correction)|issue-correction/i },
+  {
+    id: 'external-temporary',
+    name: '外部暫時性問題',
+    pattern: /外部.{0,3}暫時|external[\s-]+(temporary|transient)|transient[\s-]+external|external-temporary/i,
+  },
+  {
+    id: 'unrelated-flaky-test',
+    name: '與該 Issue 無關的偶發測試失敗',
+    pattern:
+      /偶發.{0,3}測試|無關.{0,12}測試失敗|(unrelated|flaky|intermittent)[\s-]+(\w+[\s-]+)?tests?\b|unrelated-flaky-test/i,
+  },
+  {
+    id: 'nibfin-flow-error',
+    name: 'Nibfin 自身的流程錯誤',
+    pattern:
+      /流程錯誤|nibfin(['’]s)?[\s-]+(own[\s-]+)?(flow|process|workflow)[\s-]+(error|failure|fault)|nibfin-flow-error/i,
+  },
+  {
+    id: 'issue-correction',
+    name: 'Issue 規格需修正',
+    pattern:
+      /規格.{0,2}修正|issue[\s-]+(spec(ification)?|text|body)[\s-]+(needs?[\s-]+)?(fix|correct|amend)\w*|spec(ification)?[\s-]+(fix|correction)|issue-correction/i,
+  },
   { id: 'product-decision', name: '產品決策', pattern: /產品決策|product[\s-]+decision/i },
-  { id: 'operations-or-manual', name: '維運或人為操作', pattern: /維運|人為操作|operations?[\s-]*(or|\/|&|and)[\s-]*(manual|human)|manual[\s-]+(action|operation|intervention|fix)|human[\s-]+(action|operation|intervention)|operations-or-manual/i },
+  {
+    id: 'operations-or-manual',
+    name: '維運或人為操作',
+    pattern:
+      /維運|人為操作|operations?[\s-]*(or|\/|&|and)[\s-]*(manual|human)|manual[\s-]+(action|operation|intervention|fix)|human[\s-]+(action|operation|intervention)|operations-or-manual/i,
+  },
 ];
 
 /** The class named earliest in `text`, or undefined. */
@@ -124,7 +161,9 @@ function isRecord(c: Comment): boolean {
 
 /** Every resolution record written or updated at or after `pendingAt`, oldest first. */
 export function resolutionRecords(comments: Comment[], pendingAt: number): Comment[] {
-  return comments.filter((c) => isRecord(c) && lastWrite(c) >= pendingAt).sort((a, b) => lastWrite(a) - lastWrite(b) || a.id - b.id);
+  return comments
+    .filter((c) => isRecord(c) && lastWrite(c) >= pendingAt)
+    .sort((a, b) => lastWrite(a) - lastWrite(b) || a.id - b.id);
 }
 
 /** The latest resolution record after `pendingAt`, parsed, or undefined. */
@@ -142,7 +181,11 @@ const OPTION_LINE = /^(?:選項|option)\s*(\d+)\s*[.)、:：-]?\s*(.*)$/i;
 const RECOMMENDED = /建議|推薦|recommend/i;
 
 /** A line without list, quote, heading and emphasis marks. */
-const plain = (line: string) => line.replace(/^[\s>#*_-]+/, '').replace(/\*\*|__/g, '').trim();
+const plain = (line: string) =>
+  line
+    .replace(/^[\s>#*_-]+/, '')
+    .replace(/\*\*|__/g, '')
+    .trim();
 
 /** `label: value` (value may be empty) when the line is a field, else undefined. */
 function field(line: string): { label: string; value: string } | undefined {
@@ -153,7 +196,10 @@ function field(line: string): { label: string; value: string } | undefined {
 /** A heading: a markdown heading, a line wholly in bold, or a label ending in a colon. */
 function headingOf(line: string): string | undefined {
   const t = line.trim();
-  if (/^#{1,6}\s/.test(t) || /^\*\*[^*]+\*\*[:：]?$/.test(t)) return plain(t).replace(/[:：]$/, '').trim();
+  if (/^#{1,6}\s/.test(t) || /^\*\*[^*]+\*\*[:：]?$/.test(t))
+    return plain(t)
+      .replace(/[:：]$/, '')
+      .trim();
   const f = field(t);
   if (f && !f.value && !NUMBERED.test(plain(t))) return f.label;
   return undefined;
@@ -216,6 +262,11 @@ export function parseRecord(c: Comment): ResolutionRecord {
 
 /** A record shortened for a failure message: no HTML comments, one line, capped, secrets hidden. */
 export function briefRecord(body: string, max = 300): string {
-  const t = redact(body.replace(/<!--[\s\S]*?-->/g, ' ').replace(/\s+/g, ' ').trim());
+  const t = redact(
+    body
+      .replace(/<!--[\s\S]*?-->/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim(),
+  );
   return t.length > max ? t.slice(0, max) + '…' : t;
 }

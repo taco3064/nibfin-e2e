@@ -21,14 +21,19 @@ function ghcr(tags: Record<string, string>, seen: string[] = [], missing = 404):
     if (url.startsWith('https://ghcr.io/token')) return new Response(JSON.stringify({ token: 'anon' }));
     const tag = decodeURIComponent(url.split('/manifests/')[1] ?? '');
     const d = tags[tag];
-    return d ? new Response(null, { status: 200, headers: { 'docker-content-digest': d } }) : new Response(null, { status: missing });
+    return d
+      ? new Response(null, { status: 200, headers: { 'docker-content-digest': d } })
+      : new Response(null, { status: missing });
   };
 }
 
 test('tagDigest reads a commit tag anonymously; a missing tag is undefined, other errors throw; mainDigest still throws on 404', async () => {
   const seen: string[] = [];
   equal(await tagDigest('4aff19d8e0', ghcr({ '4aff19d8e0': OLD }, seen)), OLD);
-  deepEqual(seen, ['GET https://ghcr.io/token?scope=repository:taco3064/nibfin:pull', 'HEAD https://ghcr.io/v2/taco3064/nibfin/manifests/4aff19d8e0']);
+  deepEqual(seen, [
+    'GET https://ghcr.io/token?scope=repository:taco3064/nibfin:pull',
+    'HEAD https://ghcr.io/v2/taco3064/nibfin/manifests/4aff19d8e0',
+  ]);
   equal(await tagDigest('nothing', ghcr({})), undefined);
   await rejects(tagDigest('x', ghcr({}, [], 500)), /returned 500/);
   await rejects(tagDigest('x', ghcr({ x: 'sha256:short' })), /no valid digest/);
@@ -47,10 +52,24 @@ test('oldCandidates: starts at the commit with D_new, skips untagged and equal i
     { sha: 'o1', digest: OLDER },
     { sha: 'o0', digest: D('d') },
   ];
-  deepEqual(oldCandidates(chain, NEW), { current: { sha: 'n0', digest: NEW }, older: [{ sha: 'o3', digest: OLD }, { sha: 'o1', digest: OLDER }, { sha: 'o0', digest: D('d') }] });
+  deepEqual(oldCandidates(chain, NEW), {
+    current: { sha: 'n0', digest: NEW },
+    older: [
+      { sha: 'o3', digest: OLD },
+      { sha: 'o1', digest: OLDER },
+      { sha: 'o0', digest: D('d') },
+    ],
+  });
   deepEqual(oldCandidates(chain, NEW, 1), { current: { sha: 'n0', digest: NEW }, older: [{ sha: 'o3', digest: OLD }] });
-  match((oldCandidates([{ sha: 'x', digest: OLD }], NEW) as { reason: string }).reason, /no nibfin-core main commit tag among the 1 read points at sha256:a/);
-  match((oldCandidates([{ sha: 'x', digest: NEW }, { sha: 'y' }, { sha: 'z', digest: NEW }], NEW) as { reason: string }).reason, /no nibfin-core main commit older than x/);
+  match(
+    (oldCandidates([{ sha: 'x', digest: OLD }], NEW) as { reason: string }).reason,
+    /no nibfin-core main commit tag among the 1 read points at sha256:a/,
+  );
+  match(
+    (oldCandidates([{ sha: 'x', digest: NEW }, { sha: 'y' }, { sha: 'z', digest: NEW }], NEW) as { reason: string })
+      .reason,
+    /no nibfin-core main commit older than x/,
+  );
 });
 
 test('repin replaces only exact D_new references and counts them', () => {
@@ -64,13 +83,20 @@ test('repin replaces only exact D_new references and counts them', () => {
 });
 
 test('parseContainerLine takes the line whose full id matches; none is gone', () => {
-  deepEqual(parseContainerLine(`${ID.slice(0, 63)}0 other\n${ID} ghcr.io/taco3064/nibfin@${OLD}\n`, ID), { id: ID, image: `ghcr.io/taco3064/nibfin@${OLD}` });
+  deepEqual(parseContainerLine(`${ID.slice(0, 63)}0 other\n${ID} ghcr.io/taco3064/nibfin@${OLD}\n`, ID), {
+    id: ID,
+    image: `ghcr.io/taco3064/nibfin@${OLD}`,
+  });
   equal(parseContainerLine('', ID), 'gone');
   equal(parseContainerLine(`${ID}\n`, ID), 'gone');
 });
 
 test('readContainer runs podman ps by id; a failing command throws with its output, empty output is gone', async () => {
-  let reply: { code: number; stdout: string; stderr: string } = { code: 0, stdout: `${ID} ghcr.io/taco3064/nibfin@${OLD}\n`, stderr: '' };
+  let reply: { code: number; stdout: string; stderr: string } = {
+    code: 0,
+    stdout: `${ID} ghcr.io/taco3064/nibfin@${OLD}\n`,
+    stderr: '',
+  };
   const { exec, calls } = fakeExec(() => reply);
   deepEqual(await readContainer(exec, ID), { id: ID, image: `ghcr.io/taco3064/nibfin@${OLD}` });
   deepEqual(calls[0]?.argv, ['podman', 'ps', '--no-trunc', '--filter', `id=${ID}`, '--format', '{{.ID}} {{.Image}}']);
@@ -81,7 +107,12 @@ test('readContainer runs podman ps by id; a failing command throws with its outp
 });
 
 test('imagesNamed keeps each image id, names and repo digests', async () => {
-  const { exec } = fakeExec(() => ({ stdout: JSON.stringify([{ Id: 'i1', Names: ['ghcr.io/taco3064/nibfin:<none>'], RepoDigests: [`ghcr.io/taco3064/nibfin@${NEW}`] }, { Id: 'i2' }]) }));
+  const { exec } = fakeExec(() => ({
+    stdout: JSON.stringify([
+      { Id: 'i1', Names: ['ghcr.io/taco3064/nibfin:<none>'], RepoDigests: [`ghcr.io/taco3064/nibfin@${NEW}`] },
+      { Id: 'i2' },
+    ]),
+  }));
   deepEqual(await imagesNamed({ exec }), [
     { id: 'i1', names: ['ghcr.io/taco3064/nibfin:<none>'], repoDigests: [`ghcr.io/taco3064/nibfin@${NEW}`] },
     { id: 'i2', names: [], repoDigests: [] },
@@ -103,8 +134,19 @@ test('stageRunsAround: agent stage runs of the Issue only, created_at equal to m
     run(1, 'Something else', merged),
   ];
   const got = stageRunsAround(runs, 'o/exec', 5, merged);
-  deepEqual(got.before.map((r) => r.id), [2, 3]);
+  deepEqual(
+    got.before.map((r) => r.id),
+    [2, 3],
+  );
   equal(got.next?.id, 8);
   equal(stageRunsAround(runs.slice(6), 'o/exec', 5, merged).next, undefined);
-  equal(stageRunsAround([run(10, 'Nibfin · o/exec#5 · review', merged), run(11, 'Nibfin · o/exec#5 · scope', merged)], 'o/exec', 5, merged).next?.id, 10);
+  equal(
+    stageRunsAround(
+      [run(10, 'Nibfin · o/exec#5 · review', merged), run(11, 'Nibfin · o/exec#5 · scope', merged)],
+      'o/exec',
+      5,
+      merged,
+    ).next?.id,
+    10,
+  );
 });

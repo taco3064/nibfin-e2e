@@ -150,5 +150,8 @@ export async function volumeExists(ctx: Pick<RunContext, 'exec'>, volume: string
 export async function volumeContainers(ctx: Pick<RunContext, 'exec'>, volume: string): Promise<string[]> {
   const r = await ctx.exec(['podman', 'ps', '-a', '--filter', `volume=${volume}`, '--format', '{{.ID}}']);
   if (r.code !== 0) throw new Error(`podman ps -a --filter volume=${volume} exited ${r.code}: ${tail(r, 300)}`);
-  return r.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+  return r.stdout
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean);
 }

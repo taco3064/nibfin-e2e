@@ -8,7 +8,8 @@ import type { HostServices } from './services.ts';
 const MOUNT = `${CLAUDE_VOLUME}:/v`;
 
 /** Prints the volume root's and settings.json's "uid mode" (or "-"), then the file. */
-const READ = 'stat -c "%u %a" /v; if [ -e /v/settings.json ]; then stat -c "%u %a" /v/settings.json; cat /v/settings.json; else echo -; fi';
+const READ =
+  'stat -c "%u %a" /v; if [ -e /v/settings.json ]; then stat -c "%u %a" /v/settings.json; cat /v/settings.json; else echo -; fi';
 /** Replaces the file's content from stdin: an existing file keeps its owner and mode, a new one is created 0600. */
 const WRITE = 'umask 077 && cat > /v/settings.json';
 
@@ -39,7 +40,8 @@ function parse(stdout: string): ClaudeSettings {
 /** In Podman's default rootless user namespace container root is the host user, shown as uid 0. */
 const HOST_USER = '0';
 
-const podman = (exec: Exec, args: string[], input?: string) => mustRun(exec, ['podman', ...args], { input, hideStdout: true });
+const podman = (exec: Exec, args: string[], input?: string) =>
+  mustRun(exec, ['podman', ...args], { input, hideStdout: true });
 
 /** Reads the login volume's settings.json through the pinned helper image. */
 export async function readClaudeSettings(exec: Exec): Promise<ClaudeSettings> {
@@ -60,14 +62,20 @@ export async function updateClaudeSettings(
   const before = await readClaudeSettings(exec);
   const settings = before.settings ?? {};
   const next = fn(settings);
-  await podman(exec, ['run', '--rm', '-i', '-v', MOUNT, HELPER_IMAGE, 'sh', '-c', WRITE], JSON.stringify(next, null, 2) + '\n');
+  await podman(
+    exec,
+    ['run', '--rm', '-i', '-v', MOUNT, HELPER_IMAGE, 'sh', '-c', WRITE],
+    JSON.stringify(next, null, 2) + '\n',
+  );
 
   const after = await readClaudeSettings(exec);
   const expectedFile = before.file ?? `${HOST_USER} 600`;
   const problems: string[] = [];
   const [rootUid, rootMode = '0'] = after.root.split(' ');
-  if (rootUid !== HOST_USER || !(parseInt(rootMode, 8) & 0o200)) problems.push(`volume root is "${after.root}", expected owned and writable by the host user`);
-  if (after.file !== expectedFile) problems.push(`settings.json is "${String(after.file)}", expected "${expectedFile}" (uid mode)`);
+  if (rootUid !== HOST_USER || !(parseInt(rootMode, 8) & 0o200))
+    problems.push(`volume root is "${after.root}", expected owned and writable by the host user`);
+  if (after.file !== expectedFile)
+    problems.push(`settings.json is "${String(after.file)}", expected "${expectedFile}" (uid mode)`);
   for (const k of Object.keys(next)) if (!(k in (after.settings ?? {}))) problems.push(`settings.json lost key ${k}`);
   problems.push(...check(after.settings ?? {}));
   if (problems.length) throw new Error(`login volume read-back: ${problems.join('; ')}`);
@@ -88,7 +96,11 @@ export async function writeClaudeLogin(host: HostServices, platform: Platform): 
  * reads it back. `manageMachine` starts the podman machine first (one already running
  * is accepted) and stops it after (Windows provisioning only; never while Runners run).
  */
-export async function writeClaudeToken(host: HostServices, token: string, options: { manageMachine: boolean }): Promise<string> {
+export async function writeClaudeToken(
+  host: HostServices,
+  token: string,
+  options: { manageMachine: boolean },
+): Promise<string> {
   const { exec } = host;
   if (options.manageMachine) {
     const start = await startPodmanMachine(exec);
@@ -98,10 +110,14 @@ export async function writeClaudeToken(host: HostServices, token: string, option
     const after = await updateClaudeSettings(
       exec,
       (settings) => {
-        const env = typeof settings.env === 'object' && settings.env !== null && !Array.isArray(settings.env) ? settings.env : {};
+        const env =
+          typeof settings.env === 'object' && settings.env !== null && !Array.isArray(settings.env) ? settings.env : {};
         return { ...settings, env: { ...env, CLAUDE_CODE_OAUTH_TOKEN: token } };
       },
-      (s) => ((s.env as Record<string, unknown> | undefined)?.CLAUDE_CODE_OAUTH_TOKEN === token ? [] : ['settings.json env has no CLAUDE_CODE_OAUTH_TOKEN with the given token']),
+      (s) =>
+        (s.env as Record<string, unknown> | undefined)?.CLAUDE_CODE_OAUTH_TOKEN === token
+          ? []
+          : ['settings.json env has no CLAUDE_CODE_OAUTH_TOKEN with the given token'],
     );
     return `${CLAUDE_VOLUME}/settings.json has the token in env (owner and mode ${after.file})`;
   } finally {

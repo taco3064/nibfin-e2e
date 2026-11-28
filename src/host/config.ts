@@ -22,7 +22,8 @@ export const PODMAN_MSI = {
 } as const;
 
 /** Small public image that writes the login volume's settings.json (busybox 1.37.0, multi-arch index). */
-export const HELPER_IMAGE = 'docker.io/library/busybox:1.37.0@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec';
+export const HELPER_IMAGE =
+  'docker.io/library/busybox:1.37.0@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec';
 
 /** The CLI's login volume for Claude (Proposal R6.12, R6.21). */
 export const CLAUDE_VOLUME = 'nibfin-home-claude';

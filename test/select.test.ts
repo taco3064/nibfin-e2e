@@ -35,12 +35,25 @@ test('repeated --rule and --section combine as a union in map order', () => {
     scenarios: ['a'],
     errors: [],
   });
-  deepEqual(ids(select(map, scenarios, { all: false, rules: [], sections: ['3', '5'] })).rules, ['R3.1', 'R3.2', 'R5.13', 'R5.14']);
+  deepEqual(ids(select(map, scenarios, { all: false, rules: [], sections: ['3', '5'] })).rules, [
+    'R3.1',
+    'R3.2',
+    'R5.13',
+    'R5.14',
+  ]);
 });
 
 test('unknown or malformed rule ids and empty sections are errors', () => {
   const { errors } = select(map, scenarios, { all: false, rules: ['R9.1', 'X1'], sections: ['7', '03'] });
-  for (const expected of [/--rule R9.1: not in the coverage map/, /--rule X1: not a rule id/, /--section 7: no rules/, /--section 03: not a section number/]) {
-    ok(errors.some((e) => expected.test(e)), `${expected} in ${errors.join('; ')}`);
+  for (const expected of [
+    /--rule R9.1: not in the coverage map/,
+    /--rule X1: not a rule id/,
+    /--section 7: no rules/,
+    /--section 03: not a section number/,
+  ]) {
+    ok(
+      errors.some((e) => expected.test(e)),
+      `${expected} in ${errors.join('; ')}`,
+    );
   }
 });

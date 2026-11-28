@@ -73,7 +73,8 @@ test('the real start runs a server-like child and stops it', async () => {
 
 test('stop also ends what the child started (gh runs an extension as a grandchild)', async () => {
   const start = createStart({ ...process.env }, () => {});
-  const script = 'const c=require("child_process").spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore"});console.log("grandchild "+c.pid);process.on("SIGTERM",()=>{});setInterval(()=>{},1000)';
+  const script =
+    'const c=require("child_process").spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore"});console.log("grandchild "+c.pid);process.on("SIGTERM",()=>{});setInterval(()=>{},1000)';
   const r = start([process.execPath, '-e', script], { graceMs: 500, closeMs: 2000 });
   const m = await r.waitFor(/grandchild (\d+)/, 5000);
   const pid = Number(m[1]);

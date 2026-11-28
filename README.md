@@ -62,8 +62,8 @@ runs in it and it never reads the Proposal. Each subcommand prints one JSON
 document to stdout (with a Markdown `summary` for `$GITHUB_STEP_SUMMARY`) and
 writes no file.
 
-- `select --delivered <owner/repo>#<n>` (nibfin-core, gh-nibfin or nibfin-e2e), `select --rule …
-  --section …` or `select --all`: prints the plan. A delivered Issue selects the
+- `select --delivered <owner/repo>#<n>` (nibfin-core, gh-nibfin or nibfin-e2e),
+  `select --rule … --section …` or `select --all`: prints the plan. A delivered Issue selects the
   ids of its approved Shape's `Proposal rules:` line; a Shape without the line,
   with a malformed line, or no single Shape falls back to the `R` ids, ranges and
   `§` sections under the Issue's `## Authority`, and the decisions say so. A
@@ -79,8 +79,8 @@ writes no file.
 - `report --plan <path> --results <dir>`: reads every `*.json` result under
   `<dir>` (validated against the registry and the map; anything else counts as no
   result) and the run's jobs, then files one request per root failure
-  (`Scenario failed: <id>`, `Provisioning failed: <step>`, `Teardown failed:
-  <step>`, merged across legs), per failed, cancelled or timed-out job without a
+  (`Scenario failed: <id>`, `Provisioning failed: <step>`,
+  `Teardown failed: <step>`, merged across legs), per failed, cancelled or timed-out job without a
   result (`Job failed: <job>`) and per plan gap (`Coverage gap: <rule>`).
 - `report --leg --results <dir>`: the final step of one `run` leg, so that
   leg's failures are filed when it ends instead of after the other leg. It needs
@@ -127,14 +127,14 @@ macOS (Proposal R8.24); macOS support is checked by hand outside e2e (R6.30).
 The steps run only when a selected scenario `requires` them (directly or
 through another step), in this order:
 
-| Step | What it does |
-|---|---|
-| `gh-nibfin` | Clones gh-nibfin at `--gh-nibfin-commit`, builds `dashboard/` then the binary, and installs it with `gh extension install .` |
-| `podman` | Linux: checks Podman. Windows: installs the pinned Podman MSI (sha256 checked) and runs `podman machine init`; `runner add` starts the machine |
-| `claude-login` | Writes the Claude token into `env` of `settings.json` in the `nibfin-home-claude` volume, keeping every other key |
-| `sandboxes` | Refuses to start while a runner registration is online on the execution sandbox, then resets both sandboxes and reads them back |
-| `nibfin` | In a clone of the execution sandbox: records the host state (`hostBefore`; on Windows it first adds a `[wsl2]` section with the default `nestedVirtualization=true` when `.wslconfig` has none), then `gh nibfin runner add claude --count 2`, `init` on execution then peer; reads the image digest from the init PR, rebase-merges both init PRs and records each sandbox's `main` head and tree as its baseline |
-| `observed-job` | Runs one agent fixture on the execution sandbox through Shape, Deliver and Review and records what its Jobs ran with (container projection, probe output, log facts, login volume facts, the pushed branch, how the PR ended) for the scenarios that read it |
+| Step           | What it does                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gh-nibfin`    | Clones gh-nibfin at `--gh-nibfin-commit`, builds `dashboard/` then the binary, and installs it with `gh extension install .`                                                                                                                                                                                                                                                                                                     |
+| `podman`       | Linux: checks Podman. Windows: installs the pinned Podman MSI (sha256 checked) and runs `podman machine init`; `runner add` starts the machine                                                                                                                                                                                                                                                                                   |
+| `claude-login` | Writes the Claude token into `env` of `settings.json` in the `nibfin-home-claude` volume, keeping every other key                                                                                                                                                                                                                                                                                                                |
+| `sandboxes`    | Refuses to start while a runner registration is online on the execution sandbox, then resets both sandboxes and reads them back                                                                                                                                                                                                                                                                                                  |
+| `nibfin`       | In a clone of the execution sandbox: records the host state (`hostBefore`; on Windows it first adds a `[wsl2]` section with the default `nestedVirtualization=true` when `.wslconfig` has none), then `gh nibfin runner add claude --count 2`, `init` on execution then peer; reads the image digest from the init PR, rebase-merges both init PRs and records each sandbox's `main` head and tree as its baseline               |
+| `observed-job` | Runs one agent fixture on the execution sandbox through Shape, Deliver and Review and records what its Jobs ran with (container projection, probe output, log facts, login volume facts, the pushed branch, how the PR ended) for the scenarios that read it                                                                                                                                                                     |
 | `collaborator` | Linux only. Checks that the second account is a write (not admin) collaborator on the execution sandbox; creates the OS user `e2epeer` (subordinate ids, linger and its user manager); installs the built gh-nibfin for it; clones the execution sandbox into its home; writes its `nibfin-home-claude` volume; generates an ed25519 key as `e2epeer` and adds the public half to the second account as `nibfin-e2e-peer-<time>` |
 
 Whatever the selection, the last collaborator scenario a run starts then retires
@@ -229,8 +229,8 @@ rules, change 不測 marks, and keep ids as they are (they are never reused).
    - `ghNibfin(args, {input, env})`: runs `gh nibfin` in the execution clone;
      `startGhNibfin(args, {path})` and `start(argv)` run long-lived children
      (for example the Dashboard) with `waitFor` and `stop`;
-   - `gh(args, {env})` (with the sandbox token) and `exec(argv, {input, cwd,
-     env})` (no token) for other host commands. `env` adds variables after the
+   - `gh(args, {env})` (with the sandbox token) and
+     `exec(argv, {input, cwd, env})` (no token) for other host commands. `env` adds variables after the
      credential filter and refuses `GH_TOKEN` and `E2E_*`;
    - `github`, `sandbox` names, `workDir()` and `workPath(...)` (under
      `.e2e-work/`; the gh-nibfin clone is `workPath('gh-nibfin')`),
@@ -261,6 +261,7 @@ rules, change 不測 marks, and keep ids as they are (they are never reused).
    `mainDigest`/`requireCurrentImage` (anonymous GHCR `:main`), the hold
    fixture (a plain `self-hosted` workflow that keeps one Runner busy) and
    `--help` and read-back parsing.
+
 2. Import it in `scenarios/index.ts` and add it to the list `createScenarios`
    returns (a scenario that needs the host's processes takes the `HostServices`),
    or list it directly in `src/registry.ts`, as the installation and management,

@@ -15,7 +15,11 @@ import type { Kit } from './kit.ts';
 const RULE = 'R3.54';
 
 /** The merge method for the harness PR: the repository's allowed methods, rebase first. */
-export function mergeMethod(repo: { allow_rebase_merge?: boolean; allow_squash_merge?: boolean; allow_merge_commit?: boolean }): 'rebase' | 'squash' | 'merge' | undefined {
+export function mergeMethod(repo: {
+  allow_rebase_merge?: boolean;
+  allow_squash_merge?: boolean;
+  allow_merge_commit?: boolean;
+}): 'rebase' | 'squash' | 'merge' | undefined {
   if (repo.allow_rebase_merge) return 'rebase';
   if (repo.allow_squash_merge) return 'squash';
   if (repo.allow_merge_commit) return 'merge';
@@ -58,8 +62,10 @@ const forcedAfter = (e: RebaseEvidence) => e.forced.filter((a) => after(a.timest
  * advanced, or (behind half) no review run saw the PR after main advanced.
  */
 export function notExercisedWhy(kind: 'behind' | 'conflict', e: RebaseEvidence): string | undefined {
-  if (e.merged && !after(e.merged.merged_at, e.at)) return `${e.issue}'s PR #${e.merged.number} merged at ${String(e.merged.merged_at)}, before main advanced to ${e.sha}`;
-  if (kind === 'behind' && !e.runs.some((r) => r.stage === 'review' && after(r.created_at, e.at))) return `no review run of ${e.issue} was created after main advanced to ${e.sha}`;
+  if (e.merged && !after(e.merged.merged_at, e.at))
+    return `${e.issue}'s PR #${e.merged.number} merged at ${String(e.merged.merged_at)}, before main advanced to ${e.sha}`;
+  if (kind === 'behind' && !e.runs.some((r) => r.stage === 'review' && after(r.created_at, e.at)))
+    return `no review run of ${e.issue} was created after main advanced to ${e.sha}`;
   return undefined;
 }
 
@@ -68,11 +74,20 @@ export function behindProblems(e: RebaseEvidence): string[] {
   const out: string[] = [];
   if (!e.delivered) out.push(`${e.issue} did not close with delivered`);
   const late = e.delivers.filter((j) => after(j.started_at, e.at));
-  if (late.length) out.push(`${e.issue} was behind only, yet deliver job${late.length > 1 ? 's' : ''} ${late.map((j) => `${j.id} (REASON ${j.reason ?? 'unknown'}, started ${String(j.started_at)})`).join(', ')} started after main advanced to ${e.sha}`);
+  if (late.length)
+    out.push(
+      `${e.issue} was behind only, yet deliver job${late.length > 1 ? 's' : ''} ${late.map((j) => `${j.id} (REASON ${j.reason ?? 'unknown'}, started ${String(j.started_at)})`).join(', ')} started after main advanced to ${e.sha}`,
+    );
   const forced = forcedAfter(e);
-  if (forced.length) out.push(`${e.branch} was force-pushed after main advanced: ${forced.map((a) => `${a.before.slice(0, 7)}→${a.after.slice(0, 7)} at ${a.timestamp}`).join(', ')}`);
+  if (forced.length)
+    out.push(
+      `${e.branch} was force-pushed after main advanced: ${forced.map((a) => `${a.before.slice(0, 7)}→${a.after.slice(0, 7)} at ${a.timestamp}`).join(', ')}`,
+    );
   if (!e.merged) out.push(`${e.issue} has no merged PR`);
-  else if (e.descends) out.push(`the merged head ${e.merged.head} of PR #${e.merged.number} descends from ${e.sha}: the PR was rebased though it did not conflict`);
+  else if (e.descends)
+    out.push(
+      `the merged head ${e.merged.head} of PR #${e.merged.number} descends from ${e.sha}: the PR was rebased though it did not conflict`,
+    );
   return out;
 }
 
@@ -85,19 +100,26 @@ const REVIEW_STAGE: readonly Stage[] = ['review', 'finish'];
  */
 export function conflictProblems(e: RebaseEvidence): string[] {
   const out: string[] = [];
-  const late = e.delivers.filter((j) => after(j.started_at, e.at)).sort((a, b) => time(a.started_at) - time(b.started_at));
+  const late = e.delivers
+    .filter((j) => after(j.started_at, e.at))
+    .sort((a, b) => time(a.started_at) - time(b.started_at));
   const first = late[0];
   if (!first) out.push(`no deliver job for ${e.issue} started after the conflicting commit ${e.sha}`);
   else {
     const inWindow = e.runs.filter((r) => after(r.created_at, e.at) && time(r.created_at) <= time(first.started_at));
     if (!inWindow.some((r) => REVIEW_STAGE.includes(r.stage))) {
       const seen = inWindow.length ? inWindow.map((r) => `${r.id} ${r.stage} ${r.created_at}`).join(', ') : 'none';
-      out.push(`no review or finish run of ${e.issue} was created between the conflicting commit and deliver job ${first.id} (REASON ${first.reason ?? 'unknown'}, started ${String(first.started_at)}); stage runs in that window: ${seen}`);
+      out.push(
+        `no review or finish run of ${e.issue} was created between the conflicting commit and deliver job ${first.id} (REASON ${first.reason ?? 'unknown'}, started ${String(first.started_at)}); stage runs in that window: ${seen}`,
+      );
     }
   }
   if (!forcedAfter(e).length) out.push(`${e.branch} was not force-pushed after the conflicting commit`);
   if (!e.merged) out.push(`${e.issue} has no merged PR`);
-  else if (!e.descends) out.push(`the merged head ${e.merged.head} of PR #${e.merged.number} does not descend from the conflicting commit ${e.sha}`);
+  else if (!e.descends)
+    out.push(
+      `the merged head ${e.merged.head} of PR #${e.merged.number} does not descend from the conflicting commit ${e.sha}`,
+    );
   if (!e.delivered) out.push(`${e.issue} did not close with delivered`);
   return out;
 }
@@ -116,47 +138,89 @@ type Held = Pull & { mergeable?: boolean | null; mergeable_state?: string };
  * Advances `main` through a harness PR from `branch` and merges it. Returns `'merged'`
  * (and closes the harness PR) if the fixture PR merged first.
  */
-async function advanceMain(k: Kit, branch: string, files: Record<string, string>, msg: string, fixturePr: number): Promise<{ at: number; sha: string } | 'merged'> {
+async function advanceMain(
+  k: Kit,
+  branch: string,
+  files: Record<string, string>,
+  msg: string,
+  fixturePr: number,
+): Promise<{ at: number; sha: string } | 'merged'> {
   const { exec } = k;
   const r = `/repos/${exec}`;
   const { data: main } = await k.gh.rest<{ object: { sha: string } }>('GET', `${r}/git/ref/heads/main`);
   await k.gh.rest('POST', `${r}/git/refs`, { ref: `refs/heads/${branch}`, sha: main.object.sha });
   const head = await k.commitFiles(exec, branch, files, msg);
-  const { data: pr } = await k.gh.rest<Pull>('POST', `${r}/pulls`, { title: msg, head: branch, base: 'main', body: '_An automated nibfin-e2e harness change._' });
-  const test = await k.obs.until(`test on the harness PR #${pr.number}`, async () => {
-    const t = (await k.obs.checkRuns(exec, head)).find((x) => x.name === 'test');
-    return t?.status === 'completed' ? t : undefined;
-  }, DEADLINE.event);
-  if (test.conclusion !== 'success') throw new Error(`test on the harness PR #${pr.number} (${head}) concluded ${String(test.conclusion)}`);
+  const { data: pr } = await k.gh.rest<Pull>('POST', `${r}/pulls`, {
+    title: msg,
+    head: branch,
+    base: 'main',
+    body: '_An automated nibfin-e2e harness change._',
+  });
+  const test = await k.obs.until(
+    `test on the harness PR #${pr.number}`,
+    async () => {
+      const t = (await k.obs.checkRuns(exec, head)).find((x) => x.name === 'test');
+      return t?.status === 'completed' ? t : undefined;
+    },
+    DEADLINE.event,
+  );
+  if (test.conclusion !== 'success')
+    throw new Error(`test on the harness PR #${pr.number} (${head}) concluded ${String(test.conclusion)}`);
 
   const { data: fixture } = await k.gh.rest<Pull>('GET', `${r}/pulls/${fixturePr}`);
   if (fixture.merged_at) {
     await k.gh.rest('PATCH', `${r}/pulls/${pr.number}`, { state: 'closed' });
     return 'merged';
   }
-  const { data: repo } = await k.gh.rest<{ allow_rebase_merge?: boolean; allow_squash_merge?: boolean; allow_merge_commit?: boolean }>('GET', r);
+  const { data: repo } = await k.gh.rest<{
+    allow_rebase_merge?: boolean;
+    allow_squash_merge?: boolean;
+    allow_merge_commit?: boolean;
+  }>('GET', r);
   const method = mergeMethod(repo);
   if (!method) throw new Error(`${exec} allows no merge method`);
-  let res = await k.gh.rest<{ message?: string }>('PUT', `${r}/pulls/${pr.number}/merge`, { sha: head, merge_method: method }, [405]);
+  let res = await k.gh.rest<{ message?: string }>(
+    'PUT',
+    `${r}/pulls/${pr.number}/merge`,
+    { sha: head, merge_method: method },
+    [405],
+  );
   // A 405 can be GitHub still computing the merge; read the PR again on the next snapshot, three times at most.
   for (let i = 0; res.status === 405 && i < 3; i++) {
     await k.obs.fresh();
     const { data: again } = await k.gh.rest<Pull>('GET', `${r}/pulls/${pr.number}`);
     if (again.merged_at) break;
-    res = await k.gh.rest<{ message?: string }>('PUT', `${r}/pulls/${pr.number}/merge`, { sha: head, merge_method: method }, [405]);
+    res = await k.gh.rest<{ message?: string }>(
+      'PUT',
+      `${r}/pulls/${pr.number}/merge`,
+      { sha: head, merge_method: method },
+      [405],
+    );
   }
   const { data: done } = await k.gh.rest<Pull>('GET', `${r}/pulls/${pr.number}`);
-  if (!done.merged_at || !done.merge_commit_sha) throw new Error(`the harness PR #${pr.number} did not merge (${method}): ${res.status === 405 ? String(res.data.message) : 'merged_at is empty'}`);
+  if (!done.merged_at || !done.merge_commit_sha)
+    throw new Error(
+      `the harness PR #${pr.number} did not merge (${method}): ${res.status === 405 ? String(res.data.message) : 'merged_at is empty'}`,
+    );
   const sha = done.merge_commit_sha;
   const [path, content] = Object.entries(files)[0] as [string, string];
   const onMain = await k.obs.descends(exec, sha, 'main');
   const got = await k.fileOn(exec, sha, path);
-  if (!onMain || got !== content) throw new Error(`the harness PR #${pr.number} merged as ${sha}, but ${onMain ? '' : 'main does not contain it'}${!onMain && got !== content ? ' and ' : ''}${got !== content ? `${path} there is not the harness content` : ''}`);
+  if (!onMain || got !== content)
+    throw new Error(
+      `the harness PR #${pr.number} merged as ${sha}, but ${onMain ? '' : 'main does not contain it'}${!onMain && got !== content ? ' and ' : ''}${got !== content ? `${path} there is not the harness content` : ''}`,
+    );
   await k.gh.rest('DELETE', `${r}/git/refs/heads/${branch}`, undefined, [404, 422]);
   return { at: time(done.merged_at), sha };
 }
 
-async function runHalf(k: Kit, c: Checks, spec: HalfSpec, filed: number[], harness: string[]): Promise<string | undefined> {
+async function runHalf(
+  k: Kit,
+  c: Checks,
+  spec: HalfSpec,
+  filed: number[],
+  harness: string[],
+): Promise<string | undefined> {
   const { exec } = k;
   const label = `${spec.kind} half`;
   const owner = await k.owner();
@@ -164,7 +228,13 @@ async function runHalf(k: Kit, c: Checks, spec: HalfSpec, filed: number[], harne
   const jsdoc = `/** ${spec.title} (fixture version). */`;
   await k.hookRules('ci', [{ when: `test/${spec.slug}.test.js`, event: 'pull_request', holdTag: `${spec.slug}-hold` }]);
   const extra = spec.kind === 'conflict' ? `The first line of \`${src}\` must be exactly \`${jsdoc}\`.` : '';
-  const issue = await k.file(exec, { scenario: 'review-rebase', title: spec.title, body: changeRequest(spec.slug, spec.fn, spec.behaviour, extra), labels: ['scope'], assignees: [owner.login] });
+  const issue = await k.file(exec, {
+    scenario: 'review-rebase',
+    title: spec.title,
+    body: changeRequest(spec.slug, spec.fn, spec.behaviour, extra),
+    labels: ['scope'],
+    assignees: [owner.login],
+  });
   filed.push(issue.number);
   try {
     return await heldHalf(k, c, spec, issue.number, harness);
@@ -191,14 +261,19 @@ async function heldHalf(k: Kit, c: Checks, spec: HalfSpec, n: number, harness: s
   const src = `src/${spec.slug}.js`;
   const branch = `nibfin/issue-${n}`;
   const show = k.show(exec, n);
-  const opened = await k.obs.until(`${label}: #${n}'s PR open with test held`, async (s) => {
-    const prs = (s.pulls.get(exec) ?? []).filter((p) => p.head.ref === branch);
-    if (prs.some((p) => p.merged_at)) return 'merged' as const;
-    const pr = prs.find((p) => p.state === 'open');
-    if (!pr) return undefined;
-    const t = (await k.obs.checkRuns(exec, pr.head.sha)).find((x) => x.name === 'test');
-    return t && t.status !== 'completed' ? pr : undefined;
-  }, DEADLINE.delivery, show);
+  const opened = await k.obs.until(
+    `${label}: #${n}'s PR open with test held`,
+    async (s) => {
+      const prs = (s.pulls.get(exec) ?? []).filter((p) => p.head.ref === branch);
+      if (prs.some((p) => p.merged_at)) return 'merged' as const;
+      const pr = prs.find((p) => p.state === 'open');
+      if (!pr) return undefined;
+      const t = (await k.obs.checkRuns(exec, pr.head.sha)).find((x) => x.name === 'test');
+      return t && t.status !== 'completed' ? pr : undefined;
+    },
+    DEADLINE.delivery,
+    show,
+  );
   if (opened === 'merged') {
     c.notExercised(RULE, `${label}: #${n}'s PR merged before main advanced`);
     return undefined;
@@ -212,7 +287,10 @@ async function heldHalf(k: Kit, c: Checks, spec: HalfSpec, n: number, harness: s
   } else {
     const theirs = await k.fileOn(exec, opened.head.sha, src);
     if (theirs === undefined) {
-      c.notExercised(RULE, `${label}: #${n}'s PR #${opened.number} does not add ${src}, so main's add of it cannot conflict`);
+      c.notExercised(
+        RULE,
+        `${label}: #${n}'s PR #${opened.number} does not add ${src}, so main's add of it cannot conflict`,
+      );
       return undefined;
     }
     files = { [src]: `/** ${spec.title} (main's version). */\nexport function ${spec.fn}(x) {\n  return -x;\n}\n` };
@@ -223,7 +301,9 @@ async function heldHalf(k: Kit, c: Checks, spec: HalfSpec, n: number, harness: s
     return undefined;
   }
   const { data: state } = await k.gh.rest<Held>('GET', `/repos/${exec}/pulls/${opened.number}`);
-  c.note(`${label}: PR #${opened.number} read mergeable ${String(state.mergeable)}/${String(state.mergeable_state)} after main advanced`);
+  c.note(
+    `${label}: PR #${opened.number} read mergeable ${String(state.mergeable)}/${String(state.mergeable_state)} after main advanced`,
+  );
   await release(k, spec.slug);
 
   await k.obs.until(`${label}: #${n} to close with delivered`, (s) => k.delivered(s, exec, n), DEADLINE.delivery, show);
@@ -259,7 +339,10 @@ async function heldHalf(k: Kit, c: Checks, spec: HalfSpec, n: number, harness: s
     return undefined;
   }
   const problems = spec.kind === 'behind' ? behindProblems(evidence) : conflictProblems(evidence);
-  c.none(RULE, problems.map((p) => `${label}: ${p}`));
+  c.none(
+    RULE,
+    problems.map((p) => `${label}: ${p}`),
+  );
   return spec.kind === 'behind'
     ? `#${n} was behind only and merged PR #${merged?.number} without a Deliver`
     : `#${n} conflicted, was rebased by a Deliver after review and merged PR #${merged?.number}`;
@@ -277,8 +360,20 @@ export const reviewRebase: Scenario = lifecycle({
     try {
       await k.baseline();
       const halves: HalfSpec[] = [
-        { kind: 'behind', slug: k.slug('rb'), title: 'Add quadruple', fn: 'quadruple', behaviour: 'returns its argument times four' },
-        { kind: 'conflict', slug: k.slug('rc'), title: 'Add negate', fn: 'negate', behaviour: 'returns its argument negated' },
+        {
+          kind: 'behind',
+          slug: k.slug('rb'),
+          title: 'Add quadruple',
+          fn: 'quadruple',
+          behaviour: 'returns its argument times four',
+        },
+        {
+          kind: 'conflict',
+          slug: k.slug('rc'),
+          title: 'Add negate',
+          fn: 'negate',
+          behaviour: 'returns its argument negated',
+        },
       ];
       const results = await Promise.allSettled(halves.map((h) => runHalf(k, c, h, filed, harness)));
       const done: string[] = [];

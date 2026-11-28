@@ -11,7 +11,13 @@ import { createGitHub } from '../src/host/github.ts';
 import { readTemplate, treeSha } from '../src/host/sandbox.ts';
 import type { HostServices } from '../src/host/services.ts';
 import { MAX_REASON } from '../src/gate/file.ts';
-import { OUTPUT_BUDGET, claudeRunnersLeft, createProvisioning, outputOf, readPeriodicBaseline } from '../src/provisioning.ts';
+import {
+  OUTPUT_BUDGET,
+  claudeRunnersLeft,
+  createProvisioning,
+  outputOf,
+  readPeriodicBaseline,
+} from '../src/provisioning.ts';
 import type { Platform, RunContext, StepOutcome } from '../src/types.ts';
 import { FakeGitHub, cleanRepo, fakeExec, fakeStart } from './host/fakes.ts';
 
@@ -26,7 +32,10 @@ function harness(opts: { exec?: Exec; env?: Record<string, string>; fetch?: type
   const fake = new FakeGitHub();
   fake.repos.set(EXEC, cleanRepo('public', tree));
   fake.repos.set(PEER, cleanRepo('private', tree));
-  const env: Record<string, string | undefined> = opts.env ?? { E2E_SANDBOX_TOKEN: 'sbx-token', E2E_CLAUDE_TOKEN: 'claude-token' };
+  const env: Record<string, string | undefined> = opts.env ?? {
+    E2E_SANDBOX_TOKEN: 'sbx-token',
+    E2E_CLAUDE_TOKEN: 'claude-token',
+  };
   const work = mkdtempSync(join(tmpdir(), 'e2e-work-'));
   const recorded = fakeExec();
   const sandboxToken = () => requireEnv(env, 'E2E_SANDBOX_TOKEN');
@@ -58,20 +67,30 @@ function harness(opts: { exec?: Exec; env?: Record<string, string>; fetch?: type
     return out;
   };
   const teardown = (id: string) => steps.get(id)?.teardown?.(ctx);
-  return { fake, calls: recorded.calls, runStep, teardown, steps, repo: (r: string) => fake.repos.get(r) as ReturnType<typeof cleanRepo> };
+  return {
+    fake,
+    calls: recorded.calls,
+    runStep,
+    teardown,
+    steps,
+    repo: (r: string) => fake.repos.get(r) as ReturnType<typeof cleanRepo>,
+  };
 }
 
 test('the steps are registered in order with their prerequisites', () => {
   const { steps } = harness();
-  deepEqual([...steps.values()].map((s) => [s.id, s.requires ?? []]), [
-    ['gh-nibfin', []],
-    ['podman', []],
-    ['claude-login', ['podman']],
-    ['sandboxes', []],
-    ['nibfin', ['gh-nibfin', 'podman', 'claude-login', 'sandboxes']],
-    ['observed-job', ['nibfin']],
-    ['collaborator', ['gh-nibfin', 'podman', 'nibfin']],
-  ]);
+  deepEqual(
+    [...steps.values()].map((s) => [s.id, s.requires ?? []]),
+    [
+      ['gh-nibfin', []],
+      ['podman', []],
+      ['claude-login', ['podman']],
+      ['sandboxes', []],
+      ['nibfin', ['gh-nibfin', 'podman', 'claude-login', 'sandboxes']],
+      ['observed-job', ['nibfin']],
+      ['collaborator', ['gh-nibfin', 'podman', 'nibfin']],
+    ],
+  );
 });
 
 test('sandboxes: an online runner on the execution sandbox fails before any write, and teardown leaves it alone', async () => {
@@ -80,8 +99,14 @@ test('sandboxes: an online runner on the execution sandbox fails before any writ
   h.repo(PEER).labels.push('scope');
   const out = await h.runStep('sandboxes');
   equal(out.status, 'failed');
-  match(out.reason, /another host appears to be using the sandboxes: runner registrations other-host are online.*one after another/);
-  deepEqual(await h.teardown('sandboxes'), { status: 'passed', reason: 'this host did not reset the sandboxes; nothing to clean' });
+  match(
+    out.reason,
+    /another host appears to be using the sandboxes: runner registrations other-host are online.*one after another/,
+  );
+  deepEqual(await h.teardown('sandboxes'), {
+    status: 'passed',
+    reason: 'this host did not reset the sandboxes; nothing to clean',
+  });
   deepEqual(h.fake.writes, []);
 });
 
@@ -106,7 +131,11 @@ function initPr(repo: ReturnType<typeof cleanRepo>, number: number, workflows: R
     number,
     state: 'open',
     head: { sha: `h${number}` },
-    files: Object.entries(workflows).map(([name, content]) => ({ filename: `.github/workflows/${name}`, status: 'added', content })),
+    files: Object.entries(workflows).map(([name, content]) => ({
+      filename: `.github/workflows/${name}`,
+      status: 'added',
+      content,
+    })),
   });
 }
 
@@ -114,24 +143,36 @@ const image = (d: string) => `    run: podman run ghcr.io/taco3064/nibfin@${d} c
 
 test('nibfin: runner add, init on execution then peer, digest read from the init PR, both PRs rebase-merged', async () => {
   const h = harness();
-  initPr(h.repo(EXEC), 5, { 'nibfin-issue.yml': image(DIGEST), 'nibfin-shared-runner.yml': image(DIGEST) + image(DIGEST) });
+  initPr(h.repo(EXEC), 5, {
+    'nibfin-issue.yml': image(DIGEST),
+    'nibfin-shared-runner.yml': image(DIGEST) + image(DIGEST),
+  });
   initPr(h.repo(PEER), 3, { 'nibfin-issue.yml': 'on: issues\n' });
   const out = await h.runStep('nibfin');
   equal(out.status, 'passed', out.reason);
   equal(out.facts?.imageDigest, DIGEST);
   deepEqual([out.facts?.executionPr, out.facts?.peerPr], [5, 3]);
   const gh = h.calls.filter((c) => c.argv[0] === 'gh');
-  deepEqual(gh.map((c) => c.argv.slice(2)), [
-    ['runner', 'add', 'claude', '--count', '2', '--yes'],
-    ['init', '--yes'],
-    ['init', '-R', PEER, '--yes'],
-  ]);
-  equal(gh.every((c) => c.options.ghToken === 'sbx-token' && c.options.cwd?.endsWith(join('.e2e-work', 'sandbox'))), true);
+  deepEqual(
+    gh.map((c) => c.argv.slice(2)),
+    [
+      ['runner', 'add', 'claude', '--count', '2', '--yes'],
+      ['init', '--yes'],
+      ['init', '-R', PEER, '--yes'],
+    ],
+  );
+  equal(
+    gh.every((c) => c.options.ghToken === 'sbx-token' && c.options.cwd?.endsWith(join('.e2e-work', 'sandbox'))),
+    true,
+  );
   const clone = h.calls[0];
   deepEqual(clone?.argv.slice(0, 4), ['git', 'clone', '--quiet', `https://github.com/${EXEC}.git`]);
   equal(clone?.options.ghToken, undefined);
   deepEqual([h.repo(EXEC).pulls[0]?.state, h.repo(PEER).pulls[0]?.state], ['closed', 'closed']);
-  deepEqual(h.repo(EXEC).mainFiles, new Set(['.github/workflows/nibfin-issue.yml', '.github/workflows/nibfin-shared-runner.yml']));
+  deepEqual(
+    h.repo(EXEC).mainFiles,
+    new Set(['.github/workflows/nibfin-issue.yml', '.github/workflows/nibfin-shared-runner.yml']),
+  );
   // The baselines are main's head and tree read after the merges.
   deepEqual(out.facts?.executionBaseline, { commit: 'merge5', tree: 'tree-merge5' });
   deepEqual(out.facts?.peerBaseline, { commit: 'merge3', tree: 'tree-merge3' });
@@ -163,26 +204,37 @@ test('nibfin: a missing or conflicting digest fails', async () => {
 });
 
 test('nibfin: a failed runner add keeps its output in the facts, and teardown still removes Runners', async () => {
-  const { exec, calls } = fakeExec((argv) => (argv[2] === 'runner' && argv[3] === 'add' ? { code: 1, stderr: 'no podman machine exists' } : undefined));
+  const { exec, calls } = fakeExec((argv) =>
+    argv[2] === 'runner' && argv[3] === 'add' ? { code: 1, stderr: 'no podman machine exists' } : undefined,
+  );
   const h = harness({ exec });
   const out = await h.runStep('nibfin');
   equal(out.status, 'failed');
   match(out.reason, /gh nibfin runner add claude --count 2 --yes exited 1: no podman machine exists/);
-  deepEqual((out.facts?.commands as { code: number }[]).map((c) => c.code), [1]);
+  deepEqual(
+    (out.facts?.commands as { code: number }[]).map((c) => c.code),
+    [1],
+  );
   equal((await h.teardown('nibfin'))?.status, 'passed');
   deepEqual(calls.at(-1)?.argv.slice(2, 4), ['runner', 'remove']);
 });
 
-
 test('nibfin: a failed runner add with progress on stderr and the error on stdout keeps both in the reason (R1.14)', async () => {
   const { exec } = fakeExec((argv) =>
     argv[2] === 'runner' && argv[3] === 'add'
-      ? { code: 1, stderr: 'pulling image\nstarting podman machine', stdout: 'runner_install_failed: configure claude-1: config.sh: registration token expired' }
+      ? {
+          code: 1,
+          stderr: 'pulling image\nstarting podman machine',
+          stdout: 'runner_install_failed: configure claude-1: config.sh: registration token expired',
+        }
       : undefined,
   );
   const out = await harness({ exec }).runStep('nibfin');
   equal(out.status, 'failed');
-  match(out.reason, /runner add claude --count 2 --yes exited 1: stderr: pulling image\nstarting podman machine\nstdout: runner_install_failed: configure claude-1: config\.sh: registration token expired$/);
+  match(
+    out.reason,
+    /runner add claude --count 2 --yes exited 1: stderr: pulling image\nstarting podman machine\nstdout: runner_install_failed: configure claude-1: config\.sh: registration token expired$/,
+  );
 });
 
 test('outputOf: one stream alone is unlabelled; neither gives an empty string', () => {
@@ -206,7 +258,10 @@ test('outputOf: a long stream keeps its end within the budget and never pushes o
     match(text, /…x+LAST error line/);
     equal(text.includes('FIRST'), false);
   }
-  match(outputOf({ code: 1, stderr: 'short stderr', stdout: long }), /^stderr: short stderr\nstdout: …x+LAST error line$/);
+  match(
+    outputOf({ code: 1, stderr: 'short stderr', stdout: long }),
+    /^stderr: short stderr\nstdout: …x+LAST error line$/,
+  );
 
   const alone = outputOf({ code: 1, stderr: long, stdout: '' });
   equal(alone.length, OUTPUT_BUDGET);
@@ -235,14 +290,20 @@ test('claude-login: the token reaches the helper only on stdin; a new file is 06
   const out = await h.runStep('claude-login');
   equal(out.status, 'passed', out.reason);
   deepEqual(JSON.parse(written), { env: { CLAUDE_CODE_OAUTH_TOKEN: 'claude-token' } });
-  equal(calls.some((c) => c.argv.join(' ').includes('claude-token')), false);
+  equal(
+    calls.some((c) => c.argv.join(' ').includes('claude-token')),
+    false,
+  );
   equal(out.reason.includes('claude-token'), false);
   deepEqual(calls[0]?.argv, ['podman', 'volume', 'create', '--ignore', 'nibfin-home-claude']);
   const write = calls.find((c) => c.options.input);
   deepEqual(write?.argv.slice(0, 6), ['podman', 'run', '--rm', '-i', '-v', 'nibfin-home-claude:/v']);
   match(write?.argv[6] ?? '', /^docker\.io\/library\/busybox:[\d.]+@sha256:[0-9a-f]{64}$/);
   equal(write?.argv.at(-1), 'umask 077 && cat > /v/settings.json');
-  equal(calls.some((c) => c.argv.some((a) => /chown|chmod|--userns/.test(a))), false);
+  equal(
+    calls.some((c) => c.argv.some((a) => /chown|chmod|--userns/.test(a))),
+    false,
+  );
 });
 
 test('claude-login: other keys, the owner and the mode of an existing file are kept', async () => {
@@ -250,12 +311,16 @@ test('claude-login: other keys, the owner and the mode of an existing file are k
   const { exec } = fakeExec((argv, o) => {
     const script = argv.at(-1) ?? '';
     if (script.startsWith('umask')) return ((written = o.input ?? ''), {});
-    if (script.startsWith('stat')) return { stdout: `0 755\n0 644\n${written || '{"enableAllProjectMcpServers":true,"env":{"A":"1"}}'}` };
+    if (script.startsWith('stat'))
+      return { stdout: `0 755\n0 644\n${written || '{"enableAllProjectMcpServers":true,"env":{"A":"1"}}'}` };
     return undefined;
   });
   const out = await harness({ exec }).runStep('claude-login');
   equal(out.status, 'passed', out.reason);
-  deepEqual(JSON.parse(written), { enableAllProjectMcpServers: true, env: { A: '1', CLAUDE_CODE_OAUTH_TOKEN: 'claude-token' } });
+  deepEqual(JSON.parse(written), {
+    enableAllProjectMcpServers: true,
+    env: { A: '1', CLAUDE_CODE_OAUTH_TOKEN: 'claude-token' },
+  });
 });
 
 test('claude-login: a read-back with the wrong mode fails without printing the token; Windows starts and stops the machine', async () => {
@@ -270,7 +335,13 @@ test('claude-login: a read-back with the wrong mode fails without printing the t
   const err = await h.runStep('claude-login').catch((e: Error) => e.message);
   match(String(err), /settings.json is "0 644", expected "0 600"/);
   equal(String(err).includes('claude-token'), false);
-  deepEqual([calls[0]?.argv, calls.at(-1)?.argv], [['podman', 'machine', 'start'], ['podman', 'machine', 'stop']]);
+  deepEqual(
+    [calls[0]?.argv, calls.at(-1)?.argv],
+    [
+      ['podman', 'machine', 'start'],
+      ['podman', 'machine', 'stop'],
+    ],
+  );
 });
 
 const ALREADY_RUNNING = { code: 125, stderr: 'Error: unable to start "podman-machine-default": already running' };
@@ -287,40 +358,62 @@ test('claude-login on Windows: an already running machine is used, the token is 
   const out = await harness({ exec, platform: 'windows' }).runStep('claude-login');
   equal(out.status, 'passed', out.reason);
   deepEqual(JSON.parse(written), { env: { CLAUDE_CODE_OAUTH_TOKEN: 'claude-token' } });
-  deepEqual([calls[0]?.argv, calls.at(-1)?.argv], [['podman', 'machine', 'start'], ['podman', 'machine', 'stop']]);
+  deepEqual(
+    [calls[0]?.argv, calls.at(-1)?.argv],
+    [
+      ['podman', 'machine', 'start'],
+      ['podman', 'machine', 'stop'],
+    ],
+  );
   equal(calls.filter((c) => c.argv[2] === 'start').length, 1);
 });
 
-test('claude-login on Windows: any other start failure fails with Podman\'s exit code and output and writes nothing', async () => {
-  const { exec, calls } = fakeExec((argv) => (argv.join(' ') === 'podman machine start' ? { code: 125, stderr: 'Error: machine is broken', stdout: 'claude-token' } : undefined));
+test("claude-login on Windows: any other start failure fails with Podman's exit code and output and writes nothing", async () => {
+  const { exec, calls } = fakeExec((argv) =>
+    argv.join(' ') === 'podman machine start'
+      ? { code: 125, stderr: 'Error: machine is broken', stdout: 'claude-token' }
+      : undefined,
+  );
   const err = await harness({ exec, platform: 'windows' })
     .runStep('claude-login')
     .then((o) => o.reason)
     .catch((e: Error) => e.message);
   equal(err, 'podman machine start exited 125: Error: machine is broken');
   equal(String(err).includes('claude-token'), false);
-  deepEqual(calls.map((c) => c.argv.join(' ')), ['podman machine start']);
-  equal(calls.some((c) => c.options.input), false);
+  deepEqual(
+    calls.map((c) => c.argv.join(' ')),
+    ['podman machine start'],
+  );
+  equal(
+    calls.some((c) => c.options.input),
+    false,
+  );
 });
 
 test('gh-nibfin: builds the Dashboard first, then the binary, installs it and checks it runs', async () => {
   const { exec, calls } = fakeExec((argv) => (argv[1] === 'rev-parse' ? { stdout: COMMIT + '\n' } : undefined));
   const out = await harness({ exec }).runStep('gh-nibfin');
   equal(out.status, 'passed', out.reason);
-  deepEqual(calls.map((c) => c.argv.slice(0, 3).join(' ')), [
-    'git clone --quiet',
-    'git checkout --quiet',
-    'git rev-parse HEAD',
-    'npm ci',
-    'npm run build',
-    'go build -trimpath',
-    'gh extension remove',
-    'gh extension install',
-    'gh nibfin --help',
-  ]);
+  deepEqual(
+    calls.map((c) => c.argv.slice(0, 3).join(' ')),
+    [
+      'git clone --quiet',
+      'git checkout --quiet',
+      'git rev-parse HEAD',
+      'npm ci',
+      'npm run build',
+      'go build -trimpath',
+      'gh extension remove',
+      'gh extension install',
+      'gh nibfin --help',
+    ],
+  );
   equal(calls[3]?.options.cwd?.endsWith(join('gh-nibfin', 'dashboard')), true);
   deepEqual(calls[5]?.argv.slice(3), ['-o', 'gh-nibfin', '.']);
-  deepEqual(calls.map((c) => c.options.ghToken === 'sbx-token'), [false, false, false, false, false, false, true, true, true]);
+  deepEqual(
+    calls.map((c) => c.options.ghToken === 'sbx-token'),
+    [false, false, false, false, false, false, true, true, true],
+  );
 });
 
 test('gh-nibfin: a checkout at another commit fails', async () => {
@@ -331,8 +424,14 @@ test('gh-nibfin: a checkout at another commit fails', async () => {
 test('podman: Linux checks podman runs; macOS is out of scope; a Windows MSI with the wrong checksum is not installed', async () => {
   const linux = harness();
   equal((await linux.runStep('podman')).status, 'passed');
-  deepEqual(linux.calls.map((c) => c.argv), [['podman', '--version']]);
-  await rejects(harness({ platform: 'macos' }).runStep('podman'), /macOS host provisioning is not supported \(Phase 5\)/);
+  deepEqual(
+    linux.calls.map((c) => c.argv),
+    [['podman', '--version']],
+  );
+  await rejects(
+    harness({ platform: 'macos' }).runStep('podman'),
+    /macOS host provisioning is not supported \(Phase 5\)/,
+  );
   const win = harness({ platform: 'windows', fetch: async () => new Response('not the msi') });
   await rejects(win.runStep('podman'), /Podman MSI checksum mismatch/);
   deepEqual(win.calls, []);
@@ -340,15 +439,27 @@ test('podman: Linux checks podman runs; macOS is out of scope; a Windows MSI wit
 
 test('nibfin: teardown passes without runner remove when status lists no claude Runner', async () => {
   const { exec, calls } = fakeExec((argv) =>
-    argv[2] === 'status' ? { stdout: JSON.stringify({ host: { runners: { runners: [{ provider: 'codex' }] } } }) } : undefined,
+    argv[2] === 'status'
+      ? { stdout: JSON.stringify({ host: { runners: { runners: [{ provider: 'codex' }] } } }) }
+      : undefined,
   );
   const h = harness({ exec });
   initPr(h.repo(EXEC), 5, { 'nibfin-issue.yml': image(DIGEST) });
   initPr(h.repo(PEER), 3, { 'nibfin-issue.yml': 'on: issues\n' });
   equal((await h.runStep('nibfin')).status, 'passed');
   deepEqual(await h.teardown('nibfin'), { status: 'passed', reason: 'no local Runners left' });
-  equal(calls.some((c) => c.argv[3] === 'remove'), false);
-  deepEqual([claudeRunnersLeft('{"host":{"runners":{"runners":null}}}'), claudeRunnersLeft('not json'), claudeRunnersLeft('{"host":{"runners":{"runners":[{"provider":"claude"}]}}}')], [false, undefined, true]);
+  equal(
+    calls.some((c) => c.argv[3] === 'remove'),
+    false,
+  );
+  deepEqual(
+    [
+      claudeRunnersLeft('{"host":{"runners":{"runners":null}}}'),
+      claudeRunnersLeft('not json'),
+      claudeRunnersLeft('{"host":{"runners":{"runners":[{"provider":"claude"}]}}}'),
+    ],
+    [false, undefined, true],
+  );
 });
 
 test('nibfin: the host state before runner add is a fact', async () => {
@@ -361,8 +472,24 @@ test('nibfin: the host state before runner add is a fact', async () => {
   initPr(h.repo(EXEC), 5, { 'nibfin-issue.yml': image(DIGEST) });
   initPr(h.repo(PEER), 3, { 'nibfin-issue.yml': 'on: issues\n' });
   const out = await h.runStep('nibfin');
-  const before = out.facts?.hostBefore as { platform: string; units: unknown; linger: string; readAt: unknown; pathDirs: unknown };
-  deepEqual([before.platform, before.units, before.linger], ['linux', [{ name: 'a.service', state: 'enabled' }, { name: 'b.timer', state: 'static' }], 'no']);
+  const before = out.facts?.hostBefore as {
+    platform: string;
+    units: unknown;
+    linger: string;
+    readAt: unknown;
+    pathDirs: unknown;
+  };
+  deepEqual(
+    [before.platform, before.units, before.linger],
+    [
+      'linux',
+      [
+        { name: 'a.service', state: 'enabled' },
+        { name: 'b.timer', state: 'static' },
+      ],
+      'no',
+    ],
+  );
   equal(typeof before.readAt, 'number');
   equal(Array.isArray(before.pathDirs), true);
 });
@@ -382,34 +509,65 @@ test('nibfin: the periodic baseline is part of the host state before runner add;
   initPr(h.repo(PEER), 3, { 'nibfin-issue.yml': 'on: issues\n' });
   const out = await h.runStep('nibfin');
   equal(out.status, 'passed', out.reason);
-  deepEqual((out.facts?.hostBefore as { periodic: unknown }).periodic, { units: [{ name: 'a.timer', state: 'static' }], timers: ['a.timer'], cron: { available: true, entries: [] }, manager: true });
+  deepEqual((out.facts?.hostBefore as { periodic: unknown }).periodic, {
+    units: [{ name: 'a.timer', state: 'static' }],
+    timers: ['a.timer'],
+    cron: { available: true, entries: [] },
+    manager: true,
+  });
 
   // fakeExec answers the probe with no output, so the baseline cannot be read.
-  const failed = fakeExec((argv) => (argv[1] === '--user' && argv[2] === 'list-unit-files' ? { stdout: 'a.service enabled enabled\n' } : undefined));
+  const failed = fakeExec((argv) =>
+    argv[1] === '--user' && argv[2] === 'list-unit-files' ? { stdout: 'a.service enabled enabled\n' } : undefined,
+  );
   const f = harness({ exec: failed.exec });
   initPr(f.repo(EXEC), 5, { 'nibfin-issue.yml': image(DIGEST) });
   initPr(f.repo(PEER), 3, { 'nibfin-issue.yml': 'on: issues\n' });
   const out2 = await f.runStep('nibfin');
   equal(out2.status, 'passed', out2.reason);
-  match(String((out2.facts?.hostBefore as { periodic: { error: string } }).periodic.error), /the crontab probe printed no single marker/);
-  equal(failed.calls.some((c) => c.argv.slice(2, 4).join(' ') === 'runner add'), true);
+  match(
+    String((out2.facts?.hostBefore as { periodic: { error: string } }).periodic.error),
+    /the crontab probe printed no single marker/,
+  );
+  equal(
+    failed.calls.some((c) => c.argv.slice(2, 4).join(' ') === 'runner add'),
+    true,
+  );
 });
 
 test('readPeriodicBaseline on Windows: start, read the VM, stop even when the read fails; a failed start is an error; a failed stop throws', async () => {
-  const win = () => ({ platform: 'windows' as const, wslconfig: null, tasks: [], requestsOverride: { ok: true, output: '' } });
+  const win = () => ({
+    platform: 'windows' as const,
+    wslconfig: null,
+    tasks: [],
+    requestsOverride: { ok: true, output: '' },
+  });
   const run = (exec: Exec) => (argv: string[], env?: Record<string, string>) => exec(argv, { env });
 
-  const failing = fakeExec((argv) => (argv[2] === 'ssh' ? { code: 255, stderr: 'ssh: connect to host localhost port 2222: Connection refused' } : undefined));
+  const failing = fakeExec((argv) =>
+    argv[2] === 'ssh'
+      ? { code: 255, stderr: 'ssh: connect to host localhost port 2222: Connection refused' }
+      : undefined,
+  );
   const a = win();
   await readPeriodicBaseline(run(failing.exec), { env: {}, exec: failing.exec }, a);
-  match(String((a as { vm?: { error?: string } }).vm?.error), /systemctl --user list-unit-files --no-legend --plain exited 255: ssh: connect to host/);
-  deepEqual(failing.calls.map((c) => c.argv.slice(0, 3).join(' ')), ['podman machine start', 'podman machine ssh', 'podman machine stop']);
+  match(
+    String((a as { vm?: { error?: string } }).vm?.error),
+    /systemctl --user list-unit-files --no-legend --plain exited 255: ssh: connect to host/,
+  );
+  deepEqual(
+    failing.calls.map((c) => c.argv.slice(0, 3).join(' ')),
+    ['podman machine start', 'podman machine ssh', 'podman machine stop'],
+  );
 
   const noStart = fakeExec((argv) => (argv[2] === 'start' ? { code: 125, stderr: 'machine is broken' } : undefined));
   const b = win();
   await readPeriodicBaseline(run(noStart.exec), { env: {}, exec: noStart.exec }, b);
   deepEqual(b, { ...win(), vm: { error: 'podman machine start exited 125: machine is broken' } });
-  deepEqual(noStart.calls.map((c) => c.argv.join(' ')), ['podman machine start']);
+  deepEqual(
+    noStart.calls.map((c) => c.argv.join(' ')),
+    ['podman machine start'],
+  );
 
   const running = fakeExec((argv) => {
     if (argv.join(' ') === 'podman machine start') return ALREADY_RUNNING;
@@ -424,8 +582,14 @@ test('readPeriodicBaseline on Windows: start, read the VM, stop even when the re
   const vm = (c as { vm?: { error?: string; units?: unknown; manager?: boolean } }).vm;
   deepEqual([vm?.error, vm?.units, vm?.manager], [undefined, [{ name: 'a.timer', state: 'static' }], true]);
   const steps = running.calls.map((x) => x.argv.slice(0, 3).join(' '));
-  deepEqual([steps[0], new Set(steps.slice(1, -1)), steps.at(-1)], ['podman machine start', new Set(['podman machine ssh']), 'podman machine stop']);
+  deepEqual(
+    [steps[0], new Set(steps.slice(1, -1)), steps.at(-1)],
+    ['podman machine start', new Set(['podman machine ssh']), 'podman machine stop'],
+  );
 
   const noStop = fakeExec((argv) => (argv[2] === 'stop' ? { code: 125, stderr: 'cannot stop' } : undefined));
-  await rejects(readPeriodicBaseline(run(noStop.exec), { env: {}, exec: noStop.exec }, win()), /podman machine stop after reading the VM baseline exited 125: cannot stop/);
+  await rejects(
+    readPeriodicBaseline(run(noStop.exec), { env: {}, exec: noStop.exec }, win()),
+    /podman machine stop after reading the VM baseline exited 125: cannot stop/,
+  );
 });

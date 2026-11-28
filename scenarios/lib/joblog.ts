@@ -30,14 +30,26 @@ interface ApiJob {
  * finish Jobs of a public execution repository run on GitHub-hosted runners).
  */
 export async function stageJob(kit: Kit, runRepo: string, runId: string): Promise<StageJob> {
-  const jobs = await kit.github.list<ApiJob>(`/repos/${runRepo}/actions/runs/${encodeURIComponent(runId)}/jobs`, 'jobs');
+  const jobs = await kit.github.list<ApiJob>(
+    `/repos/${runRepo}/actions/runs/${encodeURIComponent(runId)}/jobs`,
+    'jobs',
+  );
   const local = jobs.filter((j) => j.runner_name && runnerSlot(j.runner_name));
   const [job] = local;
   if (local.length !== 1 || !job) {
     const seen = jobs.map((j) => `${j.name} on ${j.runner_name ?? 'no runner'}`).join(', ') || 'none';
-    throw new Error(`${runRepo} run ${runId}: expected one Job on a local Runner (a registration ending in -claude-<n>); saw ${seen}`);
+    throw new Error(
+      `${runRepo} run ${runId}: expected one Job on a local Runner (a registration ending in -claude-<n>); saw ${seen}`,
+    );
   }
-  return { id: job.id, name: job.name, runnerName: job.runner_name as string, slot: runnerSlot(job.runner_name as string) as string, status: job.status, conclusion: job.conclusion ?? null };
+  return {
+    id: job.id,
+    name: job.name,
+    runnerName: job.runner_name as string,
+    slot: runnerSlot(job.runner_name as string) as string,
+    status: job.status,
+    conclusion: job.conclusion ?? null,
+  };
 }
 
 /**
@@ -45,7 +57,12 @@ export async function stageJob(kit: Kit, runRepo: string, runId: string): Promis
  * container died), saved under `.e2e-work/logs/`. The text is checked for secret values
  * first: the saved copy never holds one (each is replaced), and `secretFound` says so.
  */
-export async function jobLog(kit: Kit, runRepo: string, runId: string, file: string): Promise<{ job: StageJob; text: string; secretFound: boolean }> {
+export async function jobLog(
+  kit: Kit,
+  runRepo: string,
+  runId: string,
+  file: string,
+): Promise<{ job: StageJob; text: string; secretFound: boolean }> {
   const job = await remoteWait(kit, `the stage Job of run ${runId} to complete`, DEADLINE.jobLog, 10_000, async () => {
     const j = await stageJob(kit, runRepo, runId);
     return j.status === 'completed' ? j : undefined;
@@ -79,7 +96,10 @@ export function initEvents(log: string): InitEvent[] {
     }
     if (e.type !== 'system' || e.subtype !== 'init') continue;
     const servers = Array.isArray(e.mcp_servers) ? (e.mcp_servers as Record<string, unknown>[]) : [];
-    out.push({ model: String(e.model ?? ''), mcpServers: servers.map((s) => ({ name: String(s.name ?? ''), status: String(s.status ?? '') })) });
+    out.push({
+      model: String(e.model ?? ''),
+      mcpServers: servers.map((s) => ({ name: String(s.name ?? ''), status: String(s.status ?? '') })),
+    });
   }
   return out;
 }
@@ -124,7 +144,12 @@ export interface RunRef {
  * created before `mergedAt`, `next` is the first created at or after it. Route and finish
  * runs (GitHub-hosted in a public execution repository) and other Issues' runs are left out.
  */
-export function stageRunsAround<R extends RunRef>(runs: R[], repo: string, issue: number, mergedAt: string): { before: R[]; next?: R } {
+export function stageRunsAround<R extends RunRef>(
+  runs: R[],
+  repo: string,
+  issue: number,
+  mergedAt: string,
+): { before: R[]; next?: R } {
   const merged = Date.parse(mergedAt);
   const stage = runs
     .filter((r) => {
@@ -132,5 +157,8 @@ export function stageRunsAround<R extends RunRef>(runs: R[], repo: string, issue
       return t !== undefined && t.repo === repo && t.issue === issue && t.stage !== 'route' && t.stage !== 'finish';
     })
     .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at) || a.id - b.id);
-  return { before: stage.filter((r) => Date.parse(r.created_at) < merged), next: stage.find((r) => Date.parse(r.created_at) >= merged) };
+  return {
+    before: stage.filter((r) => Date.parse(r.created_at) < merged),
+    next: stage.find((r) => Date.parse(r.created_at) >= merged),
+  };
 }

@@ -37,7 +37,12 @@ export function envKey(env: Env, name: string, platform = process.platform): str
  * the Owner's `NIBFIN_GITHUB_TOKEN` and without an inherited `GH_TOKEN`; `GH_TOKEN` is set
  * only when the caller passes one.
  */
-export function childEnv(env: Env, ghToken?: string, extra: Record<string, string> = {}, platform = process.platform): Env {
+export function childEnv(
+  env: Env,
+  ghToken?: string,
+  extra: Record<string, string> = {},
+  platform = process.platform,
+): Env {
   const out: Env = {};
   for (const [k, v] of Object.entries(env)) {
     const upper = k.toUpperCase();
@@ -46,7 +51,8 @@ export function childEnv(env: Env, ghToken?: string, extra: Record<string, strin
   }
   for (const [k, v] of Object.entries(extra)) {
     const upper = k.toUpperCase();
-    if (upper.startsWith('E2E_') || upper === 'GH_TOKEN') throw new Error(`exec: the variable ${k} cannot be set for a child`);
+    if (upper.startsWith('E2E_') || upper === 'GH_TOKEN')
+      throw new Error(`exec: the variable ${k} cannot be set for a child`);
     out[envKey(out, k, platform)] = v;
   }
   if (ghToken !== undefined) out.GH_TOKEN = ghToken;
@@ -57,10 +63,16 @@ export function childEnv(env: Env, ghToken?: string, extra: Record<string, strin
  * Node 24 refuses to spawn `.cmd` shims such as Windows' `npm` without a shell, so
  * `npm` runs as `node <npm-cli.js>` there.
  */
-export function resolveArgv(argv: string[], env: Env, platform = process.platform, execPath = process.execPath): string[] {
+export function resolveArgv(
+  argv: string[],
+  env: Env,
+  platform = process.platform,
+  execPath = process.execPath,
+): string[] {
   const [cmd, ...rest] = argv;
   if (cmd !== 'npm' || platform !== 'win32') return argv;
-  const cli = env[envKey(env, 'npm_execpath', platform)] ?? join(execPath, '..', 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  const cli =
+    env[envKey(env, 'npm_execpath', platform)] ?? join(execPath, '..', 'node_modules', 'npm', 'bin', 'npm-cli.js');
   return [execPath, cli, ...rest];
 }
 
@@ -102,7 +114,11 @@ export function failureOf(argv: string[], r: ExecResult, hideStdout = false): Er
 }
 
 /** Throws with the command's own output when it did not exit 0. */
-export async function mustRun(exec: Exec, argv: string[], options?: ExecOptions & { hideStdout?: boolean }): Promise<ExecResult> {
+export async function mustRun(
+  exec: Exec,
+  argv: string[],
+  options?: ExecOptions & { hideStdout?: boolean },
+): Promise<ExecResult> {
   const { hideStdout, ...opts } = options ?? {};
   const r = await exec(argv, opts);
   if (r.code !== 0) throw failureOf(argv, r, hideStdout);
@@ -126,7 +142,12 @@ export function createStream(env: Env, log: (message: string) => void): Stream {
     const [cmd, ...args] = resolveArgv(argv, env);
     if (cmd === undefined) throw new Error('stream: empty argv');
     log(`$ ${argv.join(' ')} (streaming)`);
-    const child = spawn(cmd, args, { env: childEnv(env), shell: false, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    const child = spawn(cmd, args, {
+      env: childEnv(env),
+      shell: false,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
     let rest = '';
     child.stdout.setEncoding('utf8').on('data', (d: string) => {
       const lines = (rest + d).split('\n');
@@ -180,23 +201,39 @@ export interface Running {
 export type Start = (argv: string[], options?: StartOptions) => Running;
 
 /** The part of `spawn` that `createStart` uses; tests replace it. */
-export type SpawnFn = (cmd: string, args: string[], options: Parameters<typeof spawn>[2]) => ChildProcessWithoutNullStreams;
+export type SpawnFn = (
+  cmd: string,
+  args: string[],
+  options: Parameters<typeof spawn>[2],
+) => ChildProcessWithoutNullStreams;
 
 const tailOf = (text: string) => text.slice(-2000);
 
-export function createStart(env: Env, log: (message: string) => void, spawnFn: SpawnFn = spawn as unknown as SpawnFn): Start {
+export function createStart(
+  env: Env,
+  log: (message: string) => void,
+  spawnFn: SpawnFn = spawn as unknown as SpawnFn,
+): Start {
   return (argv, options = {}) => {
     const [cmd, ...args] = resolveArgv(argv, env);
     if (cmd === undefined) throw new Error('start: empty argv');
     log(`$ ${argv.join(' ')} &${options.cwd ? ` (in ${options.cwd})` : ''}`);
     const base = childEnv(env, options.ghToken);
     const childEnvironment: Env = {};
-    for (const [k, v] of Object.entries(base)) if (options.path === undefined || k.toUpperCase() !== 'PATH') childEnvironment[k] = v;
+    for (const [k, v] of Object.entries(base))
+      if (options.path === undefined || k.toUpperCase() !== 'PATH') childEnvironment[k] = v;
     if (options.path !== undefined) childEnvironment[envKey(env, 'PATH')] = options.path;
     // Its own process group, so stop() also reaches what it starts: `gh` runs an extension
     // as a child and does not pass signals on.
     const group = process.platform !== 'win32';
-    const child = spawnFn(cmd, args, { cwd: options.cwd, env: childEnvironment, shell: false, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: group });
+    const child = spawnFn(cmd, args, {
+      cwd: options.cwd,
+      env: childEnvironment,
+      shell: false,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+      detached: group,
+    });
     const signal = (sig: NodeJS.Signals) => {
       if (group && child.pid !== undefined) {
         try {
@@ -257,9 +294,26 @@ export function createStart(env: Env, log: (message: string) => void, spawnFn: S
             const m = new RegExp(pattern.source, pattern.flags.replace('g', '')).exec(all);
             if (m) return finish(() => resolve(m));
             if (spawnError) return finish(() => reject(new Error(spawnError)));
-            if (closed) return finish(() => reject(new Error(`${argv.slice(0, 3).join(' ')} exited ${closed?.code} before printing ${pattern}: ${tailOf(all)}`)));
+            if (closed)
+              return finish(() =>
+                reject(
+                  new Error(
+                    `${argv.slice(0, 3).join(' ')} exited ${closed?.code} before printing ${pattern}: ${tailOf(all)}`,
+                  ),
+                ),
+              );
           };
-          const timer = setTimeout(() => finish(() => reject(new Error(`${argv.slice(0, 3).join(' ')} printed no ${pattern} within ${timeoutMs} ms: ${tailOf(all)}`))), timeoutMs);
+          const timer = setTimeout(
+            () =>
+              finish(() =>
+                reject(
+                  new Error(
+                    `${argv.slice(0, 3).join(' ')} printed no ${pattern} within ${timeoutMs} ms: ${tailOf(all)}`,
+                  ),
+                ),
+              ),
+            timeoutMs,
+          );
           const finish = (fn: () => void) => {
             clearTimeout(timer);
             listeners.delete(check);

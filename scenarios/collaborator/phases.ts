@@ -6,7 +6,18 @@ import { createProber } from './hook.ts';
 import type { ProbeResult } from './hook.ts';
 import { parseRegistrationComment } from './parse.ts';
 import type { Job, RegistrationComment } from './parse.ts';
-import { comments, deployKeys, hasLabel, jobs, message, realClock, registrations, requestIssues, runs, until } from './observe.ts';
+import {
+  comments,
+  deployKeys,
+  hasLabel,
+  jobs,
+  message,
+  realClock,
+  registrations,
+  requestIssues,
+  runs,
+  until,
+} from './observe.ts';
 import type { Clock, Comment, DeployKey, Issue, Registration, Run } from './observe.ts';
 
 /** One collaborator `runner add` and what GitHub and the host show around it. */
@@ -82,7 +93,12 @@ export async function keyOnHost(ctx: RunContext, deployKeyDir: string): Promise<
     pub = { error: message(error) };
   }
   const inRunners = await peer.run(['find', join(peer.dataHome, 'nibfin', 'runners'), '-name', 'id_ed25519*']);
-  return { pub, file: await peer.stat(keyFile), dir: await peer.stat(deployKeyDir), inRunners: inRunners.stdout.trim() };
+  return {
+    pub,
+    file: await peer.stat(keyFile),
+    dir: await peer.stat(deployKeyDir),
+    inRunners: inRunners.stdout.trim(),
+  };
 }
 
 interface Memo {
@@ -115,7 +131,10 @@ export async function register(ctx: RunContext, clock: Clock = realClock): Promi
   const gh = ctx.github;
   const repo = ctx.sandbox.execution;
   const label = `nibfin-${peer.id}`;
-  const perm = await gh.rest<{ permission?: string }>('GET', `/repos/${repo}/collaborators/${encodeURIComponent(peer.login)}/permission`);
+  const perm = await gh.rest<{ permission?: string }>(
+    'GET',
+    `/repos/${repo}/collaborators/${encodeURIComponent(peer.login)}/permission`,
+  );
   const before = await registrations(gh, repo);
   const startedAt = clock.now();
   // Request Issues already there (an earlier phase's) are not this command's.
@@ -143,10 +162,15 @@ export async function register(ctx: RunContext, clock: Clock = realClock): Promi
         async () => {
           const list = (await runs(gh, repo, 'event=issues', opened))
             .filter((x) => x.path.startsWith('.github/workflows/nibfin-runner-request.yml'))
-            .filter((x) => Date.parse(x.created_at) >= opened - 5_000 && Date.parse(x.created_at) <= opened + 5 * 60_000)
+            .filter(
+              (x) => Date.parse(x.created_at) >= opened - 5_000 && Date.parse(x.created_at) <= opened + 5 * 60_000,
+            )
             .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
           const first = list[0];
-          return { value: first?.status === 'completed' ? first : undefined, state: first ? `run ${first.id} ${first.status}` : 'no run' };
+          return {
+            value: first?.status === 'completed' ? first : undefined,
+            state: first ? `run ${first.id} ${first.status}` : 'no run',
+          };
         },
         5 * 60_000,
         clock,
@@ -211,8 +235,11 @@ async function deleteStale(ctx: RunContext, runners: Registration[]): Promise<st
   const gh = ctx.github;
   const repo = ctx.sandbox.execution;
   const label = `nibfin-${ctx.peer().id}`;
-  for (const x of runners.filter((y) => hasLabel(y, label))) await gh.rest('DELETE', `/repos/${repo}/actions/runners/${x.id}`, undefined, [404]);
-  return (await registrations(gh, repo)).filter((y) => hasLabel(y, label)).map((x) => `registration ${x.name} is still on GitHub after deleting it`);
+  for (const x of runners.filter((y) => hasLabel(y, label)))
+    await gh.rest('DELETE', `/repos/${repo}/actions/runners/${x.id}`, undefined, [404]);
+  return (await registrations(gh, repo))
+    .filter((y) => hasLabel(y, label))
+    .map((x) => `registration ${x.name} is still on GitHub after deleting it`);
 }
 
 /** The collaborator's `runner remove` after the public registration, once per run. */
@@ -243,7 +270,10 @@ export function privatePhase(ctx: RunContext): Promise<PrivateResult> {
       try {
         await publicRemoval(ctx);
       } catch (error) {
-        throw new Error(`the public registration and removal did not finish, so the private phase cannot start clean: ${message(error)}`, { cause: error });
+        throw new Error(
+          `the public registration and removal did not finish, so the private phase cannot start clean: ${message(error)}`,
+          { cause: error },
+        );
       }
     }
     const gh = ctx.github;
@@ -261,7 +291,17 @@ export function privatePhase(ctx: RunContext): Promise<PrivateResult> {
         const afterRemove = { runners: await registrations(gh, repo), keys: await deployKeys(gh, repo) };
         const local = await localState(ctx);
         const cleanup = await deleteStale(ctx, afterRemove.runners);
-        return { reg, visibility: String(data.visibility), mainSha, keyOnHost: key, probe, remove, afterRemove, local, cleanup };
+        return {
+          reg,
+          visibility: String(data.visibility),
+          mainSha,
+          keyOnHost: key,
+          probe,
+          remove,
+          afterRemove,
+          local,
+          cleanup,
+        };
       } finally {
         await prober.cancelActive();
       }
@@ -283,7 +323,8 @@ export async function retire(ctx: RunContext): Promise<string[]> {
   await Promise.allSettled(started);
   const problems: string[] = [];
   const r = await ctx.peer().ghNibfin(['runner', 'remove', 'claude', '--yes']);
-  if (r.code !== 0 && !/no_runners/.test(r.stdout + r.stderr)) problems.push(`runner remove claude --yes exited ${r.code}: ${(r.stderr || r.stdout).trim().slice(-500)}`);
+  if (r.code !== 0 && !/no_runners/.test(r.stdout + r.stderr))
+    problems.push(`runner remove claude --yes exited ${r.code}: ${(r.stderr || r.stdout).trim().slice(-500)}`);
   problems.push(...(await deleteStale(ctx, await registrations(ctx.github, ctx.sandbox.execution))));
   return problems;
 }

@@ -52,7 +52,15 @@ const SHAPED_INTERVAL = 10_000;
 export async function runFirstJob(
   kit: Kit,
   repo: string,
-  opts: { title: string; file: string; deadlineMs: number; stage: string; pause?: boolean; pauseWhenShaped?: boolean; onOpen?: (issue: number) => void },
+  opts: {
+    title: string;
+    file: string;
+    deadlineMs: number;
+    stage: string;
+    pause?: boolean;
+    pauseWhenShaped?: boolean;
+    onOpen?: (issue: number) => void;
+  },
 ): Promise<FirstJob> {
   if (opts.pause && opts.pauseWhenShaped) throw new Error('runFirstJob: pause and pauseWhenShaped cannot be combined');
   const issue = await openFixture(kit, repo, opts.title, TASK_BODY);
@@ -62,19 +70,34 @@ export async function runFirstJob(
   });
   let over = false;
   try {
-    const start = await watch.started(1, opts.deadlineMs, `the ${opts.stage} Job container of ${repo}#${issue} to start`);
+    const start = await watch.started(
+      1,
+      opts.deadlineMs,
+      `the ${opts.stage} Job container of ${repo}#${issue} to start`,
+    );
     const ended = () => watch.events.some((e) => e.kind === 'died' && e.id === start.id);
-    const shaped = opts.pauseWhenShaped ? pauseWhenShaped(kit, repo, issue, opts.deadlineMs, ended, () => over) : undefined;
+    const shaped = opts.pauseWhenShaped
+      ? pauseWhenShaped(kit, repo, issue, opts.deadlineMs, ended, () => over)
+      : undefined;
     // Marked handled at once, so a rejection while the projection is read is not unhandled; Promise.all below still sees it.
     shaped?.catch(() => {});
     const projection = await watch.projection(start.id);
-    const [, seen] = await Promise.all([watch.died(1, opts.deadlineMs, `the ${opts.stage} Job container of ${repo}#${issue} to end`), shaped]);
+    const [, seen] = await Promise.all([
+      watch.died(1, opts.deadlineMs, `the ${opts.stage} Job container of ${repo}#${issue} to end`),
+      shaped,
+    ]);
     const out: FirstJob = { issue, projection };
     if (seen) out.shaped = seen;
-    if (!projection?.runId) out.logError = 'the container was gone before it could be inspected, so its run id is unknown';
+    if (!projection?.runId)
+      out.logError = 'the container was gone before it could be inspected, so its run id is unknown';
     else {
       try {
-        out.log = await jobLog(kit, projection.runRepo ?? kit.sandbox.execution, projection.runId, `${opts.file}-${issue}`);
+        out.log = await jobLog(
+          kit,
+          projection.runRepo ?? kit.sandbox.execution,
+          projection.runId,
+          `${opts.file}-${issue}`,
+        );
       } catch (error) {
         out.logError = message(error);
       }
@@ -96,30 +119,46 @@ export async function runFirstJob(
  * or when the call that started the wait is over (`over`). Its bound is the Shape deadline
  * plus the grace, so it never runs until the harness's stall check.
  */
-async function pauseWhenShaped(kit: Kit, repo: string, issue: number, deadlineMs: number, ended: () => boolean, over: () => boolean): Promise<ShapedSeen> {
+async function pauseWhenShaped(
+  kit: Kit,
+  repo: string,
+  issue: number,
+  deadlineMs: number,
+  ended: () => boolean,
+  over: () => boolean,
+): Promise<ShapedSeen> {
   let endedAt: number | undefined;
-  return remoteWait<ShapedSeen>(kit, `the Shape of ${repo}#${issue} to be published (shaped)`, deadlineMs + SHAPED_GRACE, SHAPED_INTERVAL, async () => {
-    if (over()) throw new Error(`the wait for the Shape of ${repo}#${issue} ended with its run`);
-    const l = await labels(kit, repo, issue);
-    if (l.includes('pending')) throw new Error(`the Shape of ${repo}#${issue} ended with pending`);
-    if (l.includes('shaped')) {
-      const seen: ShapedSeen = { at: kit.now(), labels: l };
-      // `pause` is requested before any other read; the comments are read alongside it.
-      const [, read] = await Promise.all([
-        addLabel(kit, repo, issue, 'pause'),
-        comments(kit, repo, issue).then(
-          (cs) => ({ cs }),
-          (error: unknown) => ({ error: message(error) }),
-        ),
-      ]);
-      if ('cs' in read) seen.comments = read.cs;
-      else seen.commentsError = read.error;
-      return seen;
-    }
-    if (ended()) {
-      endedAt ??= kit.now();
-      if (kit.now() - endedAt > SHAPED_GRACE) throw new Error(`the Shape Job of ${repo}#${issue} ended and no shaped followed within ${Math.round(SHAPED_GRACE / 1000)} s`);
-    }
-    return undefined;
-  });
+  return remoteWait<ShapedSeen>(
+    kit,
+    `the Shape of ${repo}#${issue} to be published (shaped)`,
+    deadlineMs + SHAPED_GRACE,
+    SHAPED_INTERVAL,
+    async () => {
+      if (over()) throw new Error(`the wait for the Shape of ${repo}#${issue} ended with its run`);
+      const l = await labels(kit, repo, issue);
+      if (l.includes('pending')) throw new Error(`the Shape of ${repo}#${issue} ended with pending`);
+      if (l.includes('shaped')) {
+        const seen: ShapedSeen = { at: kit.now(), labels: l };
+        // `pause` is requested before any other read; the comments are read alongside it.
+        const [, read] = await Promise.all([
+          addLabel(kit, repo, issue, 'pause'),
+          comments(kit, repo, issue).then(
+            (cs) => ({ cs }),
+            (error: unknown) => ({ error: message(error) }),
+          ),
+        ]);
+        if ('cs' in read) seen.comments = read.cs;
+        else seen.commentsError = read.error;
+        return seen;
+      }
+      if (ended()) {
+        endedAt ??= kit.now();
+        if (kit.now() - endedAt > SHAPED_GRACE)
+          throw new Error(
+            `the Shape Job of ${repo}#${issue} ended and no shaped followed within ${Math.round(SHAPED_GRACE / 1000)} s`,
+          );
+      }
+      return undefined;
+    },
+  );
 }

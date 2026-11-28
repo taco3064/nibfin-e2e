@@ -17,16 +17,24 @@ import { createGitHub } from '../../src/host/github.ts';
 import { BASE_TREE, EXEC, PEER } from './kit.ts';
 import { DIGEST, ctxFor, simulate } from './sim.ts';
 
-const init = (model: string) => `2026-11-26T00:00:01Z {"type":"system","subtype":"init","model":"${model}","mcp_servers":[]}`;
+const init = (model: string) =>
+  `2026-11-26T00:00:01Z {"type":"system","subtype":"init","model":"${model}","mcp_servers":[]}`;
 const ALL_NAMES = [...new Set(['.nibfin.json', ...CASES.flatMap((k) => k.names)])].join(', ');
 
 test('config-rejections: every case passes when Nibfin rejects it with pending and a comment naming the item', async () => {
-  const sim = simulate(() => ({ labels: ['pending'], comments: [`CONFIG_INVALID: .nibfin.json is not valid: ${ALL_NAMES}. Fix it, then remove pending.`], log: '2026-11-26T00:00:00Z CONFIG_INVALID\n' }));
+  const sim = simulate(() => ({
+    labels: ['pending'],
+    comments: [`CONFIG_INVALID: .nibfin.json is not valid: ${ALL_NAMES}. Fix it, then remove pending.`],
+    log: '2026-11-26T00:00:00Z CONFIG_INVALID\n',
+  }));
   const out = await configRejections(() => sim.kit).run(ctxFor());
   equal(out.status, 'passed', out.reason);
   const writes = sim.fake.writes.filter((w) => w === `POST /repos/${EXEC}/issues`);
   equal(writes.length, CASES.length);
-  deepEqual(sim.repo(EXEC).issues.map((i) => i.state), CASES.map(() => 'closed'));
+  deepEqual(
+    sim.repo(EXEC).issues.map((i) => i.state),
+    CASES.map(() => 'closed'),
+  );
 });
 
 test('config-rejections: items are matched as whole words', () => {
@@ -38,7 +46,11 @@ test('config-rejections: items are matched as whole words', () => {
 
 test('config-rejections: a comment listing only the valid role names does not name the wrong one', async () => {
   let n = 0;
-  const sim = simulate(() => (n++ === 1 ? { labels: ['pending'], comments: ['.nibfin.json: valid skills are accept, deliver, scope, shape'] } : { labels: ['pending'], comments: [`.nibfin.json ${ALL_NAMES}`] }));
+  const sim = simulate(() =>
+    n++ === 1
+      ? { labels: ['pending'], comments: ['.nibfin.json: valid skills are accept, deliver, scope, shape'] }
+      : { labels: ['pending'], comments: [`.nibfin.json ${ALL_NAMES}`] },
+  );
   const out = await configRejections(() => sim.kit).run(ctxFor());
   match(out.reason, /R7\.5: wrong role name: the comment names .* \(observed: missing shap\)/);
 });
@@ -67,7 +79,12 @@ test('config-rejections: an R7.7 case passes when its comment names only the rej
   let n = 0;
   const sim = simulate(() => {
     const i = n++;
-    if (R77.includes(i)) return { labels: ['pending'], comments: [`CONFIG_INVALID: skill path ${CASES[i]?.names.join(', ')} was rejected.`], log: '2026-11-26T00:00:00Z CONFIG_INVALID\n' };
+    if (R77.includes(i))
+      return {
+        labels: ['pending'],
+        comments: [`CONFIG_INVALID: skill path ${CASES[i]?.names.join(', ')} was rejected.`],
+        log: '2026-11-26T00:00:00Z CONFIG_INVALID\n',
+      };
     return { labels: ['pending'], comments: [`.nibfin.json ${ALL_NAMES}`], log: '' };
   });
   const out = await configRejections(() => sim.kit).run(ctxFor());
@@ -79,12 +96,16 @@ test('config-rejections: an R7.7 case whose comment names .nibfin.json but not i
   let n = 0;
   const sim = simulate(() => {
     const i = n++;
-    if (i === target) return { labels: ['pending'], comments: ['CONFIG_INVALID: .nibfin.json has an invalid skill path'], log: '' };
+    if (i === target)
+      return { labels: ['pending'], comments: ['CONFIG_INVALID: .nibfin.json has an invalid skill path'], log: '' };
     return { labels: ['pending'], comments: [`.nibfin.json ${ALL_NAMES}`], log: '' };
   });
   const out = await configRejections(() => sim.kit).run(ctxFor());
   equal(out.status, 'failed');
-  match(out.reason, /R7\.7: path outside the workspace: the comment names \.\.\/outside\.md \(observed: missing \.\.\/outside\.md\)/);
+  match(
+    out.reason,
+    /R7\.7: path outside the workspace: the comment names \.\.\/outside\.md \(observed: missing \.\.\/outside\.md\)/,
+  );
   equal(/R7\.7: (symlink escape|missing file)/.test(out.reason), false);
 });
 
@@ -94,14 +115,19 @@ test('config-rejections: a non-R7.7 case whose comment lacks .nibfin.json still 
   let n = 0;
   const sim = simulate(() => {
     const i = n++;
-    if (i === syntax) return { labels: ['pending'], comments: ['CONFIG_INVALID: unexpected end of JSON input'], log: '' };
-    if (i === domains) return { labels: ['pending'], comments: ['CONFIG_INVALID: allowedDomains was removed'], log: '' };
+    if (i === syntax)
+      return { labels: ['pending'], comments: ['CONFIG_INVALID: unexpected end of JSON input'], log: '' };
+    if (i === domains)
+      return { labels: ['pending'], comments: ['CONFIG_INVALID: allowedDomains was removed'], log: '' };
     return { labels: ['pending'], comments: [`.nibfin.json ${ALL_NAMES}`], log: '' };
   });
   const out = await configRejections(() => sim.kit).run(ctxFor());
   equal(out.status, 'failed');
   match(out.reason, /R7\.2: JSON syntax error: the comment names \.nibfin\.json \(observed: missing \.nibfin\.json\)/);
-  match(out.reason, /R7\.4: removed allowedDomains: the comment names \.nibfin\.json, allowedDomains \(observed: missing \.nibfin\.json\)/);
+  match(
+    out.reason,
+    /R7\.4: removed allowedDomains: the comment names \.nibfin\.json, allowedDomains \(observed: missing \.nibfin\.json\)/,
+  );
 });
 
 const failureLog = (n: number, extra = '') =>
@@ -113,14 +139,24 @@ const failureLog = (n: number, extra = '') =>
   ].join('\n');
 
 test('failure-logs: passes on a shared tool cause code, uv output, clear non-secrets and a next step', async () => {
-  const sim = simulate((_r, n) => ({ labels: ['pending'], comments: ['TOOL_INSTALL_FAILED: python 3.99.99 could not be installed. Fix `.nibfin.json`, then remove `pending`.'], log: failureLog(n) }));
+  const sim = simulate((_r, n) => ({
+    labels: ['pending'],
+    comments: [
+      'TOOL_INSTALL_FAILED: python 3.99.99 could not be installed. Fix `.nibfin.json`, then remove `pending`.',
+    ],
+    log: failureLog(n),
+  }));
   sim.kit.workDir = mkdtempSync(join(tmpdir(), 'e2e-failure-logs-'));
   const out = await failureLogs(() => sim.kit).run(ctxFor());
   equal(out.status, 'passed', out.reason);
 });
 
 test('failure-logs: a token in the log fails without being printed or saved', async () => {
-  const sim = simulate((_r, n) => ({ labels: ['pending'], comments: ['TOOL_INSTALL_FAILED: remove `pending` to retry'], log: failureLog(n, ' token claude-token-value') }));
+  const sim = simulate((_r, n) => ({
+    labels: ['pending'],
+    comments: ['TOOL_INSTALL_FAILED: remove `pending` to retry'],
+    log: failureLog(n, ' token claude-token-value'),
+  }));
   sim.kit.workDir = mkdtempSync(join(tmpdir(), 'e2e-failure-logs-'));
   const out = await failureLogs(() => sim.kit).run(ctxFor());
   equal(out.status, 'failed');
@@ -139,7 +175,10 @@ test('failure-logs: a token in the comment fails and is removed from every print
   equal(out.status, 'failed');
   match(out.reason, /R1\.14: no credential appears in the log or the comment \(observed: found\)/);
   equal(out.reason.includes('sandbox-token-value'), false);
-  match(out.reason, /R1\.14: the comment names the next step \(observed: TOOL_INSTALL_FAILED: python 3\.99\.99 with token \[secret value removed by nibfin-e2e\]\)/);
+  match(
+    out.reason,
+    /R1\.14: the comment names the next step \(observed: TOOL_INSTALL_FAILED: python 3\.99\.99 with token \[secret value removed by nibfin-e2e\]\)/,
+  );
   const n = sim.repo(EXEC).issues[0]?.number as number;
   const state = await issueState(sim.kit, EXEC, n);
   match(state, /latest comment: TOOL_INSTALL_FAILED/);
@@ -147,7 +186,12 @@ test('failure-logs: a token in the comment fails and is removed from every print
 });
 
 test('host-memory-check: a token in the comment is not printed in the passed result', async () => {
-  const sim = simulate(() => ({ memory: 0, labels: ['pending'], comments: ['HOST_MEMORY_INSUFFICIENT: 1024g memory needed; claude-token-value; remove pending.'], log: 'checking memory\n' }));
+  const sim = simulate(() => ({
+    memory: 0,
+    labels: ['pending'],
+    comments: ['HOST_MEMORY_INSUFFICIENT: 1024g memory needed; claude-token-value; remove pending.'],
+    log: 'checking memory\n',
+  }));
   const out = await hostMemoryCheck(() => sim.kit).run(ctxFor());
   equal(out.status, 'passed', out.reason);
   equal(out.reason.includes('claude-token-value'), false);
@@ -155,7 +199,14 @@ test('host-memory-check: a token in the comment is not printed in the passed res
 });
 
 test('host-memory-check: limits off, pending and a memory comment pass; an agent run fails', async () => {
-  const good = simulate(() => ({ memory: 0, labels: ['pending'], comments: ['HOST_MEMORY_INSUFFICIENT: the host has 7 GiB free memory, 1024g is needed. Free memory, then remove pending.'], log: 'checking memory\n' }));
+  const good = simulate(() => ({
+    memory: 0,
+    labels: ['pending'],
+    comments: [
+      'HOST_MEMORY_INSUFFICIENT: the host has 7 GiB free memory, 1024g is needed. Free memory, then remove pending.',
+    ],
+    log: 'checking memory\n',
+  }));
   const out = await hostMemoryCheck(() => good.kit).run(ctxFor());
   equal(out.status, 'passed', out.reason);
   deepEqual(good.repo(EXEC).variables.sort(), ['NIBFIN_CONTAINER_LIMITS', 'NIBFIN_MEMORY']);
@@ -172,7 +223,9 @@ const observed = (finish: unknown) => ({ 'observed-job': { repo: EXEC, finish } 
 
 test('skill-limits: passes when the agent changed nothing and the approval gate held', async () => {
   const sim = simulate(() => ({ labels: ['pending'], comments: ['WORKSPACE_READ_ONLY'] }));
-  const out = await skillLimits(() => sim.kit).run(ctxFor(observed({ merged: false, approvalComment: 'Waiting for an approving review before merging.' })));
+  const out = await skillLimits(() => sim.kit).run(
+    ctxFor(observed({ merged: false, approvalComment: 'Waiting for an approving review before merging.' })),
+  );
   equal(out.status, 'passed', out.reason);
   ok(sim.repo(EXEC).issues[0]?.labels?.includes('pause'));
 });
@@ -199,7 +252,15 @@ const DEFAULT_PROBE = probe('marker=e2e-override-299', 'first_instruction_line='
  * `execComments`: the execution fixture's comments at publish time. `later`: runs on the first
  * job-log fetch of each repo, which comes after runFirstJob captured what it saw at shaped.
  */
-function modelSim(opts: { sameRunner?: boolean; failRestore?: boolean; peerLabels?: string[]; execComments?: string[]; later?: (repo: string) => void } = {}) {
+function modelSim(
+  opts: {
+    sameRunner?: boolean;
+    failRestore?: boolean;
+    peerLabels?: string[];
+    execComments?: string[];
+    later?: (repo: string) => void;
+  } = {},
+) {
   const data = mkdtempSync(join(tmpdir(), 'e2e-model-'));
   const dir = join(data, 'nibfin', 'runners', 'claude-1');
   mkdirSync(dir, { recursive: true });
@@ -212,8 +273,19 @@ function modelSim(opts: { sameRunner?: boolean; failRestore?: boolean; peerLabel
   const sim = simulate(
     (repo) =>
       repo === EXEC
-        ? { runner: 'myhost-1a2b3c4d-claude-1', log: init('claude-sonnet-4-5'), comments: opts.execComments ?? [DEFAULT_PROBE], labels: ['shaped'], during: during(repo) }
-        : { runner: `myhost-1a2b3c4d-claude-${opts.sameRunner ? 1 : 2}`, log: init('claude-opus-4-5'), labels: opts.peerLabels ?? ['shaped'], during: during(repo) },
+        ? {
+            runner: 'myhost-1a2b3c4d-claude-1',
+            log: init('claude-sonnet-4-5'),
+            comments: opts.execComments ?? [DEFAULT_PROBE],
+            labels: ['shaped'],
+            during: during(repo),
+          }
+        : {
+            runner: `myhost-1a2b3c4d-claude-${opts.sameRunner ? 1 : 2}`,
+            log: init('claude-opus-4-5'),
+            labels: opts.peerLabels ?? ['shaped'],
+            during: during(repo),
+          },
     {
       respond: (argv) => {
         if (argv[0] !== 'systemctl') return undefined;
@@ -263,8 +335,14 @@ test('model-choice: with no marked Shape comment, R7.6 falls back to the latest 
   const { sim } = modelSim();
   const out = await modelChoice(() => sim.kit).run(ctxFor());
   equal(out.status, 'passed', out.reason);
-  match(out.reason, /R7\.6: [^;]*\(no Shape comment; fallback: comment #1 of 1, the latest with an e2e-probe block: first_instruction_line is the override marker\)/);
-  match(out.reason, /R7\.2: [^(]*\(log read; labels when shaped was observed: scope, shaped; labels now: scope, shaped, pause\)/);
+  match(
+    out.reason,
+    /R7\.6: [^;]*\(no Shape comment; fallback: comment #1 of 1, the latest with an e2e-probe block: first_instruction_line is the override marker\)/,
+  );
+  match(
+    out.reason,
+    /R7\.2: [^(]*\(log read; labels when shaped was observed: scope, shaped; labels now: scope, shaped, pause\)/,
+  );
 });
 
 test('model-choice: R7.2 holds when the peer showed shaped at the wait and lost it before the check', async () => {
@@ -276,7 +354,10 @@ test('model-choice: R7.2 holds when the peer showed shaped at the wait and lost 
   });
   const out = await modelChoice(() => sim.kit).run(ctxFor());
   equal(out.status, 'passed', out.reason);
-  match(out.reason, /R7\.2: [^(]*\(log read; labels when shaped was observed: scope, shaped; labels now: scope, pause\)/);
+  match(
+    out.reason,
+    /R7\.2: [^(]*\(log read; labels when shaped was observed: scope, shaped; labels now: scope, pause\)/,
+  );
 });
 
 const SHAPE = (p: string) => `<!-- nibfin:shape -->\n## Goal\n\n${p}`;
@@ -285,7 +366,13 @@ test('model-choice: R7.6 reads the Shape comment captured at shaped, not a later
   const { sim } = modelSim({
     execComments: ['an earlier note', SHAPE(DEFAULT_PROBE)],
     later: (repo) => {
-      if (repo === EXEC) sim.repo(repo).issues[0]?.comments?.push(probe('first_instruction_line=other'), SHAPE(probe('first_instruction_line=later')));
+      if (repo === EXEC)
+        sim
+          .repo(repo)
+          .issues[0]?.comments?.push(
+            probe('first_instruction_line=other'),
+            SHAPE(probe('first_instruction_line=later')),
+          );
     },
   });
   const out = await modelChoice(() => sim.kit).run(ctxFor());
@@ -295,10 +382,26 @@ test('model-choice: R7.6 reads the Shape comment captured at shaped, not a later
 });
 
 for (const [name, execComments, expected] of [
-  ['no Shape comment and no probe', ['just text'], /R7\.6: [^;]*\(observed: no Shape comment and no comment with an e2e-probe block \(1 comments\)\)/],
-  ['a Shape comment without a probe block', [DEFAULT_PROBE, SHAPE('no probe here')], /R7\.6: [^;]*\(observed: the Shape comment has no e2e-probe block\)/],
-  ['a probe without first_instruction_line', [SHAPE(probe('marker=e2e-override-299', 'uid=1000', 'marker=again'))], /R7\.6: [^;]*\(observed: the e2e-probe block in the Shape comment has no first_instruction_line; its keys: marker, uid\)/],
-  ['a probe without first_instruction_line in the fallback', [probe('uid=1000')], /R7\.6: [^;]*\(observed: the e2e-probe block in no Shape comment; fallback: comment #1 of 1, the latest with an e2e-probe block has no first_instruction_line; its keys: uid\)/],
+  [
+    'no Shape comment and no probe',
+    ['just text'],
+    /R7\.6: [^;]*\(observed: no Shape comment and no comment with an e2e-probe block \(1 comments\)\)/,
+  ],
+  [
+    'a Shape comment without a probe block',
+    [DEFAULT_PROBE, SHAPE('no probe here')],
+    /R7\.6: [^;]*\(observed: the Shape comment has no e2e-probe block\)/,
+  ],
+  [
+    'a probe without first_instruction_line',
+    [SHAPE(probe('marker=e2e-override-299', 'uid=1000', 'marker=again'))],
+    /R7\.6: [^;]*\(observed: the e2e-probe block in the Shape comment has no first_instruction_line; its keys: marker, uid\)/,
+  ],
+  [
+    'a probe without first_instruction_line in the fallback',
+    [probe('uid=1000')],
+    /R7\.6: [^;]*\(observed: the e2e-probe block in no Shape comment; fallback: comment #1 of 1, the latest with an e2e-probe block has no first_instruction_line; its keys: uid\)/,
+  ],
 ] as const) {
   test(`model-choice: R7.6 fails naming the case: ${name}`, async () => {
     const { sim } = modelSim({ execComments: [...execComments] });
@@ -334,7 +437,10 @@ test('model-choice: a Shape Job that ends without shaped fails fast naming it, a
   const { sim, envFile } = modelSim({ peerLabels: [] });
   const out = await modelChoice(() => sim.kit).run(ctxFor());
   equal(out.status, 'failed');
-  match(out.reason, /the Shape Job of o\/peer#\d+ ended and no shaped followed within 300 s; o\/peer#\d+ labels \[scope\]; latest comment: none/);
+  match(
+    out.reason,
+    /the Shape Job of o\/peer#\d+ ended and no shaped followed within 300 s; o\/peer#\d+ labels \[scope\]; latest comment: none/,
+  );
   equal(/timed out/.test(out.reason), false);
   equal(readFileSync(envFile, 'utf8'), 'LANG=C.UTF-8\n');
   equal(sim.repo(PEER).issues[0]?.labels?.includes('pause'), false);
@@ -354,23 +460,34 @@ test('model-choice: a failed restore fails the scenario', async () => {
   const { sim } = modelSim({ failRestore: true });
   const out = await modelChoice(() => sim.kit).run(ctxFor());
   equal(out.status, 'failed');
-  match(out.reason, /restoring Runner claude-1 failed: restarting nibfin-runner-claude-1\.service exited 1: Unit not found/);
+  match(
+    out.reason,
+    /restoring Runner claude-1 failed: restarting nibfin-runner-claude-1\.service exited 1: Unit not found/,
+  );
 });
 
 function registry(index: unknown, attestations: unknown[], verify = 0) {
   const bytes = Buffer.from(JSON.stringify(index));
   const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
-  const sim = simulate(() => ({}), { respond: (argv) => (argv[0] === 'gh' ? { code: verify, stderr: verify ? 'no matching attestation' : '' } : undefined) });
+  const sim = simulate(() => ({}), {
+    respond: (argv) =>
+      argv[0] === 'gh' ? { code: verify, stderr: verify ? 'no matching attestation' : '' } : undefined,
+  });
   sim.kit.workDir = mkdtempSync(join(tmpdir(), 'e2e-image-'));
   const auth: (string | null)[] = [];
   sim.kit.fetch = async (input, init) => {
     const url = new URL(String(input));
     if (url.pathname === '/token') return new Response(JSON.stringify({ token: 'anon' }));
-    if (url.pathname === `/v2/taco3064/nibfin/manifests/${digest}`) return ((auth.push(new Headers(init?.headers).get('authorization'))), new Response(bytes));
+    if (url.pathname === `/v2/taco3064/nibfin/manifests/${digest}`)
+      return (auth.push(new Headers(init?.headers).get('authorization')), new Response(bytes));
     return new Response('{}', { status: 404 });
   };
-  sim.kit.github = createGitHub(() => 'tok', async (input) =>
-    new URL(String(input)).pathname === `/repos/taco3064/nibfin-core/attestations/${digest}` ? new Response(JSON.stringify({ attestations })) : new Response('{"message":"Not Found"}', { status: 404 }),
+  sim.kit.github = createGitHub(
+    () => 'tok',
+    async (input) =>
+      new URL(String(input)).pathname === `/repos/taco3064/nibfin-core/attestations/${digest}`
+        ? new Response(JSON.stringify({ attestations }))
+        : new Response('{"message":"Not Found"}', { status: 404 }),
   );
   return { sim, digest, auth };
 }
@@ -378,7 +495,11 @@ function registry(index: unknown, attestations: unknown[], verify = 0) {
 const statement = Buffer.from(JSON.stringify({ predicateType: 'https://slsa.dev/provenance/v1' })).toString('base64');
 const multiArch = {
   mediaType: 'application/vnd.oci.image.index.v1+json',
-  manifests: [{ platform: { os: 'linux', architecture: 'amd64' } }, { platform: { os: 'linux', architecture: 'arm64' } }, { platform: { os: 'unknown', architecture: 'unknown' } }],
+  manifests: [
+    { platform: { os: 'linux', architecture: 'amd64' } },
+    { platform: { os: 'linux', architecture: 'arm64' } },
+    { platform: { os: 'unknown', architecture: 'unknown' } },
+  ],
 };
 
 test('image-provenance: a multi-arch index with a verified attestation passes; gh gets the sandbox token only as GH_TOKEN', async () => {
@@ -388,7 +509,12 @@ test('image-provenance: a multi-arch index with a verified attestation passes; g
   deepEqual(auth, ['Bearer anon']);
   const gh = sim.calls.find((c) => c.argv[0] === 'gh');
   deepEqual(gh?.argv.slice(1, 3), ['attestation', 'verify']);
-  deepEqual(gh?.argv.slice(-4), ['--repo', 'taco3064/nibfin-core', '--predicate-type', 'https://slsa.dev/provenance/v1']);
+  deepEqual(gh?.argv.slice(-4), [
+    '--repo',
+    'taco3064/nibfin-core',
+    '--predicate-type',
+    'https://slsa.dev/provenance/v1',
+  ]);
   equal(gh?.options.ghToken, 'sandbox-token-value');
   equal(gh?.argv.includes('sandbox-token-value'), false);
 });
@@ -406,9 +532,18 @@ test('image-provenance: a single-arch image, no attestation or a failed verify f
 
 test('runFirstJob: pauseWhenShaped returns the labels and comments seen at shaped; without it shaped stays undefined', async () => {
   const sim = simulate(() => ({ labels: ['shaped'], comments: ['published'] }));
-  const job = await runFirstJob(sim.kit, EXEC, { title: 't', file: 'f', deadlineMs: 60_000, stage: 'Shape', pauseWhenShaped: true });
+  const job = await runFirstJob(sim.kit, EXEC, {
+    title: 't',
+    file: 'f',
+    deadlineMs: 60_000,
+    stage: 'Shape',
+    pauseWhenShaped: true,
+  });
   deepEqual(job.shaped?.labels, ['scope', 'shaped']);
-  deepEqual(job.shaped?.comments?.map((x) => x.body), ['published']);
+  deepEqual(
+    job.shaped?.comments?.map((x) => x.body),
+    ['published'],
+  );
   equal(job.shaped?.commentsError, undefined);
   equal(typeof job.shaped?.at, 'number');
   const plain = await runFirstJob(sim.kit, PEER, { title: 't', file: 'f', deadlineMs: 60_000, stage: 'Shape' });
@@ -417,6 +552,16 @@ test('runFirstJob: pauseWhenShaped returns the labels and comments seen at shape
 
 test('runFirstJob: pause and pauseWhenShaped cannot be combined, and nothing is opened', async () => {
   const sim = simulate(() => ({}));
-  await rejects(runFirstJob(sim.kit, EXEC, { title: 't', file: 'f', deadlineMs: 1000, stage: 'Shape', pause: true, pauseWhenShaped: true }), /pause and pauseWhenShaped cannot be combined/);
+  await rejects(
+    runFirstJob(sim.kit, EXEC, {
+      title: 't',
+      file: 'f',
+      deadlineMs: 1000,
+      stage: 'Shape',
+      pause: true,
+      pauseWhenShaped: true,
+    }),
+    /pause and pauseWhenShaped cannot be combined/,
+  );
   equal(sim.repo(EXEC).issues.length, 0);
 });

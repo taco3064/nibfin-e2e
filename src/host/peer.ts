@@ -135,7 +135,16 @@ export function createPeerHandle(
     async units() {
       const names = new Set<string>();
       for (const kind of ['list-units', 'list-unit-files']) {
-        const r = await run(['systemctl', '--user', kind, '--all', '--plain', '--no-legend', '--no-pager', 'nibfin-runner-*']);
+        const r = await run([
+          'systemctl',
+          '--user',
+          kind,
+          '--all',
+          '--plain',
+          '--no-legend',
+          '--no-pager',
+          'nibfin-runner-*',
+        ]);
         for (const line of r.stdout.split('\n')) {
           const name = line.trim().split(/\s+/)[0];
           if (name?.startsWith('nibfin-runner-')) names.add(name);
@@ -158,7 +167,9 @@ export async function deletePeerKeys(gh: GitHub): Promise<string[]> {
   for (const k of await gh.list<Key>('/user/keys')) {
     if (k.title.startsWith(PEER_KEY_TITLE_PREFIX)) await gh.rest('DELETE', `/user/keys/${k.id}`, undefined, [404]);
   }
-  return (await gh.list<Key>('/user/keys')).filter((k) => k.title.startsWith(PEER_KEY_TITLE_PREFIX)).map((k) => `${k.title} (${k.id})`);
+  return (await gh.list<Key>('/user/keys'))
+    .filter((k) => k.title.startsWith(PEER_KEY_TITLE_PREFIX))
+    .map((k) => `${k.title} (${k.id})`);
 }
 
 const keyBody = (k: string) => k.trim().split(/\s+/).slice(0, 2).join(' ');
@@ -179,7 +190,12 @@ export interface PeerFacts {
  * its clone of the execution sandbox, its Claude login volume and this run's SSH key on
  * the collaborator account (Issue #300). Fills `facts` as it goes and sets `host.peer`.
  */
-export async function preparePeer(host: HostServices, platform: Platform, facts: PeerFacts, now: () => Date = () => new Date()): Promise<string> {
+export async function preparePeer(
+  host: HostServices,
+  platform: Platform,
+  facts: PeerFacts,
+  now: () => Date = () => new Date(),
+): Promise<string> {
   if (platform !== 'linux') throw new Error('collaborator scenarios are Linux-only');
   const { exec } = host;
   const peerToken = host.peerToken();
@@ -196,14 +212,23 @@ export async function preparePeer(host: HostServices, platform: Platform, facts:
     [404],
   );
   const permission = perm.status === 404 ? 'none' : String(perm.data.permission);
-  if (permission === 'admin') throw new Error(`${me.login} is admin on ${SANDBOX.execution}; the second account must be a write collaborator, not admin`);
+  if (permission === 'admin')
+    throw new Error(
+      `${me.login} is admin on ${SANDBOX.execution}; the second account must be a write collaborator, not admin`,
+    );
   if (permission !== 'write') {
-    throw new Error(`${me.login} has ${permission} permission on ${SANDBOX.execution}; it must be invited as a write collaborator (Issue #281)`);
+    throw new Error(
+      `${me.login} has ${permission} permission on ${SANDBOX.execution}; it must be invited as a write collaborator (Issue #281)`,
+    );
   }
 
   // The OS user, its subordinate ids for rootless Podman, and its user manager.
-  if ((await exec(['id', '-u', PEER_USER])).code !== 0) await mustRun(exec, ['sudo', 'useradd', '-m', '-s', '/bin/bash', PEER_USER]);
-  for (const [file, flag] of [['/etc/subuid', '--add-subuids'], ['/etc/subgid', '--add-subgids']] as const) {
+  if ((await exec(['id', '-u', PEER_USER])).code !== 0)
+    await mustRun(exec, ['sudo', 'useradd', '-m', '-s', '/bin/bash', PEER_USER]);
+  for (const [file, flag] of [
+    ['/etc/subuid', '--add-subuids'],
+    ['/etc/subgid', '--add-subgids'],
+  ] as const) {
     const content = (await exec(['cat', file])).stdout;
     if (content.split('\n').some((l) => l.startsWith(`${PEER_USER}:`))) continue;
     const { start, end } = freeRange(content);
@@ -220,7 +245,18 @@ export async function preparePeer(host: HostServices, platform: Platform, facts:
   // gh-nibfin, built by the gh-nibfin step, installed as the peer's own extension.
   const ghDir = join(home, 'gh-nibfin');
   await mustRun(exec, ['sudo', 'install', '-d', '-o', PEER_USER, '-g', PEER_USER, '-m', '0755', ghDir]);
-  await mustRun(exec, ['sudo', 'install', '-o', PEER_USER, '-g', PEER_USER, '-m', '0755', join(host.workDir(), 'gh-nibfin', 'gh-nibfin'), join(ghDir, 'gh-nibfin')]);
+  await mustRun(exec, [
+    'sudo',
+    'install',
+    '-o',
+    PEER_USER,
+    '-g',
+    PEER_USER,
+    '-m',
+    '0755',
+    join(host.workDir(), 'gh-nibfin', 'gh-nibfin'),
+    join(ghDir, 'gh-nibfin'),
+  ]);
   await peerExec(exec, ['gh', 'extension', 'remove', 'nibfin'], { token: peerToken });
   await peerMust(exec, ['gh', 'extension', 'install', '.'], { cwd: ghDir, token: peerToken });
   await peerMust(exec, ['gh', 'nibfin', '--help'], { token: peerToken });
@@ -250,7 +286,8 @@ export async function preparePeer(host: HostServices, platform: Platform, facts:
   const { data: added } = await gh.rest<Key>('POST', '/user/keys', { title, key: pub });
   facts.keyId = added.id;
   const { data: back } = await gh.rest<Key>('GET', `/user/keys/${added.id}`);
-  if (keyBody(back.key) !== pub) throw new Error(`SSH key ${added.id} on ${me.login} does not read back as the generated key`);
+  if (keyBody(back.key) !== pub)
+    throw new Error(`SSH key ${added.id} on ${me.login} does not read back as the generated key`);
 
   host.peer = createPeerHandle(host, { login: me.login, id: me.id, keyId: added.id, home });
   return `${PEER_USER} (uid ${uid}) has gh-nibfin, a clone of ${SANDBOX.execution} and a Claude login; ${me.login} (write) has SSH key ${title}`;
@@ -260,8 +297,12 @@ export async function preparePeer(host: HostServices, platform: Platform, facts:
 export async function teardownPeer(host: HostServices, facts: PeerFacts | undefined): Promise<string[]> {
   const problems: string[] = [];
   if (facts?.installed) {
-    const r = await peerExec(host.exec, ['gh', 'nibfin', 'runner', 'remove', 'claude', '--yes'], { cwd: facts.cloned && facts.home ? join(facts.home, 'sandbox') : facts.home, token: host.peerToken() });
-    if (r.code !== 0 && !/no_runners/.test(r.stdout + r.stderr)) problems.push(`as ${PEER_USER}: gh nibfin runner remove claude --yes exited ${r.code}: ${tail(r)}`);
+    const r = await peerExec(host.exec, ['gh', 'nibfin', 'runner', 'remove', 'claude', '--yes'], {
+      cwd: facts.cloned && facts.home ? join(facts.home, 'sandbox') : facts.home,
+      token: host.peerToken(),
+    });
+    if (r.code !== 0 && !/no_runners/.test(r.stdout + r.stderr))
+      problems.push(`as ${PEER_USER}: gh nibfin runner remove claude --yes exited ${r.code}: ${tail(r)}`);
   }
   if (facts?.login !== undefined) {
     const left = await deletePeerKeys(host.peerGithub);

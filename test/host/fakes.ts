@@ -7,8 +7,22 @@ export interface FakeRepo {
   settings: Record<string, unknown>;
   branches: Map<string, string>;
   commits: Map<string, { tree: string; parents: string[] }>;
-  pulls: { number: number; state: string; head: { sha: string; ref?: string }; merged?: boolean; files?: { filename: string; status: string; content: string }[] }[];
-  issues: { number: number; node_id: string; state?: string; state_reason?: string; title?: string; labels?: string[]; comments?: string[] }[];
+  pulls: {
+    number: number;
+    state: string;
+    head: { sha: string; ref?: string };
+    merged?: boolean;
+    files?: { filename: string; status: string; content: string }[];
+  }[];
+  issues: {
+    number: number;
+    node_id: string;
+    state?: string;
+    state_reason?: string;
+    title?: string;
+    labels?: string[];
+    comments?: string[];
+  }[];
   labels: string[];
   secrets: string[];
   variables: string[];
@@ -114,7 +128,12 @@ export class FakeGitHub {
     return json(out.status, out.data);
   };
 
-  private route(method: string, path: string, q: URLSearchParams, body: Record<string, unknown> | undefined): { status: number; data: unknown; key?: string } {
+  private route(
+    method: string,
+    path: string,
+    q: URLSearchParams,
+    body: Record<string, unknown> | undefined,
+  ): { status: number; data: unknown; key?: string } {
     if (path === '/graphql') {
       const id = (body?.variables as { id: string }).id;
       for (const repo of this.repos.values()) repo.issues = repo.issues.filter((i) => i.node_id !== id);
@@ -132,14 +151,19 @@ export class FakeGitHub {
       return { status: 204, data: undefined };
     };
     let x: RegExpExecArray | null;
-    if (rest === '') return method === 'PATCH' ? (Object.assign(repo.settings, body), ok(repo.settings)) : ok(repo.settings);
+    if (rest === '')
+      return method === 'PATCH' ? (Object.assign(repo.settings, body), ok(repo.settings)) : ok(repo.settings);
     if (rest === '/branches/main') {
       const sha = repo.branches.get('main');
       if (!sha) return { status: 404, data: { message: 'Branch not found' } };
       return ok({ commit: { sha, commit: { tree: { sha: repo.commits.get(sha)?.tree } } } });
     }
     if (rest === '/branches/main/protection') {
-      if (repo.protection === 'upgrade') return { status: 403, data: { message: 'Upgrade to GitHub Pro or make this repository public to enable this feature.' } };
+      if (repo.protection === 'upgrade')
+        return {
+          status: 403,
+          data: { message: 'Upgrade to GitHub Pro or make this repository public to enable this feature.' },
+        };
       if (method === 'PUT') return ok((repo.protection = { ...body }));
       if (repo.protection === undefined) return { status: 404, data: { message: 'Branch not protected' } };
       if (method === 'DELETE') return (delete repo.protection, { status: 204, data: undefined });
@@ -148,30 +172,50 @@ export class FakeGitHub {
     if (rest === '/branches') return ok([...repo.branches.keys()].map((name) => ({ name })));
     if (rest === '/issues' && method === 'POST') {
       const number = 1000 + ++this.n;
-      repo.issues.push({ number, node_id: `I${number}`, state: 'open', title: String(body?.title), labels: [...((body?.labels as string[]) ?? [])], comments: [] });
+      repo.issues.push({
+        number,
+        node_id: `I${number}`,
+        state: 'open',
+        title: String(body?.title),
+        labels: [...((body?.labels as string[]) ?? [])],
+        comments: [],
+      });
       return { status: 201, data: { number } };
     }
     if (rest === '/issues') {
       const state = q.get('state') ?? 'open';
-      const prs = repo.pulls.filter((p) => state === 'all' || p.state === state).map((p) => ({ number: p.number, node_id: `PR${p.number}`, pull_request: {} }));
-      const issues = repo.issues.filter((i) => state === 'all' || (i.state ?? 'open') === state).map(({ number, node_id }) => ({ number, node_id }));
+      const prs = repo.pulls
+        .filter((p) => state === 'all' || p.state === state)
+        .map((p) => ({ number: p.number, node_id: `PR${p.number}`, pull_request: {} }));
+      const issues = repo.issues
+        .filter((i) => state === 'all' || (i.state ?? 'open') === state)
+        .map(({ number, node_id }) => ({ number, node_id }));
       return ok([...issues, ...prs]);
     }
     if ((x = /^\/issues\/(\d+)(\/labels|\/comments)?$/.exec(rest))) {
       const issue = repo.issues.find((i) => i.number === Number(x?.[1]));
       if (!issue) return { status: 404, data: { message: 'Not Found' } };
       if (x[2] === '/labels') {
-        if (method === 'POST') issue.labels = [...new Set([...(issue.labels ?? []), ...((body?.labels as string[]) ?? [])])];
+        if (method === 'POST')
+          issue.labels = [...new Set([...(issue.labels ?? []), ...((body?.labels as string[]) ?? [])])];
         return ok((issue.labels ?? []).map((name) => ({ name })));
       }
       // Comments are the Owner's, as Nibfin writes with the Owner's credential.
-      if (x[2] === '/comments') return ok((issue.comments ?? []).map((b) => ({ body: b, user: { login: (m?.[1] ?? '').split('/')[0] } })));
+      if (x[2] === '/comments')
+        return ok((issue.comments ?? []).map((b) => ({ body: b, user: { login: (m?.[1] ?? '').split('/')[0] } })));
       if (method === 'PATCH') Object.assign(issue, body);
       return ok(issue);
     }
     if (rest === '/pulls' && method === 'GET') {
       const head = q.get('head');
-      return ok(repo.pulls.filter((p) => (q.get('state') === 'all' || p.state === q.get('state')) && (!head || head.endsWith(`:${p.head.ref}`))).map(({ number, head: h }) => ({ number, head: h })));
+      return ok(
+        repo.pulls
+          .filter(
+            (p) =>
+              (q.get('state') === 'all' || p.state === q.get('state')) && (!head || head.endsWith(`:${p.head.ref}`)),
+          )
+          .map(({ number, head: h }) => ({ number, head: h })),
+      );
     }
     if ((x = /^\/pulls\/(\d+)$/.exec(rest))) {
       const pr = repo.pulls.find((p) => p.number === Number(x?.[1]));
@@ -179,11 +223,16 @@ export class FakeGitHub {
       return pr ? ok({ ...pr, merged: pr.merged ?? false }) : { status: 404, data: { message: 'Not Found' } };
     }
     if ((x = /^\/pulls\/(\d+)\/files$/.exec(rest))) {
-      return ok(repo.pulls.find((p) => p.number === Number(x?.[1]))?.files?.map(({ filename, status }) => ({ filename, status })) ?? []);
+      return ok(
+        repo.pulls
+          .find((p) => p.number === Number(x?.[1]))
+          ?.files?.map(({ filename, status }) => ({ filename, status })) ?? [],
+      );
     }
     if ((x = /^\/pulls\/(\d+)\/merge$/.exec(rest))) {
       const pr = repo.pulls.find((p) => p.number === Number(x?.[1]));
-      if (!pr || body?.merge_method !== 'rebase' || body.sha !== pr.head.sha) return { status: 405, data: { message: 'not mergeable' } };
+      if (!pr || body?.merge_method !== 'rebase' || body.sha !== pr.head.sha)
+        return { status: 405, data: { message: 'not mergeable' } };
       pr.state = 'closed';
       for (const f of pr.files ?? []) repo.mainFiles.add(f.filename);
       const merged = `merge${pr.number}`;
@@ -195,40 +244,68 @@ export class FakeGitHub {
       const file = x[1] as string;
       if (method === 'PUT' || method === 'DELETE') {
         if (body?.branch !== 'main') return { status: 422, data: { message: 'fake: only main is written' } };
-        const required = Array.isArray(repo.rulesets) && repo.rulesets.some((r) => r.enforcement === 'active' && r.rules?.some((rule) => rule.type === 'required_status_checks'));
+        const required =
+          Array.isArray(repo.rulesets) &&
+          repo.rulesets.some(
+            (r) => r.enforcement === 'active' && r.rules?.some((rule) => rule.type === 'required_status_checks'),
+          );
         if (required) return { status: 409, data: { message: RULE_VIOLATION } };
-        if (method === 'DELETE') return repo.mainFiles.delete(file) ? ok({ commit: {} }) : { status: 404, data: { message: 'Not Found' } };
+        if (method === 'DELETE')
+          return repo.mainFiles.delete(file) ? ok({ commit: {} }) : { status: 404, data: { message: 'Not Found' } };
         repo.mainFiles.add(file);
         return { status: 201, data: { content: { path: file } } };
       }
-      if (q.get('ref') === 'main') return repo.mainFiles.has(file) ? ok({ content: '', sha: `blob-${file}` }) : { status: 404, data: { message: 'Not Found' } };
-      const f = repo.pulls.flatMap((p) => (p.head.sha === q.get('ref') ? (p.files ?? []) : [])).find((ff) => ff.filename === file);
-      return f ? ok({ content: Buffer.from(f.content).toString('base64') }) : { status: 404, data: { message: 'Not Found' } };
+      if (q.get('ref') === 'main')
+        return repo.mainFiles.has(file)
+          ? ok({ content: '', sha: `blob-${file}` })
+          : { status: 404, data: { message: 'Not Found' } };
+      const f = repo.pulls
+        .flatMap((p) => (p.head.sha === q.get('ref') ? (p.files ?? []) : []))
+        .find((ff) => ff.filename === file);
+      return f
+        ? ok({ content: Buffer.from(f.content).toString('base64') })
+        : { status: 404, data: { message: 'Not Found' } };
     }
     if (rest === '/git/matching-refs/tags') return ok(repo.tags.map((t) => ({ ref: `refs/tags/${t}` })));
     if ((x = /^\/git\/refs\/tags\/(.+)$/.exec(rest)) && method === 'DELETE') return del(repo.tags, (t) => t === x?.[1]);
     if ((x = /^\/git\/refs\/heads\/(.+)$/.exec(rest))) {
       const name = x[1] as string;
-      if (method === 'DELETE') return repo.branches.delete(name) ? { status: 204, data: undefined } : { status: 422, data: { message: 'Reference does not exist' } };
+      if (method === 'DELETE')
+        return repo.branches.delete(name)
+          ? { status: 204, data: undefined }
+          : { status: 422, data: { message: 'Reference does not exist' } };
       const target = repo.commits.get(String(body?.sha));
-      const pr = Array.isArray(repo.rulesets) && repo.rulesets.find((r) => r.rules?.some((rule) => rule.type === 'pull_request'));
-      if (name === 'main' && repo.protection !== undefined && repo.protection !== 'upgrade') return { status: 422, data: { message: 'Protected branch update failed for refs/heads/main.' } };
-      if (name === 'main' && pr) return { status: 422, data: { message: `Repository rule violations found: changes must be made through a pull request (${pr.name})` } };
-      if (body?.force !== false || !target?.parents.includes(repo.branches.get(name) ?? '')) return { status: 422, data: { message: 'Update is not a fast forward' } };
+      const pr =
+        Array.isArray(repo.rulesets) &&
+        repo.rulesets.find((r) => r.rules?.some((rule) => rule.type === 'pull_request'));
+      if (name === 'main' && repo.protection !== undefined && repo.protection !== 'upgrade')
+        return { status: 422, data: { message: 'Protected branch update failed for refs/heads/main.' } };
+      if (name === 'main' && pr)
+        return {
+          status: 422,
+          data: {
+            message: `Repository rule violations found: changes must be made through a pull request (${pr.name})`,
+          },
+        };
+      if (body?.force !== false || !target?.parents.includes(repo.branches.get(name) ?? ''))
+        return { status: 422, data: { message: 'Update is not a fast forward' } };
       repo.branches.set(name, String(body?.sha));
       return ok({});
     }
     if ((x = /^\/git\/trees\/(.+)$/.exec(rest)) && method === 'GET') {
       const commit = repo.commits.get(repo.branches.get(x[1] as string) ?? '');
       const files = this.trees.get(commit?.tree ?? '');
-      return files ? ok({ tree: [...files.keys()].map((path) => ({ path })) }) : { status: 404, data: { message: 'Not Found' } };
+      return files
+        ? ok({ tree: [...files.keys()].map((path) => ({ path })) })
+        : { status: 404, data: { message: 'Not Found' } };
     }
     if (rest === '/git/trees') {
       const baseSha = body?.base_tree as string | undefined;
       const base = baseSha === undefined ? new Map() : this.trees.get(baseSha);
       if (!base) return { status: 422, data: { message: 'base_tree is not a tree' } };
       const files = new Map(base);
-      for (const e of body?.tree as { path: string; mode: string; content: string }[]) files.set(e.path, { mode: e.mode, content: e.content });
+      for (const e of body?.tree as { path: string; mode: string; content: string }[])
+        files.set(e.path, { mode: e.mode, content: e.content });
       const sha = fakeTreeSha(files);
       this.trees.set(sha, files);
       return { status: 201, data: { sha } };
@@ -248,7 +325,11 @@ export class FakeGitHub {
       repo.variableValues.set(String(body?.name), String(body?.value));
       return { status: 201, data: {} };
     }
-    if (rest === '/actions/variables') return ok({ variables: repo.variables.map((name) => ({ name, value: repo.variableValues.get(name) ?? '' })) }, 'variables');
+    if (rest === '/actions/variables')
+      return ok(
+        { variables: repo.variables.map((name) => ({ name, value: repo.variableValues.get(name) ?? '' })) },
+        'variables',
+      );
     if ((x = /^\/actions\/variables\/(.+)$/.exec(rest)) && method === 'PATCH') {
       if (!repo.variables.includes(x[1] as string)) return { status: 404, data: { message: 'Not Found' } };
       repo.variableValues.set(x[1] as string, String(body?.value));
@@ -260,17 +341,29 @@ export class FakeGitHub {
     if (rest === '/actions/runners') return ok({ runners: repo.runners }, 'runners');
     if ((x = /^\/actions\/runners\/(\d+)$/.exec(rest))) {
       const runner = repo.runners.find((r) => r.id === Number(x?.[1]));
-      if (method === 'DELETE' && runner?.busy) return { status: 422, data: { message: `Bad request - Runner ${runner.name} is currently running a job and cannot be deleted.` } };
+      if (method === 'DELETE' && runner?.busy)
+        return {
+          status: 422,
+          data: { message: `Bad request - Runner ${runner.name} is currently running a job and cannot be deleted.` },
+        };
       return del(repo.runners, (r) => r.id === Number(x?.[1]));
     }
     if (rest === '/actions/runs') {
       const status = q.get('status');
-      return ok({ workflow_runs: repo.runs.filter((r) => !status || r.status === status).map(({ id, name, status: st }) => ({ id, name, status: st })) }, 'workflow_runs');
+      return ok(
+        {
+          workflow_runs: repo.runs
+            .filter((r) => !status || r.status === status)
+            .map(({ id, name, status: st }) => ({ id, name, status: st })),
+        },
+        'workflow_runs',
+      );
     }
     if ((x = /^\/actions\/runs\/(\d+)\/(cancel|force-cancel)$/.exec(rest)) && method === 'POST') {
       const run = repo.runs.find((r) => r.id === Number(x?.[1]));
       if (!run) return { status: 404, data: { message: 'Not Found' } };
-      if (run.status === 'completed') return { status: 409, data: { message: 'Cannot cancel a workflow run that is completed.' } };
+      if (run.status === 'completed')
+        return { status: 409, data: { message: 'Cannot cancel a workflow run that is completed.' } };
       this.onCancel?.(repo, run.id, x[2] === 'force-cancel');
       return { status: 202, data: {} };
     }
@@ -279,10 +372,19 @@ export class FakeGitHub {
       return run ? ok({ jobs: run.jobs ?? [] }, 'jobs') : { status: 404, data: { message: 'Not Found' } };
     }
     if (rest === '/rulesets') {
-      if (repo.rulesets === 'upgrade') return { status: 403, data: { message: 'Upgrade to GitHub Pro or make this repository public to enable this feature.' } };
+      if (repo.rulesets === 'upgrade')
+        return {
+          status: 403,
+          data: { message: 'Upgrade to GitHub Pro or make this repository public to enable this feature.' },
+        };
       if (method === 'POST') {
-        const created: FakeRuleset = { id: 500 + ++this.n, name: String(body?.name), rules: body?.rules as { type: string }[] };
-        for (const k of ['enforcement', 'target', 'conditions', 'bypass_actors'] as const) if (body?.[k] !== undefined) Object.assign(created, { [k]: body[k] });
+        const created: FakeRuleset = {
+          id: 500 + ++this.n,
+          name: String(body?.name),
+          rules: body?.rules as { type: string }[],
+        };
+        for (const k of ['enforcement', 'target', 'conditions', 'bypass_actors'] as const)
+          if (body?.[k] !== undefined) Object.assign(created, { [k]: body[k] });
         repo.rulesets.push(created);
         return { status: 201, data: created };
       }
@@ -306,7 +408,8 @@ export class FakeGitHub {
 /** The tree sha the fake gives: git's own for regular files only, otherwise a stable stand-in. */
 function fakeTreeSha(files: Map<string, { mode: string; content: string }>): string {
   const list = [...files].sort(([a], [b]) => (a < b ? -1 : 1));
-  if (list.every(([, f]) => f.mode === '100644')) return treeSha(list.map(([path, f]) => ({ path, content: Buffer.from(f.content) })));
+  if (list.every(([, f]) => f.mode === '100644'))
+    return treeSha(list.map(([path, f]) => ({ path, content: Buffer.from(f.content) })));
   return 'L' + createHash('sha1').update(JSON.stringify(list)).digest('hex');
 }
 
@@ -320,7 +423,9 @@ export interface Call {
 }
 
 /** Records every call; `respond` answers by the joined argv (first match by prefix). */
-export function fakeExec(respond: (argv: string[], options: ExecOptions) => Partial<ExecResult> | undefined = () => undefined) {
+export function fakeExec(
+  respond: (argv: string[], options: ExecOptions) => Partial<ExecResult> | undefined = () => undefined,
+) {
   const calls: Call[] = [];
   const exec: Exec = async (argv, options = {}) => {
     calls.push({ argv, options });

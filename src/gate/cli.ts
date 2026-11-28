@@ -54,14 +54,25 @@ export async function main(argv: string[], deps: GateDeps): Promise<number> {
   };
   const [sub, ...rest] = argv;
   const options = {
-    select: { delivered: { type: 'string' }, rule: { type: 'string', multiple: true }, section: { type: 'string', multiple: true }, all: { type: 'boolean' } },
+    select: {
+      delivered: { type: 'string' },
+      rule: { type: 'string', multiple: true },
+      section: { type: 'string', multiple: true },
+      all: { type: 'boolean' },
+    },
     report: { plan: { type: 'string' }, results: { type: 'string' }, leg: { type: 'boolean' } },
     'proposal-updated': {},
   } as const;
-  if (sub !== 'select' && sub !== 'report' && sub !== 'proposal-updated') return fail('usage', [`unknown subcommand ${JSON.stringify(sub ?? '')}`]);
+  if (sub !== 'select' && sub !== 'report' && sub !== 'proposal-updated')
+    return fail('usage', [`unknown subcommand ${JSON.stringify(sub ?? '')}`]);
   let values: Record<string, string | string[] | boolean | undefined>;
   try {
-    values = parseArgs({ args: rest, strict: true, allowPositionals: false, options: options[sub] as NonNullable<Parameters<typeof parseArgs>[0]>['options'] }).values as typeof values;
+    values = parseArgs({
+      args: rest,
+      strict: true,
+      allowPositionals: false,
+      options: options[sub] as NonNullable<Parameters<typeof parseArgs>[0]>['options'],
+    }).values as typeof values;
   } catch (error) {
     return fail('usage', [(error as Error).message]);
   }
@@ -84,7 +95,9 @@ export async function main(argv: string[], deps: GateDeps): Promise<number> {
     const rules = (values.rule as string[] | undefined) ?? [];
     const sections = (values.section as string[] | undefined) ?? [];
     const delivered = values.delivered as string | undefined;
-    const modes = [delivered !== undefined, values.all === true, rules.length + sections.length > 0].filter(Boolean).length;
+    const modes = [delivered !== undefined, values.all === true, rules.length + sections.length > 0].filter(
+      Boolean,
+    ).length;
     let request: PlanRequest | undefined;
     if (modes !== 1) usage.push('select needs exactly one of --delivered, --all or a --rule/--section selection');
     else if (delivered !== undefined) {
@@ -113,7 +126,8 @@ export async function main(argv: string[], deps: GateDeps): Promise<number> {
     const planPath = values.plan as string | undefined;
     const runner = deps.env.RUNNER_NAME?.trim();
     if (resultsDir === undefined) usage.push('report needs --results <dir>');
-    if (values.leg && planPath !== undefined) usage.push('report --leg cannot take --plan: the final report files plan gaps');
+    if (values.leg && planPath !== undefined)
+      usage.push('report --leg cannot take --plan: the final report files plan gaps');
     if (values.leg && !runner) usage.push('report --leg needs RUNNER_NAME, the runner of this leg');
     if (usage.length || !runEnv || resultsDir === undefined) return fail('usage', usage);
     let plan: { text: string } | { error: string };
@@ -201,7 +215,10 @@ export function readScenarioSources(root: string): SourceFile[] {
   return readdirSync(dir, { recursive: true, encoding: 'utf8' })
     .filter((n) => n.endsWith('.ts'))
     .sort()
-    .map((n) => ({ path: relative(root, join(dir, n)).split(sep).join('/'), text: readFileSync(join(dir, n), 'utf8') }));
+    .map((n) => ({
+      path: relative(root, join(dir, n)).split(sep).join('/'),
+      text: readFileSync(join(dir, n), 'utf8'),
+    }));
 }
 
 if (import.meta.main) {

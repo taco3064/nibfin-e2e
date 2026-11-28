@@ -54,12 +54,18 @@ export async function scan(k: Kit): Promise<ScanResult> {
   for (const repo of [k.exec, k.peer]) {
     const r = `/repos/${repo}`;
     for (const i of await k.gh.list<{ number: number; title: string; body: string | null }>(`${r}/issues?state=all`)) {
-      found.push(...leaks(`${repo}#${i.number} title`, i.title, secrets), ...leaks(`${repo}#${i.number} body`, i.body, secrets));
+      found.push(
+        ...leaks(`${repo}#${i.number} title`, i.title, secrets),
+        ...leaks(`${repo}#${i.number} body`, i.body, secrets),
+      );
     }
-    for (const cm of await k.gh.list<{ html_url: string; body?: string }>(`${r}/issues/comments`)) found.push(...leaks(cm.html_url, cm.body, secrets));
-    for (const cm of await k.gh.list<{ html_url: string; body?: string }>(`${r}/pulls/comments`)) found.push(...leaks(cm.html_url, cm.body, secrets));
+    for (const cm of await k.gh.list<{ html_url: string; body?: string }>(`${r}/issues/comments`))
+      found.push(...leaks(cm.html_url, cm.body, secrets));
+    for (const cm of await k.gh.list<{ html_url: string; body?: string }>(`${r}/pulls/comments`))
+      found.push(...leaks(cm.html_url, cm.body, secrets));
     for (const pr of s.pulls.get(repo) ?? []) {
-      for (const f of await k.gh.list<{ filename: string; patch?: string }>(`${r}/pulls/${pr.number}/files`)) found.push(...leaks(`${repo} PR #${pr.number} ${f.filename}`, f.patch, secrets));
+      for (const f of await k.gh.list<{ filename: string; patch?: string }>(`${r}/pulls/${pr.number}/files`))
+        found.push(...leaks(`${repo} PR #${pr.number} ${f.filename}`, f.patch, secrets));
     }
     for (const run of s.runs.filter((x) => x.repo === repo && x.display_title.startsWith('Nibfin ·'))) {
       for (const job of await k.obs.jobs(repo, run.id)) {
@@ -69,7 +75,13 @@ export async function scan(k: Kit): Promise<ScanResult> {
           unreadable.push(`${repo} job ${job.id} (${run.display_title}): ${message(log.error)}`);
           continue;
         }
-        found.push(...leaks(`${repo} job ${job.id} log (${run.display_title})`, log.lines.map((l) => l.text).join('\n'), secrets));
+        found.push(
+          ...leaks(
+            `${repo} job ${job.id} log (${run.display_title})`,
+            log.lines.map((l) => l.text).join('\n'),
+            secrets,
+          ),
+        );
       }
     }
   }
@@ -84,9 +96,15 @@ export async function scan(k: Kit): Promise<ScanResult> {
 export function credentialOutcome({ found, unreadable }: ScanResult, note = ''): Outcome {
   const parts: string[] = [];
   if (found.length) parts.push(`credentials found at ${found.join('; ')}`);
-  if (unreadable.length) parts.push(`these Nibfin job logs could not be checked, so the absence of credentials in them is not shown: ${unreadable.join('; ')}`);
+  if (unreadable.length)
+    parts.push(
+      `these Nibfin job logs could not be checked, so the absence of credentials in them is not shown: ${unreadable.join('; ')}`,
+    );
   if (parts.length) return { status: 'failed', reason: `R3.49: ${parts.join('. Separately, ')}${note}` };
-  return { status: 'passed', reason: `no secret value or token-shaped string in Issues, PRs, comments, patches or Nibfin job logs of either sandbox${note}` };
+  return {
+    status: 'passed',
+    reason: `no secret value or token-shaped string in Issues, PRs, comments, patches or Nibfin job logs of either sandbox${note}`,
+  };
 }
 
 export const noCredentials: Scenario = lifecycle({

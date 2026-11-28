@@ -10,8 +10,23 @@ import { allBusyAt, busyGone } from '../../scenarios/lifecycle/phase1.ts';
 import { clock, context, routes } from './fake.ts';
 
 const MIN = 60_000;
-const base = { 'GET /repos/o/peer/actions/runs': { workflow_runs: [] }, 'GET /repos/o/peer/issues': [], 'GET /repos/o/peer/pulls': [], 'GET /repos/o/exec/pulls': [], 'GET /rate_limit': {} };
-const run = (id: number, stage: string, status: string, created: string, n = 6) => ({ id, display_title: `Nibfin · o/exec#${n} · ${stage}`, status, conclusion: status === 'completed' ? 'success' : null, created_at: created, name: 'Nibfin', event: 'workflow_dispatch', head_sha: 'h' });
+const base = {
+  'GET /repos/o/peer/actions/runs': { workflow_runs: [] },
+  'GET /repos/o/peer/issues': [],
+  'GET /repos/o/peer/pulls': [],
+  'GET /repos/o/exec/pulls': [],
+  'GET /rate_limit': {},
+};
+const run = (id: number, stage: string, status: string, created: string, n = 6) => ({
+  id,
+  display_title: `Nibfin · o/exec#${n} · ${stage}`,
+  status,
+  conclusion: status === 'completed' ? 'success' : null,
+  created_at: created,
+  name: 'Nibfin',
+  event: 'workflow_dispatch',
+  head_sha: 'h',
+});
 const job = (id: number, runId: number, extra: Partial<Job> = {}): Job => ({
   id,
   run_id: runId,
@@ -25,12 +40,23 @@ const job = (id: number, runId: number, extra: Partial<Job> = {}): Job => ({
   completed_at: '2026-11-26T10:20:00Z',
   ...extra,
 });
-const issue = (n: number, extra: Record<string, unknown> = {}) => ({ number: n, title: 't', state: 'open', labels: [{ name: 'scope' }], ...extra });
+const issue = (n: number, extra: Record<string, unknown> = {}) => ({
+  number: n,
+  title: 't',
+  state: 'open',
+  labels: [{ name: 'scope' }],
+  ...extra,
+});
 
 test('a stage wait fails on the first snapshot showing the stage job completed and another stage followed, long before its deadline', async () => {
   const f = routes({
     ...base,
-    'GET /repos/o/exec/actions/runs': { workflow_runs: [run(5, 'shape', 'completed', '2026-11-26T10:00:30Z'), run(7, 'deliver', 'in_progress', '2026-11-26T10:21:00Z')] },
+    'GET /repos/o/exec/actions/runs': {
+      workflow_runs: [
+        run(5, 'shape', 'completed', '2026-11-26T10:00:30Z'),
+        run(7, 'deliver', 'in_progress', '2026-11-26T10:21:00Z'),
+      ],
+    },
     'GET /repos/o/exec/actions/runs/5/jobs': { jobs: [job(11, 5)] },
     'GET /repos/o/exec/actions/runs/7/jobs': { jobs: [] },
     'GET /repos/o/exec/issues': [issue(6, { labels: [{ name: 'scope' }, { name: 'shaped' }] })],
@@ -39,18 +65,26 @@ test('a stage wait fails on the first snapshot showing the stage job completed a
   const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
   const started = c.now();
   await rejects(
-    k.obs.until('I2\'s shape job to run', () => undefined, DEADLINE.stage, k.show('o/exec', 6), { gonePast: k.stageGone('o/exec', 6, 'shape') }),
+    k.obs.until("I2's shape job to run", () => undefined, DEADLINE.stage, k.show('o/exec', 6), {
+      gonePast: k.stageGone('o/exec', 6, 'shape'),
+    }),
     /^Error: gave up waiting for I2's shape job to run: #6's shape job 11 completed \(run 5, success\) and a deliver run 7 followed; observed: o\/exec#6 open \[scope, shaped\]/,
   );
   equal(c.now() - started < MIN, true, 'it ended on the first snapshot');
 });
 
 test('a completed stage job is not out of reach while no other stage followed, nor when it is older than the wait', async () => {
-  const runs = [run(5, 'shape', 'completed', '2026-11-26T09:00:00Z'), run(7, 'deliver', 'completed', '2026-11-26T09:30:00Z'), run(9, 'shape', 'completed', '2026-11-26T10:00:30Z')];
+  const runs = [
+    run(5, 'shape', 'completed', '2026-11-26T09:00:00Z'),
+    run(7, 'deliver', 'completed', '2026-11-26T09:30:00Z'),
+    run(9, 'shape', 'completed', '2026-11-26T10:00:30Z'),
+  ];
   const f = routes({
     ...base,
     'GET /repos/o/exec/actions/runs': { workflow_runs: runs },
-    'GET /repos/o/exec/actions/runs/5/jobs': { jobs: [job(11, 5, { created_at: '2026-11-26T09:00:10Z', completed_at: '2026-11-26T09:20:00Z' })] },
+    'GET /repos/o/exec/actions/runs/5/jobs': {
+      jobs: [job(11, 5, { created_at: '2026-11-26T09:00:10Z', completed_at: '2026-11-26T09:20:00Z' })],
+    },
     'GET /repos/o/exec/actions/runs/7/jobs': { jobs: [] },
     'GET /repos/o/exec/actions/runs/9/jobs': { jobs: [job(12, 9)] },
     'GET /repos/o/exec/issues': [issue(6)],
@@ -60,12 +94,19 @@ test('a completed stage job is not out of reach while no other stage followed, n
   const s = await k.obs.next();
   // Job 11 completed before the wait and was followed by deliver 7; job 12 completed with nothing after it.
   equal(await k.stageGone('o/exec', 6, 'shape')(s), undefined);
-  match((await k.stageGone('o/exec', 6, 'shape', { since: Date.parse('2026-11-26T08:00:00Z') })(s)) ?? '', /shape job 11 completed \(run 5, success\) and a deliver run 7 followed/);
-  equal(await k.stageGone('o/exec', 6, 'shape', { since: Date.parse('2026-11-26T08:00:00Z'), jobs: false })(s), undefined);
+  match(
+    (await k.stageGone('o/exec', 6, 'shape', { since: Date.parse('2026-11-26T08:00:00Z') })(s)) ?? '',
+    /shape job 11 completed \(run 5, success\) and a deliver run 7 followed/,
+  );
+  equal(
+    await k.stageGone('o/exec', 6, 'shape', { since: Date.parse('2026-11-26T08:00:00Z'), jobs: false })(s),
+    undefined,
+  );
 });
 
 test('with publishes, a stage wait fails once a successful job of the stage left the Issue without its label past the grace (Issue #463)', async () => {
-  const shapeJob = (extra: Partial<Job> = {}) => job(11, 5, { created_at: '2026-11-26T10:00:40Z', completed_at: '2026-11-26T10:02:00Z', ...extra });
+  const shapeJob = (extra: Partial<Job> = {}) =>
+    job(11, 5, { created_at: '2026-11-26T10:00:40Z', completed_at: '2026-11-26T10:02:00Z', ...extra });
   // A fresh Kit per case: the observer keeps a completed run's jobs once read.
   const setup = (jobs: Job[], labels = [{ name: 'scope' }, { name: 'pause' }]) => {
     const f = routes({
@@ -82,7 +123,9 @@ test('with publishes, a stage wait fails once a successful job of the stage left
   const { c, k } = setup([shapeJob()]);
   const started = c.now();
   await rejects(
-    k.obs.until('`shaped`', () => undefined, DEADLINE.event, k.show('o/exec', 6), { gonePast: k.stageGone('o/exec', 6, 'shape', { since, publishes: 'shaped' }) }),
+    k.obs.until('`shaped`', () => undefined, DEADLINE.event, k.show('o/exec', 6), {
+      gonePast: k.stageGone('o/exec', 6, 'shape', { since, publishes: 'shaped' }),
+    }),
     /^Error: gave up waiting for `shaped`: #6's shape job 11 completed \(run 5, success\) and #6 has no shaped [5-9] min later \(labels: scope, pause\)/,
   );
   equal(c.now() - started < STALL, true, 'it ended long before the stall check');
@@ -94,11 +137,26 @@ test('with publishes, a stage wait fails once a successful job of the stage left
     t.c.advance(10 * MIN);
     return t.k.stageGone('o/exec', 6, 'shape', opts)(await t.k.obs.fresh());
   };
-  match((await late([shapeJob()], { since, publishes: 'shaped' })) ?? '', /^#6's shape job 11 completed \(run 5, success\) and #6 has no shaped 8 min later \(labels: scope, pause\)$/);
-  equal(await late([shapeJob({ completed_at: '2026-11-26T10:06:00Z' })], { since, publishes: 'shaped' }), undefined, 'within the grace');
-  equal(await late([shapeJob()], { since, publishes: 'shaped' }, [{ name: 'scope' }, { name: 'shaped' }]), undefined, 'shaped is on the Issue');
+  match(
+    (await late([shapeJob()], { since, publishes: 'shaped' })) ?? '',
+    /^#6's shape job 11 completed \(run 5, success\) and #6 has no shaped 8 min later \(labels: scope, pause\)$/,
+  );
+  equal(
+    await late([shapeJob({ completed_at: '2026-11-26T10:06:00Z' })], { since, publishes: 'shaped' }),
+    undefined,
+    'within the grace',
+  );
+  equal(
+    await late([shapeJob()], { since, publishes: 'shaped' }, [{ name: 'scope' }, { name: 'shaped' }]),
+    undefined,
+    'shaped is on the Issue',
+  );
   equal(await late([shapeJob({ conclusion: 'failure' })], { since, publishes: 'shaped' }), undefined, 'the job failed');
-  equal(await late([shapeJob()], { since: Date.parse('2026-11-26T10:01:00Z'), publishes: 'shaped' }), undefined, 'the job is older than the wait');
+  equal(
+    await late([shapeJob()], { since: Date.parse('2026-11-26T10:01:00Z'), publishes: 'shaped' }),
+    undefined,
+    'the job is older than the wait',
+  );
   equal(await late([shapeJob()], { since }), undefined, 'publishes is unset');
   equal(await late([shapeJob()], { since, publishes: 'shaped', jobs: false }), undefined, 'jobs: false');
 });
@@ -109,7 +167,16 @@ test('a stage wait fails at once when the Issue is closed or has pending, unless
     ...base,
     'GET /repos/o/exec/actions/runs': { workflow_runs: [] },
     'GET /repos/o/exec/issues': () => issues,
-    'GET /repos/o/exec/issues/6/comments': [{ id: 1, body: '<!-- nibfin:pending -->\nDeliver stopped: the push was rejected (tok-9).', created_at: '', updated_at: '', user: null, html_url: '' }],
+    'GET /repos/o/exec/issues/6/comments': [
+      {
+        id: 1,
+        body: '<!-- nibfin:pending -->\nDeliver stopped: the push was rejected (tok-9).',
+        created_at: '',
+        updated_at: '',
+        user: null,
+        html_url: '',
+      },
+    ],
   });
   const c = clock();
   const k = new Kit(context(f.github, { secretValues: () => ['tok-9'] }), { now: c.now, sleep: c.sleep });
@@ -118,14 +185,26 @@ test('a stage wait fails at once when the Issue is closed or has pending, unless
   const s1 = await k.obs.fresh();
   equal(await gone(s1), '#6 has pending; last Nibfin comment: Deliver stopped: the push was rejected (***).');
   equal(await k.stageGone('o/exec', 6, 'deliver', { allowPending: true })(s1), undefined);
-  await rejects(k.obs.until('I\'s deliver job to run', () => undefined, DEADLINE.stage, undefined, { gonePast: gone }), /gave up waiting for I's deliver job to run: #6 has pending/);
+  await rejects(
+    k.obs.until("I's deliver job to run", () => undefined, DEADLINE.stage, undefined, { gonePast: gone }),
+    /gave up waiting for I's deliver job to run: #6 has pending/,
+  );
 
   // Closed with delivered ends a stage wait at once; closed without it after a grace period, as Nibfin may label after closing.
   c.advance(MIN);
-  issues = [issue(6, { state: 'closed', state_reason: 'completed', closed_at: new Date(c.now()).toISOString(), labels: [{ name: 'delivered' }] })];
+  issues = [
+    issue(6, {
+      state: 'closed',
+      state_reason: 'completed',
+      closed_at: new Date(c.now()).toISOString(),
+      labels: [{ name: 'delivered' }],
+    }),
+  ];
   equal(await gone(await k.obs.fresh()), '#6 is closed (completed) with delivered');
   c.advance(MIN);
-  issues = [issue(6, { state: 'closed', state_reason: 'not_planned', closed_at: new Date(c.now()).toISOString(), labels: [] })];
+  issues = [
+    issue(6, { state: 'closed', state_reason: 'not_planned', closed_at: new Date(c.now()).toISOString(), labels: [] }),
+  ];
   equal(await gone(await k.obs.fresh()), undefined);
   c.advance(2 * MIN);
   equal(await k.closeGone('o/exec', 6)(await k.obs.fresh()), '#6 is closed (not_planned) without delivered');
@@ -133,41 +212,78 @@ test('a stage wait fails at once when the Issue is closed or has pending, unless
 
 test('a wait with no sandbox activity fails after the stall limit; one with a run in progress or marked quiet does not', async () => {
   let runs = [run(5, 'shape', 'completed', '2026-11-26T10:00:30Z')];
-  const f = routes({ ...base, 'GET /repos/o/exec/actions/runs': () => ({ workflow_runs: runs }), 'GET /repos/o/exec/actions/runs/5/jobs': { jobs: [] }, 'GET /repos/o/exec/issues': [issue(6)] });
+  const f = routes({
+    ...base,
+    'GET /repos/o/exec/actions/runs': () => ({ workflow_runs: runs }),
+    'GET /repos/o/exec/actions/runs/5/jobs': { jobs: [] },
+    'GET /repos/o/exec/issues': [issue(6)],
+  });
   const c = clock();
   const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
   const started = c.now();
-  await rejects(k.obs.until('I2\'s shape job to run', () => undefined, DEADLINE.stage, k.show('o/exec', 6)), /^Error: no sandbox activity for 20 min while waiting for I2's shape job to run; observed: o\/exec#6 open/);
+  await rejects(
+    k.obs.until("I2's shape job to run", () => undefined, DEADLINE.stage, k.show('o/exec', 6)),
+    /^Error: no sandbox activity for 20 min while waiting for I2's shape job to run; observed: o\/exec#6 open/,
+  );
   equal(c.now() - started, 20 * MIN);
 
   // A quiet wait runs to its own deadline.
-  await rejects(k.obs.until('nothing to happen', () => undefined, 30 * MIN, undefined, { quiet: true }), /^Error: timed out after 30 min waiting for nothing to happen$/);
+  await rejects(
+    k.obs.until('nothing to happen', () => undefined, 30 * MIN, undefined, { quiet: true }),
+    /^Error: timed out after 30 min waiting for nothing to happen$/,
+  );
 
   // A run in progress is activity, even when no snapshot changes.
   runs = [run(5, 'shape', 'in_progress', '2026-11-26T10:00:30Z')];
-  await rejects(k.obs.until('I2\'s shape job to complete', () => undefined, 45 * MIN), /^Error: timed out after 45 min waiting for I2's shape job to complete$/);
+  await rejects(
+    k.obs.until("I2's shape job to complete", () => undefined, 45 * MIN),
+    /^Error: timed out after 45 min waiting for I2's shape job to complete$/,
+  );
 });
 
-test('a stall counts from the wait\'s own start, so a wait after a quiet one does not fail at once', async () => {
-  const f = routes({ ...base, 'GET /repos/o/exec/actions/runs': { workflow_runs: [] }, 'GET /repos/o/exec/issues': [] });
+test("a stall counts from the wait's own start, so a wait after a quiet one does not fail at once", async () => {
+  const f = routes({
+    ...base,
+    'GET /repos/o/exec/actions/runs': { workflow_runs: [] },
+    'GET /repos/o/exec/issues': [],
+  });
   const c = clock();
   const obs = new Observer(f.github, ['o/exec'], { since: c.now(), now: c.now, sleep: c.sleep, stallMs: 20 * MIN });
-  await rejects(obs.until('quiet', () => undefined, 25 * MIN, undefined, { quiet: true }), /timed out after 25 min/);
+  await rejects(
+    obs.until('quiet', () => undefined, 25 * MIN, undefined, { quiet: true }),
+    /timed out after 25 min/,
+  );
   let polls = 0;
   equal(await obs.until('the third look', () => (++polls === 3 ? true : undefined), 60 * MIN), true);
 });
 
-test('an observer wait ends with the abort reason once the run\'s signal aborts', async () => {
-  const f = routes({ ...base, 'GET /repos/o/exec/actions/runs': { workflow_runs: [] }, 'GET /repos/o/exec/issues': [] });
+test("an observer wait ends with the abort reason once the run's signal aborts", async () => {
+  const f = routes({
+    ...base,
+    'GET /repos/o/exec/actions/runs': { workflow_runs: [] },
+    'GET /repos/o/exec/issues': [],
+  });
   const c = clock();
   const ctl = new AbortController();
   const obs = new Observer(f.github, ['o/exec'], { since: c.now(), now: c.now, sleep: c.sleep, signal: ctl.signal });
   let polls = 0;
-  await rejects(obs.until('A to close', () => (++polls === 2 ? (ctl.abort(new Error('harness budget of 190 min ran out')), undefined) : undefined), DEADLINE.delivery), /^Error: harness budget of 190 min ran out$/);
+  await rejects(
+    obs.until(
+      'A to close',
+      () => (++polls === 2 ? (ctl.abort(new Error('harness budget of 190 min ran out')), undefined) : undefined),
+      DEADLINE.delivery,
+    ),
+    /^Error: harness budget of 190 min ran out$/,
+  );
   equal(polls, 2);
   // A sleeping observer wakes on the abort (the real sleep would last a minute).
   const ctl2 = new AbortController();
-  const slow = new Observer(f.github, ['o/exec'], { since: c.now(), now: c.now, sleep: () => new Promise(() => {}), signal: ctl2.signal });
+  const slow = new Observer(f.github, ['o/exec'], {
+    since: c.now(),
+    now: c.now,
+    sleep: () => new Promise(() => {}),
+    signal: ctl2.signal,
+  });
   await slow.next();
   const waiting = slow.until('B', () => undefined, DEADLINE.delivery);
   setTimeout(() => ctl2.abort(new Error('budget')), 5);
@@ -176,14 +292,29 @@ test('an observer wait ends with the abort reason once the run\'s signal aborts'
 
 test('interrupted-deliver step 4: two jobs that overlapped on the two Runners pass even when both completed before any snapshot', () => {
   const runners = ['claude-1', 'claude-2'];
-  const deliver = job(21, 2, { runner_name: 'claude-1', started_at: '2026-11-26T10:00:00Z', completed_at: '2026-11-26T10:30:00Z' });
-  const shape = job(31, 3, { runner_name: 'claude-2', started_at: '2026-11-26T10:10:00Z', completed_at: '2026-11-26T10:12:00Z' });
-  const w = (j: Job, stage: 'deliver' | 'shape') => jobWindow(j, issueKey('o/exec', j.id), stage) as NonNullable<ReturnType<typeof jobWindow>>;
-  deepEqual(busyTogether([w(deliver, 'deliver'), w(shape, 'shape')], runners), { start: Date.parse('2026-11-26T10:10:00Z'), end: Date.parse('2026-11-26T10:12:00Z') });
+  const deliver = job(21, 2, {
+    runner_name: 'claude-1',
+    started_at: '2026-11-26T10:00:00Z',
+    completed_at: '2026-11-26T10:30:00Z',
+  });
+  const shape = job(31, 3, {
+    runner_name: 'claude-2',
+    started_at: '2026-11-26T10:10:00Z',
+    completed_at: '2026-11-26T10:12:00Z',
+  });
+  const w = (j: Job, stage: 'deliver' | 'shape') =>
+    jobWindow(j, issueKey('o/exec', j.id), stage) as NonNullable<ReturnType<typeof jobWindow>>;
+  deepEqual(busyTogether([w(deliver, 'deliver'), w(shape, 'shape')], runners), {
+    start: Date.parse('2026-11-26T10:10:00Z'),
+    end: Date.parse('2026-11-26T10:12:00Z'),
+  });
   equal(busyGone(deliver, shape, runners), undefined);
   // Still running: the window ends at Infinity and still counts.
   const running = { ...shape, status: 'in_progress', completed_at: null };
-  deepEqual(busyTogether([w(deliver, 'deliver'), w(running, 'shape')], runners)?.end, Date.parse('2026-11-26T10:30:00Z'));
+  deepEqual(
+    busyTogether([w(deliver, 'deliver'), w(running, 'shape')], runners)?.end,
+    Date.parse('2026-11-26T10:30:00Z'),
+  );
 
   // Sequential windows, the same Runner, or other Runners registered do not count.
   const after = { ...shape, started_at: '2026-11-26T10:31:00Z', completed_at: '2026-11-26T10:40:00Z' };
@@ -191,27 +322,51 @@ test('interrupted-deliver step 4: two jobs that overlapped on the two Runners pa
   const same = { ...shape, runner_name: 'claude-1' };
   equal(busyTogether([w(deliver, 'deliver'), w(same, 'shape')], runners), undefined);
   equal(busyTogether([w(deliver, 'deliver'), w(shape, 'shape')], [...runners, 'claude-3']), undefined);
-  equal(busyGone(deliver, after, runners), "I's deliver job 21 completed at 2026-11-26T10:30:00Z before I2's shape job started");
-  equal(busyGone(deliver, undefined, runners), "I's deliver job 21 completed at 2026-11-26T10:30:00Z before I2's shape job started");
+  equal(
+    busyGone(deliver, after, runners),
+    "I's deliver job 21 completed at 2026-11-26T10:30:00Z before I2's shape job started",
+  );
+  equal(
+    busyGone(deliver, undefined, runners),
+    "I's deliver job 21 completed at 2026-11-26T10:30:00Z before I2's shape job started",
+  );
   equal(busyGone(deliver, same, runners), "I2's shape job 31 ran on claude-1, the same Runner as I's deliver job 21");
-  equal(busyGone(deliver, shape, ['claude-1']), "the registered Runners are claude-1; I's deliver job and I2's shape job cannot cover them");
+  equal(
+    busyGone(deliver, shape, ['claude-1']),
+    "the registered Runners are claude-1; I's deliver job and I2's shape job cannot cover them",
+  );
   // While I's job runs and I2's has not started, the goal is still in reach.
   equal(busyGone({ ...deliver, status: 'in_progress', completed_at: null }, undefined, runners), undefined);
 });
 
-test('interrupted-deliver step 5: a queued job counts when the jobs\' own windows cover every Runner at the snapshot', () => {
+test("interrupted-deliver step 5: a queued job counts when the jobs' own windows cover every Runner at the snapshot", () => {
   const runners = ['claude-1', 'claude-2'];
-  const deliver = job(21, 2, { runner_name: 'claude-1', started_at: '2026-11-26T10:00:00Z', completed_at: null, status: 'in_progress' });
-  const shape = job(31, 3, { runner_name: 'claude-2', started_at: '2026-11-26T10:10:00Z', completed_at: '2026-11-26T10:12:00Z' });
+  const deliver = job(21, 2, {
+    runner_name: 'claude-1',
+    started_at: '2026-11-26T10:00:00Z',
+    completed_at: null,
+    status: 'in_progress',
+  });
+  const shape = job(31, 3, {
+    runner_name: 'claude-2',
+    started_at: '2026-11-26T10:10:00Z',
+    completed_at: '2026-11-26T10:12:00Z',
+  });
   equal(allBusyAt(Date.parse('2026-11-26T10:11:00Z'), [deliver, shape], runners), true);
   equal(allBusyAt(Date.parse('2026-11-26T10:13:00Z'), [deliver, shape], runners), false);
   equal(allBusyAt(Date.parse('2026-11-26T10:11:00Z'), [deliver, shape], []), false);
 });
 
-test('a wait is not judged on a snapshot taken before it began, such as one still showing the harness\'s own pending', async () => {
+test("a wait is not judged on a snapshot taken before it began, such as one still showing the harness's own pending", async () => {
   let labels = [{ name: 'scope' }, { name: 'pending' }];
   let state = 'open';
-  const f = routes({ ...base, 'GET /repos/o/exec/actions/runs': { workflow_runs: [] }, 'GET /repos/o/exec/issues': () => [issue(6, { labels, state, closed_at: state === 'closed' ? '2026-11-26T10:01:00Z' : null })] });
+  const f = routes({
+    ...base,
+    'GET /repos/o/exec/actions/runs': { workflow_runs: [] },
+    'GET /repos/o/exec/issues': () => [
+      issue(6, { labels, state, closed_at: state === 'closed' ? '2026-11-26T10:01:00Z' : null }),
+    ],
+  });
   const c = clock();
   const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
   await k.obs.next();
@@ -240,51 +395,89 @@ test('failed reads do not count as calm: the stall limit counts from the last fa
   const started = c.now();
   // Reads fail from the 1st to the 30th minute.
   const failing = () => c.now() - started >= MIN && c.now() - started < 30 * MIN;
-  const f = routes({ ...base, 'GET /repos/o/exec/actions/runs': { workflow_runs: [] }, 'GET /repos/o/exec/issues': () => (failing() ? { status: 502, data: { message: 'Bad Gateway' } } : { data: [] }) });
+  const f = routes({
+    ...base,
+    'GET /repos/o/exec/actions/runs': { workflow_runs: [] },
+    'GET /repos/o/exec/issues': () => (failing() ? { status: 502, data: { message: 'Bad Gateway' } } : { data: [] }),
+  });
   const obs = new Observer(f.github, ['o/exec'], { since: c.now(), now: c.now, sleep: c.sleep, stallMs: 20 * MIN });
-  await rejects(obs.until('A to close', () => undefined, DEADLINE.delivery), /^Error: no sandbox activity for 20 min while waiting for A to close/);
+  await rejects(
+    obs.until('A to close', () => undefined, DEADLINE.delivery),
+    /^Error: no sandbox activity for 20 min while waiting for A to close/,
+  );
   const took = (c.now() - started) / MIN;
   equal(took >= 49 && took <= 51, true, `failed after ${took} min`);
 });
 
 // Issue #569: the stall check fails only on a recent snapshot judged by gonePast.
-const blockedComment = [{ id: 1, body: '<!-- nibfin:pending -->\nNibfin stopped and needs a person. - Code: STAGE_BLOCKED', created_at: '', updated_at: '', user: null, html_url: '' }];
+const blockedComment = [
+  {
+    id: 1,
+    body: '<!-- nibfin:pending -->\nNibfin stopped and needs a person. - Code: STAGE_BLOCKED',
+    created_at: '',
+    updated_at: '',
+    user: null,
+    html_url: '',
+  },
+];
 const pendingIssue = () => [issue(6, { labels: [{ name: 'scope' }, { name: 'shaped' }, { name: 'pending' }] })];
 
 test('a wait whose first pass blocks past the stall limit while the Issue gets pending ends with that reason, not on the stall check', async () => {
   let issues: unknown[] = [issue(6)];
-  const f = routes({ ...base, 'GET /repos/o/exec/actions/runs': { workflow_runs: [] }, 'GET /repos/o/exec/issues': () => issues, 'GET /repos/o/exec/issues/6/comments': blockedComment });
+  const f = routes({
+    ...base,
+    'GET /repos/o/exec/actions/runs': { workflow_runs: [] },
+    'GET /repos/o/exec/issues': () => issues,
+    'GET /repos/o/exec/issues/6/comments': blockedComment,
+  });
   const c = clock();
   const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
   let polls = 0;
   await rejects(
-    k.obs.until('a marked review comment', () => {
-      if (++polls === 1) {
-        c.advance(STALL + 5 * MIN);
-        issues = pendingIssue();
-      }
-      return undefined;
-    }, DEADLINE.stage, k.show('o/exec', 6), { gonePast: k.closeGone('o/exec', 6) }),
+    k.obs.until(
+      'a marked review comment',
+      () => {
+        if (++polls === 1) {
+          c.advance(STALL + 5 * MIN);
+          issues = pendingIssue();
+        }
+        return undefined;
+      },
+      DEADLINE.stage,
+      k.show('o/exec', 6),
+      { gonePast: k.closeGone('o/exec', 6) },
+    ),
     /^Error: gave up waiting for a marked review comment: #6 has pending; last Nibfin comment: Nibfin stopped and needs a person\. - Code: STAGE_BLOCKED/,
   );
   equal(polls, 1);
 });
 
-test('a refresh inside a blocked pass does not stand in for the stall decision\'s own read', async () => {
+test("a refresh inside a blocked pass does not stand in for the stall decision's own read", async () => {
   let issues: unknown[] = [issue(6)];
-  const f = routes({ ...base, 'GET /repos/o/exec/actions/runs': { workflow_runs: [] }, 'GET /repos/o/exec/issues': () => issues, 'GET /repos/o/exec/issues/6/comments': blockedComment });
+  const f = routes({
+    ...base,
+    'GET /repos/o/exec/actions/runs': { workflow_runs: [] },
+    'GET /repos/o/exec/issues': () => issues,
+    'GET /repos/o/exec/issues/6/comments': blockedComment,
+  });
   const c = clock();
   const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
   let polls = 0;
   await rejects(
-    k.obs.until('a marked review comment', async () => {
-      if (++polls === 1) {
-        await k.obs.fresh();
-        c.advance(STALL + 5 * MIN);
-        issues = pendingIssue();
-      }
-      return undefined;
-    }, DEADLINE.stage, undefined, { gonePast: k.closeGone('o/exec', 6) }),
+    k.obs.until(
+      'a marked review comment',
+      async () => {
+        if (++polls === 1) {
+          await k.obs.fresh();
+          c.advance(STALL + 5 * MIN);
+          issues = pendingIssue();
+        }
+        return undefined;
+      },
+      DEADLINE.stage,
+      undefined,
+      { gonePast: k.closeGone('o/exec', 6) },
+    ),
     /^Error: gave up waiting for a marked review comment: #6 has pending; last Nibfin comment: Nibfin stopped and needs a person\. - Code: STAGE_BLOCKED/,
   );
 });
@@ -310,14 +503,20 @@ test('an observer read blocked on a peer request does not count as recent for th
   const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
   await k.obs.next();
   await rejects(
-    k.obs.until('a marked review comment', () => undefined, DEADLINE.stage, undefined, { gonePast: k.closeGone('o/exec', 6) }),
+    k.obs.until('a marked review comment', () => undefined, DEADLINE.stage, undefined, {
+      gonePast: k.closeGone('o/exec', 6),
+    }),
     /^Error: gave up waiting for a marked review comment: #6 has pending; last Nibfin comment: Nibfin stopped and needs a person\. - Code: STAGE_BLOCKED/,
   );
   equal(peerReads >= 3, true, 'the decision read anew');
 });
 
 test('a blocked pass with no gonePast reason and no activity still fails on the stall check', async () => {
-  const f = routes({ ...base, 'GET /repos/o/exec/actions/runs': { workflow_runs: [] }, 'GET /repos/o/exec/issues': [issue(6)] });
+  const f = routes({
+    ...base,
+    'GET /repos/o/exec/actions/runs': { workflow_runs: [] },
+    'GET /repos/o/exec/issues': [issue(6)],
+  });
   const c = clock();
   const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
   const started = c.now();
@@ -326,7 +525,10 @@ test('a blocked pass with no gonePast reason and no activity still fails on the 
     if (++polls === 1) c.advance(STALL + 5 * MIN);
     return undefined;
   };
-  await rejects(k.obs.until('a marked review comment', block, DEADLINE.stage, undefined, { gonePast: k.closeGone('o/exec', 6) }), /^Error: no sandbox activity for 25 min while waiting for a marked review comment$/);
+  await rejects(
+    k.obs.until('a marked review comment', block, DEADLINE.stage, undefined, { gonePast: k.closeGone('o/exec', 6) }),
+    /^Error: no sandbox activity for 25 min while waiting for a marked review comment$/,
+  );
   equal(c.now() - started, STALL + 5 * MIN);
   // Without gonePast too.
   polls = 0;
@@ -339,7 +541,11 @@ const blockedUrl = 'https://github.com/o/exec/pull/41#discussion_r1234567890';
 const stopBody = (reason: string) =>
   `<!-- nibfin:pending -->\nNibfin stopped and needs a person.\n\n- Code: STAGE_BLOCKED\n- Run: https://github.com/o/exec/actions/runs/46027033527\n\n\`\`\`text\n${reason}\n\`\`\``;
 const fenced = `Writer returned blocked (${blockedUrl}): ${'the rebase onto main conflicts in src/app.ts and the other side cannot hold; '.repeat(5)}see ${blockedUrl}`;
-const collapse = (body: string) => body.replace(/<!--[\s\S]*?-->/g, '').replace(/\s+/g, ' ').trim();
+const collapse = (body: string) =>
+  body
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 const escape = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 function stopKit(body: string, secrets: string[] = []) {
@@ -347,7 +553,9 @@ function stopKit(body: string, secrets: string[] = []) {
     ...base,
     'GET /repos/o/exec/actions/runs': { workflow_runs: [] },
     'GET /repos/o/exec/issues': pendingIssue(),
-    'GET /repos/o/exec/issues/6/comments': [{ id: 9, body, created_at: '', updated_at: '', user: null, html_url: stopUrl }],
+    'GET /repos/o/exec/issues/6/comments': [
+      { id: 9, body, created_at: '', updated_at: '', user: null, html_url: stopUrl },
+    ],
   });
   const c = clock();
   return new Kit(context(f.github, { secretValues: () => secrets }), { now: c.now, sleep: c.sleep });
@@ -364,8 +572,12 @@ test('a stop comment of about 600 characters appears in the pending reason in fu
   equal(reason?.endsWith(`see ${blockedUrl} \`\`\``), true);
   equal(await k.closeGone('o/exec', 6)(s), reason);
   await rejects(
-    k.obs.until('a marked review comment', () => undefined, DEADLINE.stage, undefined, { gonePast: k.closeGone('o/exec', 6) }),
-    new RegExp(`^Error: gave up waiting for a marked review comment: #6 has pending; last Nibfin comment: ${escape(text)}$`),
+    k.obs.until('a marked review comment', () => undefined, DEADLINE.stage, undefined, {
+      gonePast: k.closeGone('o/exec', 6),
+    }),
+    new RegExp(
+      `^Error: gave up waiting for a marked review comment: #6 has pending; last Nibfin comment: ${escape(text)}$`,
+    ),
   );
 });
 
@@ -375,7 +587,9 @@ test('a stop comment over the limit is cut at its end on a whole token, with the
   equal(text.length > QUOTE_LIMIT, true);
   const k = stopKit(body);
   const reason = (await k.stageGone('o/exec', 6, 'shape')(await k.obs.next())) ?? '';
-  const m = /^#6 has pending; last Nibfin comment: (.*) … \(cut, (\d+) more characters; full comment: (\S+)\)$/.exec(reason);
+  const m = /^#6 has pending; last Nibfin comment: (.*) … \(cut, (\d+) more characters; full comment: (\S+)\)$/.exec(
+    reason,
+  );
   equal(!!m, true, reason);
   const [, kept = '', dropped = '', url = ''] = m ?? [];
   equal(url, stopUrl);
@@ -395,30 +609,51 @@ test('a secret inside the stop comment is masked in every quote, also one across
   equal(at < QUOTE_LIMIT && at + 'secret-across-the-cut'.length > QUOTE_LIMIT, true, 'the secret straddles the limit');
   const k = stopKit(body, ['tok-in-text', 'secret-across-the-cut']);
   const s = await k.obs.next();
-  for (const out of [await k.stageGone('o/exec', 6, 'shape')(s), await k.summary(s, 'o/exec', 6, { full: true }), await k.summary(s, 'o/exec', 6)]) {
-    for (const part of ['tok-in-text', 'tok-in', 'secret-across', 'across-the-cut']) equal(out?.includes(part), false, `${part} in ${out}`);
+  for (const out of [
+    await k.stageGone('o/exec', 6, 'shape')(s),
+    await k.summary(s, 'o/exec', 6, { full: true }),
+    await k.summary(s, 'o/exec', 6),
+  ]) {
+    for (const part of ['tok-in-text', 'tok-in', 'secret-across', 'across-the-cut'])
+      equal(out?.includes(part), false, `${part} in ${out}`);
   }
   match((await k.stageGone('o/exec', 6, 'shape')(s)) ?? '', /blocked: \*\*\* x/);
 });
 
-test('summary shows the stop comment\'s code and run link but not its reason; with full it shows the whole comment', async () => {
+test("summary shows the stop comment's code and run link but not its reason; with full it shows the whole comment", async () => {
   const body = stopBody(fenced);
   const k = stopKit(body);
   const s = await k.obs.next();
   const short = await k.summary(s, 'o/exec', 6);
-  equal(short, 'o/exec#6 open [scope, shaped, pending] runs: none; last Nibfin comment: Code: STAGE_BLOCKED, Run: https://github.com/o/exec/actions/runs/46027033527');
+  equal(
+    short,
+    'o/exec#6 open [scope, shaped, pending] runs: none; last Nibfin comment: Code: STAGE_BLOCKED, Run: https://github.com/o/exec/actions/runs/46027033527',
+  );
   equal(await k.show('o/exec', 6)(s), short);
-  equal(await k.summary(s, 'o/exec', 6, { full: true }), `o/exec#6 open [scope, shaped, pending] runs: none; last Nibfin comment: ${collapse(body)}`);
+  equal(
+    await k.summary(s, 'o/exec', 6, { full: true }),
+    `o/exec#6 open [scope, shaped, pending] runs: none; last Nibfin comment: ${collapse(body)}`,
+  );
   const plain = stopKit('<!-- nibfin:pending -->\nShape stopped: log in again.');
-  equal(await plain.summary(await plain.obs.next(), 'o/exec', 6), `o/exec#6 open [scope, shaped, pending] runs: none; last Nibfin comment: ${stopUrl}`);
+  equal(
+    await plain.summary(await plain.obs.next(), 'o/exec', 6),
+    `o/exec#6 open [scope, shaped, pending] runs: none; last Nibfin comment: ${stopUrl}`,
+  );
 });
 
 test('a wait ended by pending holds the stop reason once: in the reason, not again in the observed part', async () => {
   const k = stopKit(stopBody(fenced));
-  const err = await k.obs.until('a marked review comment', () => undefined, DEADLINE.stage, k.show('o/exec', 6), { gonePast: k.closeGone('o/exec', 6) }).then(
-    () => undefined,
-    (e: unknown) => String(e),
-  );
+  const err = await k.obs
+    .until('a marked review comment', () => undefined, DEADLINE.stage, k.show('o/exec', 6), {
+      gonePast: k.closeGone('o/exec', 6),
+    })
+    .then(
+      () => undefined,
+      (e: unknown) => String(e),
+    );
   equal(err?.split('Writer returned blocked').length, 2, err);
-  match(err ?? '', /; observed: o\/exec#6 open \[scope, shaped, pending\] runs: none; last Nibfin comment: Code: STAGE_BLOCKED, Run: https:\/\/github\.com\/o\/exec\/actions\/runs\/46027033527$/);
+  match(
+    err ?? '',
+    /; observed: o\/exec#6 open \[scope, shaped, pending\] runs: none; last Nibfin comment: Code: STAGE_BLOCKED, Run: https:\/\/github\.com\/o\/exec\/actions\/runs\/46027033527$/,
+  );
 });

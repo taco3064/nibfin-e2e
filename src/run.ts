@@ -2,10 +2,24 @@ import { computeCoverage } from './coverage.ts';
 import type { Coverage } from './coverage.ts';
 import type { Selected, Selection } from './select.ts';
 import { STATUSES, isExcluded } from './types.ts';
-import type { HostContext, Outcome, Platform, ProvisioningStep, RunContext, RunTarget, RuleId, Scenario, StepOutcome } from './types.ts';
+import type {
+  HostContext,
+  Outcome,
+  Platform,
+  ProvisioningStep,
+  RunContext,
+  RunTarget,
+  RuleId,
+  Scenario,
+  StepOutcome,
+} from './types.ts';
 
 export function detectPlatform(nodePlatform: string): Platform | undefined {
-  const map = new Map<string, Platform>([['linux', 'linux'], ['darwin', 'macos'], ['win32', 'windows']]);
+  const map = new Map<string, Platform>([
+    ['linux', 'linux'],
+    ['darwin', 'macos'],
+    ['win32', 'windows'],
+  ]);
   return map.get(nodePlatform);
 }
 
@@ -96,12 +110,20 @@ async function attempt(fn: () => Promise<StepOutcome>): Promise<StepOutcome> {
 }
 
 /** Runs and clears the deferred cleanups, newest first; a throw or a hang is logged and never changes an outcome. */
-async function runCleanups(cleanups: (() => Promise<unknown>)[], owner: string, timeoutMs: number, log: (m: string) => void): Promise<void> {
+async function runCleanups(
+  cleanups: (() => Promise<unknown>)[],
+  owner: string,
+  timeoutMs: number,
+  log: (m: string) => void,
+): Promise<void> {
   while (cleanups.length) {
     const fn = cleanups.pop() as () => Promise<unknown>;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const bounded = new Promise<StepOutcome>((resolve) => {
-      timer = setTimeout(() => resolve({ status: 'failed', reason: `did not finish within ${timeoutMs} ms` }), timeoutMs);
+      timer = setTimeout(
+        () => resolve({ status: 'failed', reason: `did not finish within ${timeoutMs} ms` }),
+        timeoutMs,
+      );
     });
     const out = await Promise.race([attempt(async () => (await fn(), { status: 'passed', reason: '' })), bounded]);
     clearTimeout(timer);
@@ -136,9 +158,19 @@ const plain = ({ status, reason }: Outcome): Outcome => ({ status, reason });
 function blocker(required: string[], results: Map<string, StepResult>): (Outcome & { blockedBy: string }) | undefined {
   const got = required.map((id) => results.get(id)).filter((p) => p !== undefined);
   const failed = got.find((p) => p.status === 'failed');
-  if (failed) return { status: 'failed', reason: `provisioning step ${failed.id} failed: ${failed.reason}`, blockedBy: failed.id };
+  if (failed)
+    return {
+      status: 'failed',
+      reason: `provisioning step ${failed.id} failed: ${failed.reason}`,
+      blockedBy: failed.id,
+    };
   const waiting = got.find((p) => p.status === 'waiting');
-  if (waiting) return { status: 'waiting', reason: `provisioning step ${waiting.id} is waiting: ${waiting.reason}`, blockedBy: waiting.id };
+  if (waiting)
+    return {
+      status: 'waiting',
+      reason: `provisioning step ${waiting.id} is waiting: ${waiting.reason}`,
+      blockedBy: waiting.id,
+    };
   return undefined;
 }
 
@@ -192,12 +224,17 @@ export async function run(input: RunInput): Promise<RunResult> {
       controller.abort(new Error(`harness budget of ${workBudget} ran out`));
       input.onLimit?.();
     }
-    if (!(await before(work, settleBy))) input.log(`${label} did not settle within ${Math.round(settleMs / 1000)} s after the budget ran out`);
+    if (!(await before(work, settleBy)))
+      input.log(`${label} did not settle within ${Math.round(settleMs / 1000)} s after the budget ran out`);
     return { status: 'failed', reason };
   };
 
   /** A context whose deferred cleanups and started children go to `cleanups`; each scenario gets its own, so concurrent ones never run each other's. */
-  const contextWith = (cleanups: (() => Promise<unknown>)[], next: () => number, signal: AbortSignal = controller.signal): RunContext => {
+  const contextWith = (
+    cleanups: (() => Promise<unknown>)[],
+    next: () => number,
+    signal: AbortSignal = controller.signal,
+  ): RunContext => {
     const defer = (fn: () => Promise<unknown>) => void cleanups.push(fn);
     return {
       ...input.host,
@@ -206,7 +243,11 @@ export async function run(input: RunInput): Promise<RunResult> {
       log: input.log,
       facts: (id) => results.get(id)?.facts,
       defer,
-      upcoming: () => groups.slice(next()).flat().map((s) => s.id),
+      upcoming: () =>
+        groups
+          .slice(next())
+          .flat()
+          .map((s) => s.id),
       startGhNibfin(args, options) {
         const child = input.host.startGhNibfin(args, options);
         defer(() => child.stop());
@@ -255,7 +296,11 @@ export async function run(input: RunInput): Promise<RunResult> {
     else {
       input.log(`provisioning ${step.id}`);
       ran.push(step);
-      outcome = await bounded(`step ${step.id}`, () => step.run(ctx), `harness budget of ${workBudget} ran out during this step`);
+      outcome = await bounded(
+        `step ${step.id}`,
+        () => step.run(ctx),
+        `harness budget of ${workBudget} ran out during this step`,
+      );
       await runCleanups(cleanups, `step ${step.id}`, cleanupTimeoutMs, input.log);
     }
     const r = { id: step.id, ...outcome };
@@ -269,7 +314,13 @@ export async function run(input: RunInput): Promise<RunResult> {
     if (!outcome) {
       input.log(`scenario ${s.id}`);
       const own: (() => Promise<unknown>)[] = [];
-      outcome = plain(await bounded(`scenario ${s.id}`, () => s.run(contextWith(own, () => next)), `harness budget of ${workBudget} ran out during this scenario`));
+      outcome = plain(
+        await bounded(
+          `scenario ${s.id}`,
+          () => s.run(contextWith(own, () => next)),
+          `harness budget of ${workBudget} ran out during this scenario`,
+        ),
+      );
       await runCleanups(own, `scenario ${s.id}`, cleanupTimeoutMs, input.log);
     }
     return { id: s.id, rules: s.rules, ...outcome };
@@ -296,7 +347,11 @@ export async function run(input: RunInput): Promise<RunResult> {
     const fn = step.teardown;
     if (!fn) continue;
     if (finalAt !== undefined && (cut || Date.now() >= finalAt)) {
-      teardown.push({ id: step.id, status: 'failed', reason: `not run: the harness's final limit of ${finalBudget} ran out` });
+      teardown.push({
+        id: step.id,
+        status: 'failed',
+        reason: `not run: the harness's final limit of ${finalBudget} ran out`,
+      });
       continue;
     }
     input.log(`teardown ${step.id}`);
@@ -311,7 +366,11 @@ export async function run(input: RunInput): Promise<RunResult> {
       cut = true;
       input.log(`teardown ${step.id} did not finish before the harness's final limit of ${finalBudget}`);
       input.onLimit?.();
-      teardown.push({ id: step.id, status: 'failed', reason: `did not finish before the harness's final limit of ${finalBudget}` });
+      teardown.push({
+        id: step.id,
+        status: 'failed',
+        reason: `did not finish before the harness's final limit of ${finalBudget}`,
+      });
     }
   }
 

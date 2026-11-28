@@ -32,7 +32,10 @@ const pins = (text: string) => readWorkflow(text).images.filter((i) => i.include
 
 /** main's Nibfin workflow files (`nibfin-*.yml`) and their text. */
 async function nibfinWorkflows(kit: Kit, repo: string): Promise<Map<string, string>> {
-  const { data } = await kit.github.rest<{ name: string; path: string; type: string }[]>('GET', `/repos/${repo}/contents/${WORKFLOWS}?ref=main`);
+  const { data } = await kit.github.rest<{ name: string; path: string; type: string }[]>(
+    'GET',
+    `/repos/${repo}/contents/${WORKFLOWS}?ref=main`,
+  );
   const out = new Map<string, string>();
   for (const f of data.filter((x) => x.type === 'file' && /^nibfin-.*\.ya?ml$/.test(x.name))) {
     const file = await readFile(kit.github, repo, f.path);
@@ -43,7 +46,11 @@ async function nibfinWorkflows(kit: Kit, repo: string): Promise<Map<string, stri
 
 /** Every pin on main's Nibfin workflows that is not `want`, as `path: ref`. */
 function otherPins(files: Map<string, string>, want: string): string[] {
-  return [...files].flatMap(([path, text]) => pins(text).filter((p) => p !== want).map((p) => `${path}: ${p}`));
+  return [...files].flatMap(([path, text]) =>
+    pins(text)
+      .filter((p) => p !== want)
+      .map((p) => `${path}: ${p}`),
+  );
 }
 
 /** User units whose names are new, and files added under /etc/systemd/system. */
@@ -64,7 +71,10 @@ interface Found {
 
 /** The nearest earlier nibfin-core main image whose attestation verifies (Proposal R5.55, R8.1). */
 async function findOld(ctx: RunContext, kit: Kit, dNew: string): Promise<Found | Outcome> {
-  const { data: commits } = await kit.github.rest<{ sha: string }[]>('GET', `/repos/${CORE}/commits?sha=main&per_page=100`);
+  const { data: commits } = await kit.github.rest<{ sha: string }[]>(
+    'GET',
+    `/repos/${CORE}/commits?sha=main&per_page=100`,
+  );
   const chain: CommitImage[] = [];
   let picked = oldCandidates(chain, dNew);
   for (const { sha } of commits) {
@@ -83,9 +93,18 @@ async function findOld(ctx: RunContext, kit: Kit, dNew: string): Promise<Found |
 }
 
 /** The first new open PR (not in `before`, not the fixture's own branch), polled every 10 s. */
-async function upgradePr(kit: Kit, repo: string, before: number[], branch: string, up: () => string | undefined): Promise<number[]> {
+async function upgradePr(
+  kit: Kit,
+  repo: string,
+  before: number[],
+  branch: string,
+  up: () => string | undefined,
+): Promise<number[]> {
   return remoteWait(kit, 'gh nibfin upgrade --yes to open a PR', 10 * MIN, 10 * SECOND, async () => {
-    const list = async () => (await openPulls(kit.github, repo)).filter((p) => !before.includes(p.number) && p.head.ref !== branch).map((p) => p.number);
+    const list = async () =>
+      (await openPulls(kit.github, repo))
+        .filter((p) => !before.includes(p.number) && p.head.ref !== branch)
+        .map((p) => p.number);
     // Read whether the command ended before listing, so a PR it opened just before ending is seen.
     const ended = up();
     const opened = await list();
@@ -139,10 +158,12 @@ export function imageSwitch(kitFor: KitFor): Scenario {
           if (!pinned.length) return precondition(`${RULE}: no nibfin-*.yml on ${repo} main pins ${ref(dNew)}`);
           const odd = otherPins(originals, ref(dNew));
           if (odd.length) return precondition(`${RULE}: ${repo} main pins other images: ${odd.join(', ')}`);
-          for (const [path, text] of pinned) await putFile(gh, repo, path, repin(text, dNew, old).text, `nibfin-e2e: pin the previous image (${RULE})`);
+          for (const [path, text] of pinned)
+            await putFile(gh, repo, path, repin(text, dNew, old).text, `nibfin-e2e: pin the previous image (${RULE})`);
           const readBack = await nibfinWorkflows(kit, repo);
           const notOld = otherPins(readBack, ref(old));
-          if (notOld.length) return precondition(`${RULE}: after pinning ${ref(old)}, ${repo} main still pins ${notOld.join(', ')}`);
+          if (notOld.length)
+            return precondition(`${RULE}: after pinning ${ref(old)}, ${repo} main still pins ${notOld.join(', ')}`);
 
           // 4. The old Job.
           const since = new Date(kit.now() - MIN).toISOString();
@@ -154,10 +175,20 @@ export function imageSwitch(kitFor: KitFor): Scenario {
             imagesAt.set(e.id, await imagesNamed(kit).catch((error: unknown) => message(error)));
           });
           const w = watch;
-          const oldStart = await w.started(1, DEADLINE.shape, `the first stage Job container of ${repo}#${issue} to start`);
+          const oldStart = await w.started(
+            1,
+            DEADLINE.shape,
+            `the first stage Job container of ${repo}#${issue} to start`,
+          );
           const oldId = oldStart.id;
           const oldP = await w.projection(oldId);
-          if (!c.that(oldP?.imageName === ref(old), RULE, `container ${oldId} of the first stage Job runs ${oldP?.imageName ?? 'an image not read (gone at once)'}, expected ${ref(old)} pinned on main`)) {
+          if (
+            !c.that(
+              oldP?.imageName === ref(old),
+              RULE,
+              `container ${oldId} of the first stage Job runs ${oldP?.imageName ?? 'an image not read (gone at once)'}, expected ${ref(old)} pinned on main`,
+            )
+          ) {
             return c.outcome('');
           }
           const oldRunId = oldP?.runId;
@@ -172,22 +203,35 @@ export function imageSwitch(kitFor: KitFor): Scenario {
             (error: unknown) => ((upEnded = `failed: ${message(error)}`), undefined),
           );
           const opened = await upgradePr(kit, repo, startPulls, branch, () => upEnded);
-          if (!c.that(opened.length === 1, RULE, `gh nibfin upgrade --yes opened ${opened.length} PRs (${opened.map((x) => `#${x}`).join(', ')}), expected 1`)) {
+          if (
+            !c.that(
+              opened.length === 1,
+              RULE,
+              `gh nibfin upgrade --yes opened ${opened.length} PRs (${opened.map((x) => `#${x}`).join(', ')}), expected 1`,
+            )
+          ) {
             await up;
             upJudged = true;
             return c.outcome('');
           }
           const pr = opened[0] as number;
           const beforeMerge = await readContainer(kit.exec, oldId);
-          if (beforeMerge === 'gone') return precondition(`${RULE}: the D_old Job (container ${oldId}, run ${oldRunId}) ended before upgrade PR #${pr} merged`);
+          if (beforeMerge === 'gone')
+            return precondition(
+              `${RULE}: the D_old Job (container ${oldId}, run ${oldRunId}) ended before upgrade PR #${pr} merged`,
+            );
           const { data: prData } = await gh.rest<{ head: { sha: string } }>('GET', `/repos/${repo}/pulls/${pr}`);
           await gh.rest('PUT', `/repos/${repo}/pulls/${pr}/merge`, { merge_method: 'rebase', sha: prData.head.sha });
           const { data: merged } = await gh.rest<{ merged_at: string | null }>('GET', `/repos/${repo}/pulls/${pr}`);
-          if (!merged.merged_at) return precondition(`${RULE}: upgrade PR #${pr} reads back unmerged after the rebase merge`);
+          if (!merged.merged_at)
+            return precondition(`${RULE}: upgrade PR #${pr} reads back unmerged after the rebase merge`);
           const mergedAt = merged.merged_at;
           const afterUpgrade = await nibfinWorkflows(kit, repo);
           const stale = otherPins(afterUpgrade, ref(dNew));
-          if (stale.length) return precondition(`${RULE}: merged upgrade PR #${pr} left main pinning ${stale.join(', ')} instead of ${ref(dNew)} (Proposal R5.38)`);
+          if (stale.length)
+            return precondition(
+              `${RULE}: merged upgrade PR #${pr} left main pinning ${stale.join(', ')} instead of ${ref(dNew)} (Proposal R5.38)`,
+            );
 
           // 6. No hot swap: the old container keeps its id and image until it exits.
           const diedSeen = () => w.events.some((e) => e.kind === 'died' && e.id === oldId);
@@ -206,42 +250,79 @@ export function imageSwitch(kitFor: KitFor): Scenario {
                 try {
                   await w.diedAll([oldId], 30 * SECOND, `the died event of container ${oldId}`);
                 } catch {
-                  c.fail(RULE, `container ${oldId} (run ${oldRunId}) vanished without a died event after ${reads} read(s)`);
+                  c.fail(
+                    RULE,
+                    `container ${oldId} (run ${oldRunId}) vanished without a died event after ${reads} read(s)`,
+                  );
                 }
               }
               break;
             }
             reads++;
-            if (!c.that(read.id === oldId && read.image === ref(old), RULE, `after merging upgrade PR #${pr}, the running container ${oldId} reads as ${read.id} with image ${read.image}, expected ${ref(old)} (hot swap)`)) break;
+            if (
+              !c.that(
+                read.id === oldId && read.image === ref(old),
+                RULE,
+                `after merging upgrade PR #${pr}, the running container ${oldId} reads as ${read.id} with image ${read.image}, expected ${ref(old)} (hot swap)`,
+              )
+            )
+              break;
             if (diedSeen()) break;
             if (kit.now() >= loopEnd) {
-              c.fail(RULE, `container ${oldId} (run ${oldRunId}) still runs ${Math.round(DEADLINE.shape / MIN)} min after the merge`);
+              c.fail(
+                RULE,
+                `container ${oldId} (run ${oldRunId}) still runs ${Math.round(DEADLINE.shape / MIN)} min after the merge`,
+              );
               break;
             }
             await kit.sleep(30 * SECOND);
           }
           // Not one read after the merge saw the container: it was not observed across the merge.
-          if (reads === 0 && !c.problems.length) return precondition(`${RULE}: the D_old Job (container ${oldId}, run ${oldRunId}) ended before it was read after upgrade PR #${pr} merged`);
+          if (reads === 0 && !c.problems.length)
+            return precondition(
+              `${RULE}: the D_old Job (container ${oldId}, run ${oldRunId}) ended before it was read after upgrade PR #${pr} merged`,
+            );
           const oldLog = await jobLog(kit, runRepo, oldRunId, `image-switch-${issue}-old`);
           const oldLine = imageLine(oldLog.text);
-          c.that(oldLine?.includes(old) === true, RULE, `the Job log of run ${oldRunId} (Job ${oldLog.job.id}) says "Nibfin image: ${oldLine ?? 'none'}", expected ${ref(old)}`);
-          c.that(oldLog.job.conclusion !== null && oldLog.job.conclusion !== 'cancelled', RULE, `Job ${oldLog.job.id} of run ${oldRunId}, running when PR #${pr} merged, ended ${oldLog.job.conclusion ?? 'without a conclusion'}`);
+          c.that(
+            oldLine?.includes(old) === true,
+            RULE,
+            `the Job log of run ${oldRunId} (Job ${oldLog.job.id}) says "Nibfin image: ${oldLine ?? 'none'}", expected ${ref(old)}`,
+          );
+          c.that(
+            oldLog.job.conclusion !== null && oldLog.job.conclusion !== 'cancelled',
+            RULE,
+            `Job ${oldLog.job.id} of run ${oldRunId}, running when PR #${pr} merged, ended ${oldLog.job.conclusion ?? 'without a conclusion'}`,
+          );
 
           // The upgrade: it exits 0 and opened exactly one PR.
           const upResult = await up;
           upJudged = true;
-          c.that(upResult?.code === 0, RULE, `gh nibfin upgrade --yes ${upEnded ?? 'did not end'}${upResult ? `: ${tail(upResult)}` : ''}`);
-          const extra = (await openPulls(gh, repo)).filter((p) => !startPulls.includes(p.number) && p.head.ref !== branch).map((p) => `#${p.number}`);
+          c.that(
+            upResult?.code === 0,
+            RULE,
+            `gh nibfin upgrade --yes ${upEnded ?? 'did not end'}${upResult ? `: ${tail(upResult)}` : ''}`,
+          );
+          const extra = (await openPulls(gh, repo))
+            .filter((p) => !startPulls.includes(p.number) && p.head.ref !== branch)
+            .map((p) => `#${p.number}`);
           c.that(!extra.length, RULE, `besides PR #${pr}, gh nibfin upgrade --yes opened ${extra.join(', ')}`);
 
           // 7. The next Job: the first stage run created at or after merged_at.
           type ApiRun = RunRef & { status: string };
-          const runsSince = () => gh.list<ApiRun>(`/repos/${repo}/actions/runs?created=${encodeURIComponent('>=' + since)}`, 'workflow_runs');
+          const runsSince = () =>
+            gh.list<ApiRun>(`/repos/${repo}/actions/runs?created=${encodeURIComponent('>=' + since)}`, 'workflow_runs');
           const findNext = async () => stageRunsAround(await runsSince(), repo, issue, mergedAt).next;
           let wake: string | undefined;
           let next: ApiRun | undefined;
           try {
-            next = await remoteWait(kit, `a stage run of ${repo}#${issue} created at or after ${mergedAt}`, DEADLINE.finish, 15 * SECOND, findNext);
+            next = await remoteWait(
+              kit,
+              `a stage run of ${repo}#${issue} created at or after ${mergedAt}`,
+              DEADLINE.finish,
+              15 * SECOND,
+              findNext,
+            );
           } catch (error) {
             if (kit.signal.aborted) throw error;
             const ls = await labels(kit, repo, issue);
@@ -255,21 +336,37 @@ export function imageSwitch(kitFor: KitFor): Scenario {
             }
             kit.log(`${repo}#${issue}: no stage run after the merge; woke it once: ${wake}`);
             try {
-              next = await remoteWait(kit, `a stage run of ${repo}#${issue} created at or after ${mergedAt} after the wake`, DEADLINE.shape, 15 * SECOND, findNext);
+              next = await remoteWait(
+                kit,
+                `a stage run of ${repo}#${issue} created at or after ${mergedAt} after the wake`,
+                DEADLINE.shape,
+                15 * SECOND,
+                findNext,
+              );
             } catch (again) {
               if (kit.signal.aborted) throw again;
-              c.fail(RULE, `no stage run of ${repo}#${issue} was created after upgrade PR #${pr} merged at ${mergedAt}, even after one wake (${wake}): ${message(again)}; ${await issueState(kit, repo, issue)}`);
+              c.fail(
+                RULE,
+                `no stage run of ${repo}#${issue} was created after upgrade PR #${pr} merged at ${mergedAt}, even after one wake (${wake}): ${message(again)}; ${await issueState(kit, repo, issue)}`,
+              );
             }
           }
-          const beforeRuns = stageRunsAround(await runsSince(), repo, issue, mergedAt).before.map((r) => `${r.id} (${r.display_title}, ${r.created_at})`);
+          const beforeRuns = stageRunsAround(await runsSince(), repo, issue, mergedAt).before.map(
+            (r) => `${r.id} (${r.display_title}, ${r.created_at})`,
+          );
           let nextId: string | undefined;
           let nextNote = '';
           if (next) {
             const target = String(next.id);
-            const matches = async (e: ContainerEvent) => e.kind === 'start' && (await w.projection(e.id))?.runId === target;
+            const matches = async (e: ContainerEvent) =>
+              e.kind === 'start' && (await w.projection(e.id))?.runId === target;
             const waitEnd = kit.now() + DEADLINE.shape;
             for (let k = 1; ; k++) {
-              const e = await w.started(k, Math.max(waitEnd - kit.now(), 0), `the container of run ${target} (the next Job of ${repo}#${issue})`);
+              const e = await w.started(
+                k,
+                Math.max(waitEnd - kit.now(), 0),
+                `the container of run ${target} (the next Job of ${repo}#${issue})`,
+              );
               if (await matches(e)) {
                 nextId = e.id;
                 break;
@@ -278,35 +375,67 @@ export function imageSwitch(kitFor: KitFor): Scenario {
             await addLabel(kit, repo, issue, 'pause');
             const hostAfter = await readHostState(hostRun(ctx), 'linux');
             const nextP = await w.projection(nextId);
-            c.that(nextP?.imageName === ref(dNew), RULE, `container ${nextId} of run ${target}, the next Job after PR #${pr} merged, runs ${nextP?.imageName ?? 'an image not read'}, expected ${ref(dNew)}`);
+            c.that(
+              nextP?.imageName === ref(dNew),
+              RULE,
+              `container ${nextId} of run ${target}, the next Job after PR #${pr} merged, runs ${nextP?.imageName ?? 'an image not read'}, expected ${ref(dNew)}`,
+            );
 
             // 8. No Core install: D_new reached the host only as a pulled, digest-named image.
             const atOld = imagesAt.get(oldId);
             const atNext = imagesAt.get(nextId);
             if (typeof atOld === 'string' || typeof atNext === 'string' || !atOld || !atNext) {
-              c.fail(RULE, `local images not read at the container starts: ${typeof atOld === 'string' ? atOld : atOld ? 'old read' : 'old missing'}; ${typeof atNext === 'string' ? atNext : atNext ? 'next read' : 'next missing'}`);
+              c.fail(
+                RULE,
+                `local images not read at the container starts: ${typeof atOld === 'string' ? atOld : atOld ? 'old read' : 'old missing'}; ${typeof atNext === 'string' ? atNext : atNext ? 'next read' : 'next missing'}`,
+              );
             } else {
-              const show = (l: LocalImage[]) => l.map((i) => `${i.id.slice(0, 12)} [${i.repoDigests.join(' ') || i.names.join(' ') || 'no name'}]`).join(', ') || 'none';
-              c.that(atNext.some((i) => i.repoDigests.includes(ref(dNew))), RULE, `when run ${target} started, no local image has the repo digest ${ref(dNew)}: ${show(atNext)}`);
+              const show = (l: LocalImage[]) =>
+                l
+                  .map((i) => `${i.id.slice(0, 12)} [${i.repoDigests.join(' ') || i.names.join(' ') || 'no name'}]`)
+                  .join(', ') || 'none';
+              c.that(
+                atNext.some((i) => i.repoDigests.includes(ref(dNew))),
+                RULE,
+                `when run ${target} started, no local image has the repo digest ${ref(dNew)}: ${show(atNext)}`,
+              );
               const oldIds = new Set(atOld.map((i) => i.id));
               const gained = atNext.filter((i) => !oldIds.has(i.id));
               const strange = gained.filter((i) => !i.repoDigests.includes(ref(dNew)));
-              c.that(!strange.length, RULE, `images that appeared on the host other than the pulled ${ref(dNew)}: ${show(strange)}`);
+              c.that(
+                !strange.length,
+                RULE,
+                `images that appeared on the host other than the pulled ${ref(dNew)}: ${show(strange)}`,
+              );
               const built = atNext.filter((i) => !i.repoDigests.length);
-              c.that(!built.length, RULE, `local ${IMAGE} images without a repo digest (built, not pulled): ${show(built)}`);
-              if (atOld.some((i) => i.repoDigests.includes(ref(dNew)))) nextNote = `; ${ref(dNew)} was already on the host when the old Job started (its removal was refused)`;
+              c.that(
+                !built.length,
+                RULE,
+                `local ${IMAGE} images without a repo digest (built, not pulled): ${show(built)}`,
+              );
+              if (atOld.some((i) => i.repoDigests.includes(ref(dNew))))
+                nextNote = `; ${ref(dNew)} was already on the host when the old Job started (its removal was refused)`;
             }
             const added = hostAdditions(hostBefore, hostAfter);
             c.that(!added.length, RULE, `the host gained ${added.join(', ')} between the start and run ${target}`);
 
-            const died = await w.diedAll([nextId], DEADLINE.deliver, `container ${nextId} of run ${target} to end`).then(
-              () => true,
-              async (error: unknown) => (c.fail(RULE, `${message(error)}; ${await issueState(kit, repo, issue)}`), false),
-            );
+            const died = await w
+              .diedAll([nextId], DEADLINE.deliver, `container ${nextId} of run ${target} to end`)
+              .then(
+                () => true,
+                async (error: unknown) => (
+                  c.fail(RULE, `${message(error)}; ${await issueState(kit, repo, issue)}`),
+                  false
+                ),
+              );
             if (died) {
               const nextLog = await jobLog(kit, nextP?.runRepo ?? repo, target, `image-switch-${issue}-next`);
               const line = imageLine(nextLog.text);
-              c.that(line?.includes(dNew) === true, RULE, `the Job log of run ${target} (Job ${nextLog.job.id} on ${nextLog.job.runnerName}) says "Nibfin image: ${line ?? 'none'}", expected ${ref(dNew)}`);
+              c.that(
+                line?.includes(dNew) === true,
+                RULE,
+                `the Job log of run ${target} (Job ${nextLog.job.id} on ${nextLog.job.runnerName}) says "Nibfin image: ${line ?? 'none'}", expected ${ref(dNew)}`,
+              );
               const build = buildOutput(nextLog.text);
               c.that(build === undefined, RULE, `the Job log of run ${target} shows an image build: ${build}`);
             }
@@ -345,13 +474,18 @@ export function imageSwitch(kitFor: KitFor): Scenario {
         // the new PRs are closed and both Runners are checked online.
         const pending = up;
         await step('waiting for gh nibfin upgrade --yes to end', async () => {
-          await remoteWait(kit, 'gh nibfin upgrade --yes to end', DEADLINE.shape, 10 * SECOND, async () => (upEnded === undefined ? undefined : true));
+          await remoteWait(kit, 'gh nibfin upgrade --yes to end', DEADLINE.shape, 10 * SECOND, async () =>
+            upEnded === undefined ? undefined : true,
+          );
           const r = await pending;
-          if (r?.code !== 0) throw new Error(`${RULE}: gh nibfin upgrade --yes ${upEnded ?? 'did not end'}${r ? `: ${tail(r)}` : ''}`);
+          if (r?.code !== 0)
+            throw new Error(`${RULE}: gh nibfin upgrade --yes ${upEnded ?? 'did not end'}${r ? `: ${tail(r)}` : ''}`);
         });
       }
       await step('closing the PRs this scenario opened', async () => {
-        for (const p of await openPulls(gh, repo)) if (!startPulls.includes(p.number)) await gh.rest('PATCH', `/repos/${repo}/pulls/${p.number}`, { state: 'closed' });
+        for (const p of await openPulls(gh, repo))
+          if (!startPulls.includes(p.number))
+            await gh.rest('PATCH', `/repos/${repo}/pulls/${p.number}`, { state: 'closed' });
       });
       if (dOld !== undefined) {
         const old = dOld;
@@ -359,7 +493,8 @@ export function imageSwitch(kitFor: KitFor): Scenario {
           const now = await nibfinWorkflows(kit, repo);
           for (const [path, text] of now) {
             const original = originals.get(path);
-            if (pins(text).includes(ref(old)) && original !== undefined) await putFile(gh, repo, path, original, `nibfin-e2e: restore the current image (${RULE})`);
+            if (pins(text).includes(ref(old)) && original !== undefined)
+              await putFile(gh, repo, path, original, `nibfin-e2e: restore the current image (${RULE})`);
           }
           const odd = otherPins(await nibfinWorkflows(kit, repo), ref(dNew));
           if (odd.length) throw new Error(`main still pins ${odd.join(', ')}`);
@@ -372,7 +507,10 @@ export function imageSwitch(kitFor: KitFor): Scenario {
         }),
       );
       if (!down.length) return result;
-      return { status: 'failed', reason: [result.status === 'failed' ? result.reason : undefined, ...down].filter(Boolean).join('; ') };
+      return {
+        status: 'failed',
+        reason: [result.status === 'failed' ? result.reason : undefined, ...down].filter(Boolean).join('; '),
+      };
     },
   };
 }

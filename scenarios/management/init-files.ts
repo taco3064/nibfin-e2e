@@ -9,7 +9,12 @@ const WF = '.github/workflows/';
 
 /** The files each init PR may add, as Proposal R5.2–R5.3 name them. */
 export const EXPECTED = {
-  execution: [`${WF}nibfin-issue.yml`, `${WF}nibfin-shared-runner.yml`, `${WF}nibfin-job.yml`, `${WF}nibfin-runner-request.yml`],
+  execution: [
+    `${WF}nibfin-issue.yml`,
+    `${WF}nibfin-shared-runner.yml`,
+    `${WF}nibfin-job.yml`,
+    `${WF}nibfin-runner-request.yml`,
+  ],
   peer: [`${WF}nibfin-issue.yml`],
 };
 
@@ -24,8 +29,12 @@ export function ownerUse(u: string): { sha: string } | { why: string } | undefin
   const m = /^taco3064\/([^/@\s]+)((?:\/[^@\s]+)?)@([^@\s]+)$/i.exec(u);
   if (!m) return { why: 'a workflow or action of the Owner' };
   const [, repo = '', path = '', ref = ''] = m;
-  if (repo.toLowerCase() !== 'nibfin-core') return { why: 'a workflow or action of another Owner repository; R5.7 allows only the taco3064/nibfin-core Action' };
-  if (/^\/\.github\/workflows\//i.test(path)) return { why: 'a reusable workflow of nibfin-core, which R5.7 does not allow' };
+  if (repo.toLowerCase() !== 'nibfin-core')
+    return {
+      why: 'a workflow or action of another Owner repository; R5.7 allows only the taco3064/nibfin-core Action',
+    };
+  if (/^\/\.github\/workflows\//i.test(path))
+    return { why: 'a reusable workflow of nibfin-core, which R5.7 does not allow' };
   if (!/^[0-9a-f]{40}$/.test(ref)) return { why: `pinned to ${ref}, not a full 40-character commit SHA` };
   return { sha: ref };
 }
@@ -34,7 +43,14 @@ export function ownerUse(u: string): { sha: string } | { why: string } | undefin
 export type ImageTags = ReadonlyMap<string, { digest?: string } | { error: string }>;
 
 /** Every check on one init PR's files; all of them run even after an unexpected file. */
-export function checkInitFiles(c: Check, repo: string, kind: 'execution' | 'peer', files: { path: string; text: string }[], digest: string, tags: ImageTags = new Map()): void {
+export function checkInitFiles(
+  c: Check,
+  repo: string,
+  kind: 'execution' | 'peer',
+  files: { path: string; text: string }[],
+  digest: string,
+  tags: ImageTags = new Map(),
+): void {
   const paths = files.map((f) => f.path).sort();
   const expected = EXPECTED[kind];
   const extra = paths.filter((p) => !expected.includes(p));
@@ -43,7 +59,10 @@ export function checkInitFiles(c: Check, repo: string, kind: 'execution' | 'peer
   c.that(!missing.length, rule, `${repo} init PR lacks ${missing.join(', ')}`);
   for (const p of extra) {
     const r = /producer-pins\.json$/.test(p) ? 'R5.4' : /wake/i.test(p) ? 'R5.4' : rule;
-    c.fail(r, `${repo} init PR adds ${p}, which is not in the ${kind} set (${expected.map((e) => e.slice(WF.length)).join(', ')}) and nothing else`);
+    c.fail(
+      r,
+      `${repo} init PR adds ${p}, which is not in the ${kind} set (${expected.map((e) => e.slice(WF.length)).join(', ')}) and nothing else`,
+    );
   }
   c.that(
     (kind === 'execution') === paths.includes(`${WF}nibfin-shared-runner.yml`),
@@ -54,13 +73,25 @@ export function checkInitFiles(c: Check, repo: string, kind: 'execution' | 'peer
   for (const f of files) {
     const w = readWorkflow(f.text);
     const isWorkflow = f.path.startsWith(WF);
-    c.that(isWorkflow && /^nibfin-[^/]+\.yml$/.test(f.path.slice(WF.length)), 'R5.5', `${repo}: ${f.path} is not named .github/workflows/nibfin-*.yml`);
+    c.that(
+      isWorkflow && /^nibfin-[^/]+\.yml$/.test(f.path.slice(WF.length)),
+      'R5.5',
+      `${repo}: ${f.path} is not named .github/workflows/nibfin-*.yml`,
+    );
     if (isWorkflow) {
-      c.that(!!w.name?.startsWith('Nibfin · '), 'R5.5', `${repo}: ${f.path} name is ${JSON.stringify(w.name ?? null)}, expected "Nibfin · …"`);
+      c.that(
+        !!w.name?.startsWith('Nibfin · '),
+        'R5.5',
+        `${repo}: ${f.path} name is ${JSON.stringify(w.name ?? null)}, expected "Nibfin · …"`,
+      );
       // A workflow only other workflows call creates no run of its own, so GitHub renders no title from it.
       const reusableOnly = triggers(f.text).join() === 'workflow_call';
       if (!reusableOnly) {
-        c.that(titleStartsWith(w.runName ?? '', 'Nibfin'), 'R5.5', `${repo}: ${f.path} run-name is ${JSON.stringify(w.runName ?? null)}, expected to start with "Nibfin"`);
+        c.that(
+          titleStartsWith(w.runName ?? '', 'Nibfin'),
+          'R5.5',
+          `${repo}: ${f.path} run-name is ${JSON.stringify(w.runName ?? null)}, expected to start with "Nibfin"`,
+        );
       }
     }
     for (const u of w.uses) {
@@ -72,16 +103,31 @@ export function checkInitFiles(c: Check, repo: string, kind: 'execution' | 'peer
       }
       const tag = `ghcr.io/taco3064/nibfin:${owner.sha}`;
       const found = tags.get(owner.sha);
-      if (found && 'error' in found) c.fail('R5.7', `${repo}: ${f.path} uses ${u}, but ${tag} could not be read: ${found.error}`);
-      else if (!found?.digest) c.fail('R5.7', `${repo}: ${f.path} uses ${u}, whose image tag ${tag} has no digest (none), expected ${digest}`);
-      else if (found.digest !== digest) c.fail('R5.7', `${repo}: ${f.path} uses ${u}, whose image tag ${tag} is ${found.digest}, expected ${digest}`);
+      if (found && 'error' in found)
+        c.fail('R5.7', `${repo}: ${f.path} uses ${u}, but ${tag} could not be read: ${found.error}`);
+      else if (!found?.digest)
+        c.fail('R5.7', `${repo}: ${f.path} uses ${u}, whose image tag ${tag} has no digest (none), expected ${digest}`);
+      else if (found.digest !== digest)
+        c.fail('R5.7', `${repo}: ${f.path} uses ${u}, whose image tag ${tag} is ${found.digest}, expected ${digest}`);
     }
-    c.that(!/github\.com\/taco3064\//i.test(f.text), 'R5.7', `${repo}: ${f.path} refers to a github.com/taco3064/ repository`);
+    c.that(
+      !/github\.com\/taco3064\//i.test(f.text),
+      'R5.7',
+      `${repo}: ${f.path} refers to a github.com/taco3064/ repository`,
+    );
     const callers = files.filter((o) => o !== f && localCalls(o.text).includes(f.path)).map((o) => o.text);
     for (const { ref, why } of unpinnedImages(f.text, digest, callers)) {
-      c.fail('R5.7', `${repo}: ${f.path} references ${ref}${why ? ` ${why}` : ''}, expected ghcr.io/taco3064/nibfin@${digest}`);
+      c.fail(
+        'R5.7',
+        `${repo}: ${f.path} references ${ref}${why ? ` ${why}` : ''}, expected ghcr.io/taco3064/nibfin@${digest}`,
+      );
     }
-    if (w.images.length) c.that(/\bpodman\b/.test(f.text), 'R5.7', `${repo}: ${f.path} references the image but does not run it with podman`);
+    if (w.images.length)
+      c.that(
+        /\bpodman\b/.test(f.text),
+        'R5.7',
+        `${repo}: ${f.path} references the image but does not run it with podman`,
+      );
   }
 
   const shared = files.find((f) => f.path === `${WF}nibfin-shared-runner.yml`);
@@ -96,8 +142,14 @@ export function checkInitFiles(c: Check, repo: string, kind: 'execution' | 'peer
     }
     const runsOn = reached.flatMap((f) => readWorkflow(f.text).runsOn);
     const calledNames = reached.slice(1).map((f) => f.path.slice(WF.length));
-    const where = calledNames.length ? `nibfin-shared-runner.yml or the local workflows it calls (${calledNames.join(', ')})` : 'nibfin-shared-runner.yml';
-    c.that(runsOn.some((v) => /nibfin-/.test(v)), 'R5.7', `${repo}: no runs-on in ${where} uses a nibfin- label (${runsOn.join(' | ') || 'none'})`);
+    const where = calledNames.length
+      ? `nibfin-shared-runner.yml or the local workflows it calls (${calledNames.join(', ')})`
+      : 'nibfin-shared-runner.yml';
+    c.that(
+      runsOn.some((v) => /nibfin-/.test(v)),
+      'R5.7',
+      `${repo}: no runs-on in ${where} uses a nibfin- label (${runsOn.join(' | ') || 'none'})`,
+    );
   }
 }
 
@@ -155,6 +207,8 @@ export const initFiles: Scenario = {
     const tags = await actionTags([...execFiles, ...peerFiles]);
     checkInitFiles(c, execution, 'execution', execFiles, facts.imageDigest, tags);
     checkInitFiles(c, peer, 'peer', peerFiles, facts.imageDigest, tags);
-    return c.outcome(`init wrote exactly the execution and peer sets, Nibfin-named, self-contained and pinned to ${facts.imageDigest}`);
+    return c.outcome(
+      `init wrote exactly the execution and peer sets, Nibfin-named, self-contained and pinned to ${facts.imageDigest}`,
+    );
   },
 };

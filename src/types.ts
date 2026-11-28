@@ -116,9 +116,7 @@ export interface Scenario {
 }
 
 /** One coverage map entry: a covered rule, or a rule the Proposal marks 〔不測：…〕. */
-export type MapEntry =
-  | { id: RuleId; platforms: Platform[]; scenarios: string[] }
-  | { id: RuleId; notE2e: string };
+export type MapEntry = { id: RuleId; platforms: Platform[]; scenarios: string[] } | { id: RuleId; notE2e: string };
 
 export type CoveredEntry = Extract<MapEntry, { scenarios: string[] }>;
 

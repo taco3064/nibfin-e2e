@@ -14,9 +14,25 @@ import { IMAGE, imageDigest } from '../lib/observed-facts.ts';
 import { registrations } from '../lib/github.ts';
 import type { Registration } from '../lib/github.ts';
 import { listVolume } from '../lib/volume.ts';
-import { describeLogin, loginVerdict, otherImageLogin, parseIds, pickLogin, projectLogin, shortId } from './login-container.ts';
+import {
+  describeLogin,
+  loginVerdict,
+  otherImageLogin,
+  parseIds,
+  pickLogin,
+  projectLogin,
+  shortId,
+} from './login-container.ts';
 import type { CurrentMain, LoginContainer } from './login-container.ts';
-import { guideTail, loginGuide, statusRunners, SUCCESS_LINE, volumeContainers, volumeExists, waitForOutput } from './login-guide.ts';
+import {
+  guideTail,
+  loginGuide,
+  statusRunners,
+  SUCCESS_LINE,
+  volumeContainers,
+  volumeExists,
+  waitForOutput,
+} from './login-guide.ts';
 
 const PROVIDER = 'codex';
 /** Allows for the first pull of the login image. */
@@ -41,7 +57,10 @@ async function jobImageId(ctx: RunContext, digest: string): Promise<string> {
   const ref = `${IMAGE}@${digest}`;
   const r = await ctx.exec(['podman', 'image', 'inspect', '--format', '{{.Id}}', ref]);
   const id = r.stdout.trim();
-  if (r.code !== 0 || !id) throw new Error(`run state: the Jobs' image ${ref} is not present locally (podman image inspect exited ${r.code}: ${tail(r, 300)})`);
+  if (r.code !== 0 || !id)
+    throw new Error(
+      `run state: the Jobs' image ${ref} is not present locally (podman image inspect exited ${r.code}: ${tail(r, 300)})`,
+    );
   return id;
 }
 
@@ -54,7 +73,12 @@ type SampleEnd = 'found' | 'timeout' | 'exited' | 'aborted';
  * allowlisted projection of each inspect document is kept (raw output never reaches a
  * log or reason); a container gone between the listing and the inspect is skipped.
  */
-async function sampleLogin(ctx: RunContext, child: Child, jobId: string, ms: number): Promise<{ end: SampleEnd; match?: LoginContainer; seen: LoginContainer[] }> {
+async function sampleLogin(
+  ctx: RunContext,
+  child: Child,
+  jobId: string,
+  ms: number,
+): Promise<{ end: SampleEnd; match?: LoginContainer; seen: LoginContainer[] }> {
   const deadline = Date.now() + ms;
   let exited = false;
   // As in waitForOutput: a pattern that never matches rejects only when the child exits.
@@ -90,7 +114,11 @@ async function sampleLogin(ctx: RunContext, child: Child, jobId: string, ms: num
 /** The R6.11 outcome, held as a value so R5.30's checks and the cleanup still run. */
 type LoginCheck = { pass: string } | { failure: string };
 
-async function checkLoginContainer(ctx: RunContext, child: Child, image: { digest: string; id: string }): Promise<LoginCheck> {
+async function checkLoginContainer(
+  ctx: RunContext,
+  child: Child,
+  image: { digest: string; id: string },
+): Promise<LoginCheck> {
   const ref = `${IMAGE}@${image.digest}`;
   let sample: Awaited<ReturnType<typeof sampleLogin>>;
   try {
@@ -115,23 +143,42 @@ async function checkLoginContainer(ctx: RunContext, child: Child, image: { diges
     }
     if ('digest' in current && current.digest !== image.digest) {
       // The current image may not be present locally; then only a digest match can prove it.
-      const r = await ctx.exec(['podman', 'image', 'inspect', '--format', '{{.Id}}', `${IMAGE}@${current.digest}`]).catch(() => undefined);
+      const r = await ctx
+        .exec(['podman', 'image', 'inspect', '--format', '{{.Id}}', `${IMAGE}@${current.digest}`])
+        .catch(() => undefined);
       const id = r?.stdout.trim();
       if (r?.code === 0 && id) current = { digest: current.digest, imageId: id };
     }
   }
-  const when = { exited: 'before the command exited', aborted: 'before the run budget ended the wait', timeout: `within ${LOGIN_CONTAINER_MS / 1000} s`, found: '' }[sample.end];
-  return loginVerdict({ seen: sample.seen, ref, jobImageId: image.id, initDigest: image.digest, current, volume: CODEX_VOLUME, waitText: when });
+  const when = {
+    exited: 'before the command exited',
+    aborted: 'before the run budget ended the wait',
+    timeout: `within ${LOGIN_CONTAINER_MS / 1000} s`,
+    found: '',
+  }[sample.end];
+  return loginVerdict({
+    seen: sample.seen,
+    ref,
+    jobImageId: image.id,
+    initDigest: image.digest,
+    current,
+    volume: CODEX_VOLUME,
+    waitText: when,
+  });
 }
 
 /** Every failure here is the run's state, never R5.30. */
 async function precondition(ctx: RunContext): Promise<void> {
   const status = await statusJson(ctx);
   const login = providerLogin(status, PROVIDER);
-  if (login !== false) throw new Error(`gh nibfin status --json reports codex ${login ? 'logged in' : 'with no login entry'}; expected codex not logged in`);
+  if (login !== false)
+    throw new Error(
+      `gh nibfin status --json reports codex ${login ? 'logged in' : 'with no login entry'}; expected codex not logged in`,
+    );
   const runners = statusRunners(status, PROVIDER);
   if (!runners) throw new Error('gh nibfin status --json has no .host.runners.runners list to check for codex Runners');
-  if (runners.length) throw new Error(`gh nibfin status --json lists ${runners.length} codex Runner(s) before runner add`);
+  if (runners.length)
+    throw new Error(`gh nibfin status --json lists ${runners.length} codex Runner(s) before runner add`);
   if (await volumeExists(ctx, CODEX_VOLUME)) {
     const files = await listVolume(ctx.exec, CODEX_VOLUME);
     if (files.length) throw new Error(`the Codex login volume ${CODEX_VOLUME} already holds ${files.length} file(s)`);
@@ -152,7 +199,8 @@ async function cleanup(ctx: RunContext, before: Registration[], stop: () => Prom
   await step('stopping runner add', async () => void (await stop()));
   await step('runner remove codex', async () => {
     const r = await ctx.ghNibfin(['runner', 'remove', PROVIDER, '--delete-login', '--yes']);
-    if (r.code !== 0) ctx.log(`runner remove codex --delete-login --yes exited ${r.code} (noted, not fatal): ${tail(r, 300)}`);
+    if (r.code !== 0)
+      ctx.log(`runner remove codex --delete-login --yes exited ${r.code} (noted, not fatal): ${tail(r, 300)}`);
   });
   await step(`removing ${CODEX_VOLUME}`, async () => {
     if (await volumeExists(ctx, CODEX_VOLUME)) {
@@ -165,7 +213,8 @@ async function cleanup(ctx: RunContext, before: Registration[], stop: () => Prom
   const known = new Set(before.map((r) => r.id));
   await step('deleting new registrations', async () => {
     for (const r of await registrations(ctx.github, execution)) {
-      if (!known.has(r.id)) await ctx.github.rest('DELETE', `/repos/${execution}/actions/runners/${r.id}`, undefined, [404]);
+      if (!known.has(r.id))
+        await ctx.github.rest('DELETE', `/repos/${execution}/actions/runners/${r.id}`, undefined, [404]);
     }
   });
   await step('read-back', async () => {
@@ -173,7 +222,8 @@ async function cleanup(ctx: RunContext, before: Registration[], stop: () => Prom
     const containers = await volumeContainers(ctx, CODEX_VOLUME);
     if (containers.length) problems.push(`${containers.length} container(s) still mount ${CODEX_VOLUME}`);
     const extra = (await registrations(ctx.github, execution)).filter((r) => !known.has(r.id));
-    if (extra.length) problems.push(`${execution} still lists new registrations [${extra.map((r) => r.name).join(', ')}]`);
+    if (extra.length)
+      problems.push(`${execution} still lists new registrations [${extra.map((r) => r.name).join(', ')}]`);
     const status = await statusJson(ctx);
     const codex = statusRunners(status, PROVIDER);
     if (!codex) problems.push('gh nibfin status --json has no .host.runners.runners list to check for codex Runners');
@@ -185,7 +235,9 @@ async function cleanup(ctx: RunContext, before: Registration[], stop: () => Prom
       let missing: string[] = [];
       for (let i = 0; i < 6; i++) {
         const now = new Map((await registrations(ctx.github, execution)).map((r) => [r.id, r]));
-        missing = online.filter((r) => now.get(r.id)?.status !== 'online').map((r) => `${r.name} (${now.get(r.id)?.status ?? 'gone'})`);
+        missing = online
+          .filter((r) => now.get(r.id)?.status !== 'online')
+          .map((r) => `${r.name} (${now.get(r.id)?.status ?? 'gone'})`);
         if (!missing.length) break;
         await new Promise((r) => setTimeout(r, 10_000));
       }
@@ -195,15 +247,28 @@ async function cleanup(ctx: RunContext, before: Registration[], stop: () => Prom
   return problems;
 }
 
-async function attempt(ctx: RunContext, secrets: Secrets, child: Child, image: { digest: string; id: string }, login: { check?: LoginCheck }): Promise<string> {
+async function attempt(
+  ctx: RunContext,
+  secrets: Secrets,
+  child: Child,
+  image: { digest: string; id: string },
+  login: { check?: LoginCheck },
+): Promise<string> {
   const remember = () => loginGuide(child.output()).secrets.forEach((s) => secrets.add(s));
   const waited = await waitForOutput(child, (o) => loginGuide(o).url, GUIDE_MS, { signal: ctx.signal });
   remember();
   if (waited.end !== 'found') {
     const out = child.output();
-    const how = { exited: 'the command exited first', timeout: `no step line within ${GUIDE_MS / 60_000} min`, aborted: 'the run budget ended the wait', found: '' }[waited.end];
+    const how = {
+      exited: 'the command exited first',
+      timeout: `no step line within ${GUIDE_MS / 60_000} min`,
+      aborted: 'the run budget ended the wait',
+      found: '',
+    }[waited.end];
     const success = SUCCESS_LINE.test(out) ? '; the output shows a login success line instead of the step line' : '';
-    throw new Error(`R5.30: expected runner add codex to go on to the CLI's login guide (an "open https://…" login step) without a separate login command; observed: ${how}${success}: ${guideTail(out) || '(no output)'}`);
+    throw new Error(
+      `R5.30: expected runner add codex to go on to the CLI's login guide (an "open https://…" login step) without a separate login command; observed: ${how}${success}: ${guideTail(out) || '(no output)'}`,
+    );
   }
   // R6.11 while the guide is shown, before the command is stopped.
   login.check = await checkLoginContainer(ctx, child, image);
@@ -213,7 +278,9 @@ async function attempt(ctx: RunContext, secrets: Secrets, child: Child, image: {
   remember();
   const after = providerLogin(await statusJson(ctx), PROVIDER);
   if (after !== false) {
-    throw new Error(`R5.30: expected codex still not logged in after the guide was abandoned; observed status reports codex ${after ? 'logged in' : 'with no login entry'}: ${guideTail(child.output())}`);
+    throw new Error(
+      `R5.30: expected codex still not logged in after the guide was abandoned; observed status reports codex ${after ? 'logged in' : 'with no login entry'}: ${guideTail(child.output())}`,
+    );
   }
   return `runner add codex printed the CLI's login step "open <URL>"${code.end === 'found' ? ' and "enter code <CODE>"' : ''} unasked; abandoned, codex still not logged in`;
 }

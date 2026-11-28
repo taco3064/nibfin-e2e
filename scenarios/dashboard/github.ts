@@ -37,7 +37,12 @@ const toIssue = (repo: string, r: RawIssue): Issue => ({
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Polls `read` until `done` holds or the timeout passes; returns the last value read. */
-export async function until<T>(read: () => Promise<T>, done: (v: T) => boolean, timeoutMs: number, everyMs = 3000): Promise<T> {
+export async function until<T>(
+  read: () => Promise<T>,
+  done: (v: T) => boolean,
+  timeoutMs: number,
+  everyMs = 3000,
+): Promise<T> {
   const end = Date.now() + timeoutMs;
   for (;;) {
     const v = await read();
@@ -75,9 +80,20 @@ export interface Sandboxes {
 }
 
 /** Creates one Issue with its labels and Assignee in the create call, so it is never open without them. */
-export async function createIssue(gh: GitHub, repo: string, title: string, labels: string[], assignee: string): Promise<Issue> {
+export async function createIssue(
+  gh: GitHub,
+  repo: string,
+  title: string,
+  labels: string[],
+  assignee: string,
+): Promise<Issue> {
   const body = `Fixture for the nibfin-e2e Dashboard scenarios (nibfin-e2e #298). Created by the gate; the sandbox is reset after the run.`;
-  const { data } = await gh.rest<RawIssue>('POST', `/repos/${repo}/issues`, { title, body, labels, assignees: [assignee] });
+  const { data } = await gh.rest<RawIssue>('POST', `/repos/${repo}/issues`, {
+    title,
+    body,
+    labels,
+    assignees: [assignee],
+  });
   return toIssue(repo, data);
 }
 
@@ -87,7 +103,11 @@ export type Fixtures = Record<Exclude<FixtureKey, 'E'>, Issue>;
  * Finds the fixtures by exact title or creates them, then adds and reads back their
  * Blocked by edges. A found fixture whose Nibfin labels differ fails; nothing is re-labelled.
  */
-export async function ensureFixtures(gh: GitHub, sandboxes: Sandboxes, specs: FixtureSpec[] = FIXTURES): Promise<Fixtures> {
+export async function ensureFixtures(
+  gh: GitHub,
+  sandboxes: Sandboxes,
+  specs: FixtureSpec[] = FIXTURES,
+): Promise<Fixtures> {
   const login = await me(gh);
   const got = {} as Record<string, Issue>;
   for (const spec of specs) {
@@ -113,12 +133,17 @@ export async function ensureFixtures(gh: GitHub, sandboxes: Sandboxes, specs: Fi
     for (const key of spec.blockedBy) {
       const blocker = got[key] as Issue;
       if (!have.some((b) => b.id === blocker.id)) {
-        await gh.rest('POST', `/repos/${issue.repo}/issues/${issue.number}/dependencies/blocked_by`, { issue_id: blocker.id });
+        await gh.rest('POST', `/repos/${issue.repo}/issues/${issue.number}/dependencies/blocked_by`, {
+          issue_id: blocker.id,
+        });
       }
     }
     have = await blockedBy(gh, issue);
     const missing = spec.blockedBy.filter((k) => !have.some((b) => b.id === (got[k] as Issue).id));
-    if (missing.length) throw new Error(`fixture ${spec.key} (${issue.repo}#${issue.number}) reads back without Blocked by ${missing.join(', ')}`);
+    if (missing.length)
+      throw new Error(
+        `fixture ${spec.key} (${issue.repo}#${issue.number}) reads back without Blocked by ${missing.join(', ')}`,
+      );
   }
   return got as Fixtures;
 }
@@ -143,17 +168,24 @@ export async function assertQuietSandboxes(deps: QuietDeps): Promise<void> {
   const active = async () => {
     const runs: { id: number; name: string; status: string }[] = [];
     for (const status of ['queued', 'in_progress']) {
-      runs.push(...(await gh.list<{ id: number; name: string; status: string }>(`${r}/actions/runs?status=${status}`, 'workflow_runs')));
+      runs.push(
+        ...(await gh.list<{ id: number; name: string; status: string }>(
+          `${r}/actions/runs?status=${status}`,
+          'workflow_runs',
+        )),
+      );
     }
     return runs;
   };
   const runs = await until(active, (x) => x.length === 0, deps.runsTimeoutMs ?? 300_000, 10_000);
   const ps = await deps.podmanPs();
   if (ps.code !== 0) throw new Error(`podman ps exited ${ps.code}: ${ps.stderr.trim().slice(-500)}`);
-  const containers = (JSON.parse(ps.stdout.trim() || '[]') as { Image?: string; Names?: string[] | string }[]).map((c) => ({
-    image: String(c.Image ?? ''),
-    name: Array.isArray(c.Names) ? c.Names.join(',') : String(c.Names ?? ''),
-  }));
+  const containers = (JSON.parse(ps.stdout.trim() || '[]') as { Image?: string; Names?: string[] | string }[]).map(
+    (c) => ({
+      image: String(c.Image ?? ''),
+      name: Array.isArray(c.Names) ? c.Names.join(',') : String(c.Names ?? ''),
+    }),
+  );
   const problems = quietProblems({
     containers,
     issues: [

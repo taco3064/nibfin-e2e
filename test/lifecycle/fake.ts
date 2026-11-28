@@ -2,7 +2,10 @@ import { createGitHub } from '../../src/host/github.ts';
 import type { RunContext } from '../../src/types.ts';
 import { fakeHostContext } from '../host/fakes.ts';
 
-export type Handler = (body: Record<string, unknown> | undefined, url: URL) => { status?: number; data?: unknown; headers?: Record<string, string> } | unknown;
+export type Handler = (
+  body: Record<string, unknown> | undefined,
+  url: URL,
+) => { status?: number; data?: unknown; headers?: Record<string, string> } | unknown;
 
 /**
  * A GitHub fake answering "METHOD /path" (query ignored) from a table of values or
@@ -16,10 +19,20 @@ export function routes(table: Record<string, Handler | object>) {
     calls.push(`${method} ${url.pathname}${url.search}`);
     const h = table[`${method} ${url.pathname}`];
     if (!h) return new Response(JSON.stringify({ message: `no route ${method} ${url.pathname}` }), { status: 404 });
-    const out = typeof h === 'function' ? (h as Handler)(init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : undefined, url) : h;
-    const r = (out !== null && typeof out === 'object' && ('status' in out || 'data' in out) ? out : { data: out }) as { status?: number; data?: unknown; headers?: Record<string, string> };
+    const out =
+      typeof h === 'function'
+        ? (h as Handler)(init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : undefined, url)
+        : h;
+    const r = (out !== null && typeof out === 'object' && ('status' in out || 'data' in out) ? out : { data: out }) as {
+      status?: number;
+      data?: unknown;
+      headers?: Record<string, string>;
+    };
     const status = r.status ?? 200;
-    return new Response(status === 204 || r.data === undefined ? null : JSON.stringify(r.data), { status, headers: r.headers });
+    return new Response(status === 204 || r.data === undefined ? null : JSON.stringify(r.data), {
+      status,
+      headers: r.headers,
+    });
   };
   return { fetchFn, calls, github: createGitHub(() => 'tok', fetchFn) };
 }

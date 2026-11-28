@@ -41,13 +41,24 @@ test('an already clean sandbox gets no write and reads back clean', async () => 
   const { fake, deps } = setup();
   deepEqual(await resetSandbox(deps, 'o/exec', 'public'), []);
   deepEqual(fake.writes, []);
-  equal(fake.auth.every((a) => a === 'Bearer tok'), true);
-  equal(fake.urls.some((u) => u.includes('tok')), false);
+  equal(
+    fake.auth.every((a) => a === 'Bearer tok'),
+    true,
+  );
+  equal(
+    fake.urls.some((u) => u.includes('tok')),
+    false,
+  );
 });
 
 test('a dirty sandbox is converged: everything deleted, settings fixed, main fast-forwarded to the template', async () => {
   const { fake, repo, deps } = setup();
-  Object.assign(repo.settings, { visibility: 'private', allow_squash_merge: false, delete_branch_on_merge: true, pull_request_creation_policy: 'all' });
+  Object.assign(repo.settings, {
+    visibility: 'private',
+    allow_squash_merge: false,
+    delete_branch_on_merge: true,
+    pull_request_creation_policy: 'all',
+  });
   repo.commits.set('c0', { tree: 'old', parents: [] });
   repo.branches.set('nibfin/issue-1', 'c0');
   repo.pulls.push({ number: 2, state: 'open', head: { sha: 'c0' } });
@@ -68,7 +79,10 @@ test('a dirty sandbox is converged: everything deleted, settings fixed, main fas
   deepEqual([...repo.branches.keys()], ['main']);
   const head = repo.branches.get('main') as string;
   deepEqual(repo.commits.get(head), { tree, parents: ['c0'] });
-  deepEqual([repo.issues, repo.labels, repo.secrets, repo.variables, repo.keys, repo.runners, repo.rulesets], [[], [], [], [], [], [], []]);
+  deepEqual(
+    [repo.issues, repo.labels, repo.secrets, repo.variables, repo.keys, repo.runners, repo.rulesets],
+    [[], [], [], [], [], [], []],
+  );
   equal(repo.pulls[0]?.state, 'closed');
   equal(fake.writes.includes('PATCH /repos/o/exec/git/refs/heads/main'), true);
   equal(fake.writes.includes('POST /graphql'), true);
@@ -89,7 +103,10 @@ test('only the "Upgrade to GitHub Pro" 403 means a plan without rulesets', () =>
 
 test('a public sandbox with branch protection on main is reset before the template commit and reads back clean', async () => {
   const { fake, repo, deps } = setup();
-  repo.protection = { required_status_checks: { strict: true, contexts: ['x'] }, required_linear_history: { enabled: true } };
+  repo.protection = {
+    required_status_checks: { strict: true, contexts: ['x'] },
+    required_linear_history: { enabled: true },
+  };
   repo.commits.set('c0', { tree: 'old', parents: [] });
   deepEqual(await resetSandbox(deps, 'o/exec', 'public'), []);
   equal(repo.protection, undefined);
@@ -113,7 +130,7 @@ test('a branch protection DELETE that does not stick is reported by the read-bac
   deepEqual(await resetSandbox(deps, 'o/exec', 'public'), ['o/exec: branch main has branch protection']);
 });
 
-test('any other 403 on branch protection fails with GitHub\'s message', async () => {
+test("any other 403 on branch protection fails with GitHub's message", async () => {
   const { fake, deps } = setup();
   fake.failures.set('GET /repos/o/exec/branches/main/protection', 403);
   await rejects(resetSandbox(deps, 'o/exec', 'public'), /branches\/main\/protection returned 403: refused by fake/);
@@ -135,7 +152,10 @@ test('a GitHub refusal fails with its message', async () => {
   const { fake, repo, deps } = setup();
   repo.keys.push({ id: 1, title: 'k' });
   fake.failures.set('DELETE /repos/o/exec/keys/1', 403);
-  await rejects(resetSandbox(deps, 'o/exec', 'public'), /DELETE \/repos\/o\/exec\/keys\/1 returned 403: refused by fake/);
+  await rejects(
+    resetSandbox(deps, 'o/exec', 'public'),
+    /DELETE \/repos\/o\/exec\/keys\/1 returned 403: refused by fake/,
+  );
 });
 
 test('setVisibility reads the visibility back', async () => {
@@ -147,7 +167,12 @@ test('setVisibility reads the visibility back', async () => {
 });
 
 function context(fake: FakeGitHub) {
-  const services = { github: createGitHub(() => 'tok', fake.fetch), exec: fakeExec().exec, repoRoot: '/tmp/x', sandboxToken: () => 'tok' } as unknown as HostServices;
+  const services = {
+    github: createGitHub(() => 'tok', fake.fetch),
+    exec: fakeExec().exec,
+    repoRoot: '/tmp/x',
+    sandboxToken: () => 'tok',
+  } as unknown as HostServices;
   return createHostContext(services);
 }
 
@@ -160,7 +185,12 @@ test('withExecutionVisibility runs fn private and restores public, also after a 
   equal(await ctx.withExecutionVisibility('private', async () => ((seen = String(repo.settings.visibility)), 42)), 42);
   equal(seen, 'private');
   equal(repo.settings.visibility, 'public');
-  await rejects(ctx.withExecutionVisibility('private', async () => { throw new Error('scenario broke'); }), /scenario broke/);
+  await rejects(
+    ctx.withExecutionVisibility('private', async () => {
+      throw new Error('scenario broke');
+    }),
+    /scenario broke/,
+  );
   equal(repo.settings.visibility, 'public');
 });
 
@@ -170,12 +200,20 @@ test('a failed restore fails the scenario and names both causes', async () => {
   let calls = 0;
   const original = fake.fetch;
   fake.fetch = async (input, init) => {
-    if (init?.method === 'PATCH' && ++calls === 2) return new Response(JSON.stringify({ message: 'nope' }), { status: 500 });
+    if (init?.method === 'PATCH' && ++calls === 2)
+      return new Response(JSON.stringify({ message: 'nope' }), { status: 500 });
     return original(input, init);
   };
   const ctx = context(fake);
-  const err = await ctx.withExecutionVisibility('private', async () => { throw new Error('inner'); }).catch((e: Error) => e);
-  match(String(err), /restoring taco3064\/nibfin-e2e-sandbox to public failed: .*500: nope; the scenario had also failed: inner/);
+  const err = await ctx
+    .withExecutionVisibility('private', async () => {
+      throw new Error('inner');
+    })
+    .catch((e: Error) => e);
+  match(
+    String(err),
+    /restoring taco3064\/nibfin-e2e-sandbox to public failed: .*500: nope; the scenario had also failed: inner/,
+  );
 });
 
 test('a leftover tag that does not delete is reported by the read-back', async () => {
@@ -201,7 +239,10 @@ test('an in-progress run is cancelled before its busy runner is deleted, and the
   const cancel = fake.writes.indexOf('POST /repos/o/exec/actions/runs/41/cancel');
   const del = fake.writes.indexOf('DELETE /repos/o/exec/actions/runners/61');
   equal(cancel >= 0 && del > cancel, true, fake.writes.join(', '));
-  equal(fake.writes.some((w) => w.includes('force-cancel')), false);
+  equal(
+    fake.writes.some((w) => w.includes('force-cancel')),
+    false,
+  );
   equal(clock.sleeps, 1);
   deepEqual(logs, [
     'o/exec: cancel requested for workflow run 41 (Nibfin, in_progress)',
@@ -216,24 +257,46 @@ test('a runner that stays busy fails within the wait limit, naming the runner, i
     name: 'Nibfin',
     status: 'in_progress',
     jobs: [
-      { name: 'route', status: 'completed', runner_name: 'other', html_url: 'https://github.com/o/exec/actions/runs/41/job/1' },
-      { name: 'review', status: 'in_progress', runner_name: 'host-claude-1', html_url: 'https://github.com/o/exec/actions/runs/41/job/2' },
+      {
+        name: 'route',
+        status: 'completed',
+        runner_name: 'other',
+        html_url: 'https://github.com/o/exec/actions/runs/41/job/1',
+      },
+      {
+        name: 'review',
+        status: 'in_progress',
+        runner_name: 'host-claude-1',
+        html_url: 'https://github.com/o/exec/actions/runs/41/job/2',
+      },
     ],
   });
-  repo.runners.push({ id: 61, name: 'host-claude-1', status: 'offline', busy: true }, { id: 62, name: 'idle', status: 'offline', busy: false });
+  repo.runners.push(
+    { id: 61, name: 'host-claude-1', status: 'offline', busy: true },
+    { id: 62, name: 'idle', status: 'offline', busy: false },
+  );
   const err = (await resetSandbox(deps, 'o/exec', 'public').catch((e: unknown) => e)) as Error;
   equal(err instanceof Error, true);
   const m = err.message;
   match(m, /o\/exec: runner registration host-claude-1 \(id 61\) could not be deleted/);
   equal(m.includes(`GitHub DELETE /repos/o/exec/actions/runners/61 returned 422: ${GITHUB_BUSY}`), true, m);
-  match(m, /held by job "review" \(https:\/\/github\.com\/o\/exec\/actions\/runs\/41\/job\/2\) of workflow run 41 \(Nibfin\)/);
+  match(
+    m,
+    /held by job "review" \(https:\/\/github\.com\/o\/exec\/actions\/runs\/41\/job\/2\) of workflow run 41 \(Nibfin\)/,
+  );
   match(m, /cancel requested for runs 41; force-cancel for 41/);
   match(m, /waited 360s of 360s/);
-  match(m, /the runner must finish its job, or its job must be cancelled or the runner released on GitHub, before the sandboxes can be reset; then rerun the sandboxes step/);
+  match(
+    m,
+    /the runner must finish its job, or its job must be cancelled or the runner released on GitHub, before the sandboxes can be reset; then rerun the sandboxes step/,
+  );
   match(String((err.cause as Error).message), /returned 422: Bad request - Runner host-claude-1/);
   equal((err.cause as { status?: number }).status, 422);
   // The idle registration is still deleted; the busy one is kept.
-  deepEqual(repo.runners.map((r) => r.id), [61]);
+  deepEqual(
+    repo.runners.map((r) => r.id),
+    [61],
+  );
   equal(clock.t <= 360_000 + 10_000, true);
   equal(fake.writes.filter((w) => w === 'POST /repos/o/exec/actions/runs/41/force-cancel').length, 1);
   deepEqual(logs, [
@@ -246,7 +309,10 @@ test('a runner that stays busy fails within the wait limit, naming the runner, i
 test('a runner refused with no in-progress job of the repository says so', async () => {
   const { repo, deps } = setup();
   repo.runners.push({ id: 61, name: 'host-claude-1', status: 'offline', busy: true });
-  await rejects(resetSandbox(deps, 'o/exec', 'public'), /no in-progress job of this repository names it; cancel requested for runs none; force-cancel for none; waited 360s/);
+  await rejects(
+    resetSandbox(deps, 'o/exec', 'public'),
+    /no in-progress job of this repository names it; cancel requested for runs none; force-cancel for none; waited 360s/,
+  );
 });
 
 test('completed runs are not cancelled and an idle runner is deleted without waiting', async () => {
@@ -263,5 +329,7 @@ test('a run that finished before its cancel arrives (409) is accepted and logged
   repo.runs.push({ id: 42, name: 'Nibfin', status: 'queued' });
   fake.failures.set('POST /repos/o/exec/actions/runs/42/cancel', 409);
   deepEqual(await resetSandbox(deps, 'o/exec', 'public'), []);
-  deepEqual(logs, ['o/exec: cancel requested for workflow run 42 (Nibfin, queued); GitHub answered 409: refused by fake']);
+  deepEqual(logs, [
+    'o/exec: cancel requested for workflow run 42 (Nibfin, queued); GitHub answered 409: refused by fake',
+  ]);
 });

@@ -12,9 +12,7 @@ import { readImpact } from './impact.ts';
 import type { ChangeContext, ImpactSource, IssueRef } from './impact.ts';
 
 export type PlanRequest =
-  | { mode: 'delivered'; ref: IssueRef }
-  | { mode: 'select'; rules: string[]; sections: string[] }
-  | { mode: 'all' };
+  { mode: 'delivered'; ref: IssueRef } | { mode: 'select'; rules: string[]; sections: string[] } | { mode: 'all' };
 
 export const NOT_IN_MAP = 'not in coverage-map.json';
 
@@ -72,7 +70,13 @@ export type PlanOutcome = { plan: Plan } | { usage: string[] };
  * Decides what to rerun from GitHub state; the result is printed as one JSON document.
  * `sources` reads the checkout's `scenarios/**` files for a nibfin-e2e Issue's changed scenarios.
  */
-export async function makePlan(gh: GitHub, entries: MapEntry[], scenarios: Scenario[], request: PlanRequest, sources: ChangeContext['sources'] = () => []): Promise<PlanOutcome> {
+export async function makePlan(
+  gh: GitHub,
+  entries: MapEntry[],
+  scenarios: Scenario[],
+  request: PlanRequest,
+  sources: ChangeContext['sources'] = () => [],
+): Promise<PlanOutcome> {
   const decisions: Decision[] = [];
   let source: ImpactSource | null = null;
   let ids: RuleId[];
@@ -82,13 +86,25 @@ export async function makePlan(gh: GitHub, entries: MapEntry[], scenarios: Scena
     ids = impact.ids;
     decisions.push(...impact.decisions);
   } else if (request.mode === 'select') {
-    const { selected, errors } = select(entries, scenarios, { all: false, rules: request.rules, sections: request.sections });
+    const { selected, errors } = select(entries, scenarios, {
+      all: false,
+      rules: request.rules,
+      sections: request.sections,
+    });
     if (errors.length) return { usage: errors };
     ids = selected.entries.map((e) => e.id);
-    decisions.push({ subject: 'selection', decision: 'explicit', reason: [...request.rules.map((r) => `--rule ${r}`), ...request.sections.map((s) => `--section ${s}`)].join(' ') });
+    decisions.push({
+      subject: 'selection',
+      decision: 'explicit',
+      reason: [...request.rules.map((r) => `--rule ${r}`), ...request.sections.map((s) => `--section ${s}`)].join(' '),
+    });
   } else {
     ids = entries.map((e) => e.id);
-    decisions.push({ subject: 'selection', decision: '--all', reason: 'every rule in coverage-map.json (pre-release run)' });
+    decisions.push({
+      subject: 'selection',
+      decision: '--all',
+      reason: 'every rule in coverage-map.json (pre-release run)',
+    });
   }
 
   const byId = new Map(entries.map((e) => [e.id, e]));
@@ -128,20 +144,29 @@ export async function makePlan(gh: GitHub, entries: MapEntry[], scenarios: Scena
     }
     for (const u of runnableCoverage.uncovered) {
       gaps.push({ id: u.id, missing: u.missingPlatforms });
-      decisions.push({ subject: u.id, decision: 'coverage gap: request', reason: `no scenario on ${u.missingPlatforms.join(', ')}` });
+      decisions.push({
+        subject: u.id,
+        decision: 'coverage gap: request',
+        reason: `no scenario on ${u.missingPlatforms.join(', ')}`,
+      });
     }
   } else {
     for (const id of unknown) decisions.push({ subject: id, decision: 'listed', reason: NOT_IN_MAP });
   }
   const uncoveredRunnable = new Set(runnableCoverage.uncovered.map((u) => u.id));
   for (const e of runnable) {
-    if (!uncoveredRunnable.has(e.id)) decisions.push({ subject: e.id, decision: 'run', reason: 'selected and has a scenario' });
+    if (!uncoveredRunnable.has(e.id))
+      decisions.push({ subject: e.id, decision: 'run', reason: 'selected and has a scenario' });
   }
 
   const whole = computeCoverage(entries, scenarios);
   const unselectedGaps = whole.uncovered.filter((u) => all || !selectedIds.has(u.id));
   for (const u of unselectedGaps) {
-    decisions.push({ subject: u.id, decision: 'listed, not filed', reason: `${all ? 'gap in an --all run' : 'not selected'}; no scenario on ${u.missingPlatforms.join(', ')}` });
+    decisions.push({
+      subject: u.id,
+      decision: 'listed, not filed',
+      reason: `${all ? 'gap in an --all run' : 'not selected'}; no scenario on ${u.missingPlatforms.join(', ')}`,
+    });
   }
   const coverage = { passed: whole.covered === whole.total, covered: whole.covered, total: whole.total };
   decisions.push({
@@ -152,7 +177,11 @@ export async function makePlan(gh: GitHub, entries: MapEntry[], scenarios: Scena
 
   const selection: Plan['selection'] = all ? { all: true } : { all: false, rules: runnable.map((e) => e.id) };
   const execute = selection.all || selection.rules.length > 0;
-  decisions.push({ subject: 'execution', decision: execute ? 'run' : 'nothing to run', reason: selection.all ? '--all' : `rules: ${selection.rules.join(', ') || 'none'}` });
+  decisions.push({
+    subject: 'execution',
+    decision: execute ? 'run' : 'nothing to run',
+    reason: selection.all ? '--all' : `rules: ${selection.rules.join(', ') || 'none'}`,
+  });
 
   const plan: Plan = {
     mode: request.mode,

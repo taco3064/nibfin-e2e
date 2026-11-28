@@ -15,7 +15,9 @@ export async function installGhNibfin(host: HostServices, commit: string, platfo
   const dashboard = join(dir, 'dashboard');
   await mustRun(exec, ['npm', 'ci'], { cwd: dashboard });
   await mustRun(exec, ['npm', 'run', 'build'], { cwd: dashboard });
-  await mustRun(exec, ['go', 'build', '-trimpath', '-o', platform === 'windows' ? 'gh-nibfin.exe' : 'gh-nibfin', '.'], { cwd: dir });
+  await mustRun(exec, ['go', 'build', '-trimpath', '-o', platform === 'windows' ? 'gh-nibfin.exe' : 'gh-nibfin', '.'], {
+    cwd: dir,
+  });
   const ghToken = host.sandboxToken();
   // A leftover install of the same name would make `install` fail; none exists on a fresh host.
   await exec(['gh', 'extension', 'remove', 'nibfin'], { ghToken });

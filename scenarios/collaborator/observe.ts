@@ -25,7 +25,10 @@ export async function until<T>(
   for (;;) {
     const { value, state } = await probe();
     if (value !== undefined) return value;
-    if (clock.now() >= end) throw new Error(`${description}: not observed within ${Math.round(deadlineMs / 1000)} s; last observed: ${state}`);
+    if (clock.now() >= end)
+      throw new Error(
+        `${description}: not observed within ${Math.round(deadlineMs / 1000)} s; last observed: ${state}`,
+      );
     await clock.sleep(intervalMs);
   }
 }
@@ -40,7 +43,8 @@ export interface Registration {
 
 export const hasLabel = (r: Registration, label: string) => r.labels.some((l) => l.name === label);
 
-export const registrations = (gh: GitHub, repo: string) => gh.list<Registration>(`/repos/${repo}/actions/runners`, 'runners');
+export const registrations = (gh: GitHub, repo: string) =>
+  gh.list<Registration>(`/repos/${repo}/actions/runners`, 'runners');
 
 export interface Issue {
   number: number;
@@ -56,7 +60,10 @@ export interface Issue {
 /** Runner request Issues the login opened at or after `since` (one minute of clock skew allowed). */
 export async function requestIssues(gh: GitHub, repo: string, login: string, since: number): Promise<Issue[]> {
   const all = await gh.list<Issue>(`/repos/${repo}/issues?state=all&creator=${encodeURIComponent(login)}`);
-  return all.filter((i) => i.pull_request === undefined && i.title === RUNNER_REQUEST_TITLE && Date.parse(i.created_at) >= since - 60_000);
+  return all.filter(
+    (i) =>
+      i.pull_request === undefined && i.title === RUNNER_REQUEST_TITLE && Date.parse(i.created_at) >= since - 60_000,
+  );
 }
 
 export interface Comment {
@@ -65,7 +72,8 @@ export interface Comment {
   created_at: string;
 }
 
-export const comments = (gh: GitHub, repo: string, n: number) => gh.list<Comment>(`/repos/${repo}/issues/${n}/comments`);
+export const comments = (gh: GitHub, repo: string, n: number) =>
+  gh.list<Comment>(`/repos/${repo}/issues/${n}/comments`);
 
 export interface Run {
   id: number;
@@ -84,9 +92,11 @@ export function runs(gh: GitHub, repo: string, query: string, since: number): Pr
   return gh.list<Run>(`/repos/${repo}/actions/runs?${query}&created=${created}`, 'workflow_runs');
 }
 
-export const jobs = (gh: GitHub, repo: string, runId: number) => gh.list<Job>(`/repos/${repo}/actions/runs/${runId}/jobs?filter=latest`, 'jobs');
+export const jobs = (gh: GitHub, repo: string, runId: number) =>
+  gh.list<Job>(`/repos/${repo}/actions/runs/${runId}/jobs?filter=latest`, 'jobs');
 
-export const jobLog = (gh: GitHub, repo: string, jobId: number) => gh.download(`/repos/${repo}/actions/jobs/${jobId}/logs`).then((r) => r.text);
+export const jobLog = (gh: GitHub, repo: string, jobId: number) =>
+  gh.download(`/repos/${repo}/actions/jobs/${jobId}/logs`).then((r) => r.text);
 
 export interface DeployKey {
   id: number;
