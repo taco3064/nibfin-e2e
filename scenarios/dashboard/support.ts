@@ -40,6 +40,8 @@ export function defineScenario(def: {
   id: string;
   rules: RuleId[];
   requires?: string[];
+  /** Starts together with consecutive concurrent neighbours (see `Scenario.concurrent`). */
+  concurrent?: boolean;
   gate?(ctx: RunContext): Promise<Outcome | undefined>;
   run(ctx: RunContext, secrets: Secrets): Promise<string>;
 }): Scenario {
@@ -48,6 +50,7 @@ export function defineScenario(def: {
     rules: def.rules,
     platforms: ['linux'],
     requires: def.requires,
+    ...(def.concurrent ? { concurrent: true } : {}),
     async run(ctx): Promise<Outcome> {
       const seen = new Set<string>();
       const secrets: Secrets = { add: (v) => void seen.add(v) };

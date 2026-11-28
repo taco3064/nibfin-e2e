@@ -14,6 +14,8 @@ export const agentSetup: Scenario = {
   rules: ['R6.10', 'R6.17', 'R6.18', 'R6.19', 'R6.24'],
   platforms: ['linux'],
   requires: ['observed-job'],
+  // Reads only the observed-job provisioning facts and makes no GitHub, host or sandbox call, so it runs alongside its neighbours.
+  concurrent: true,
   async run(ctx) {
     const f = observedFacts(ctx);
     const c = new Checks();

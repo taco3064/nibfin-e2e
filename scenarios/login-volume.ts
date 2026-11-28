@@ -35,6 +35,8 @@ export const loginVolume: Scenario = {
   rules: ['R6.12'],
   platforms: ['linux'],
   requires: ['observed-job'],
+  // Reads only the observed-job provisioning facts and makes no GitHub, host or sandbox call, so it runs alongside its neighbours.
+  concurrent: true,
   async run(ctx) {
     const f = observedFacts(ctx);
     const c = new Checks();

@@ -105,6 +105,9 @@ async function readTrack(page: Page, issue: Issue): Promise<{ text: string; step
 
 export const livePage = defineScenario({
   id: 'live-page',
+  // Only reads taco3064/gh-nibfin's workflows, runs and jobs and the public Live page in its own browser
+  // profile; it writes no Issue, Runner, label, setting or branch, so it runs alongside the other site scenario.
+  concurrent: true,
   rules: ['R9.40', 'R9.44', 'R9.11', 'R9.2'],
   async run(ctx) {
     const { page } = await openPage(ctx);

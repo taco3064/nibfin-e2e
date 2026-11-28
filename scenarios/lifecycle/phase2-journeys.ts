@@ -409,7 +409,7 @@ export const deliveryParallel: Scenario = lifecycle({
     const c = new Checks();
     const { exec } = k;
     const s = await k.obs.fresh();
-    // Every Issue with stage runs in the journey's window, in either sandbox: phase 2 shares the two Runners.
+    // Every Issue with stage runs in the journey's window, in either sandbox: phase 2 shares the host's Runners.
     const issues = new Map<string, { repo: string; n: number }>();
     for (const r of s.runs) {
       const t = parseStageTitle(r.display_title);

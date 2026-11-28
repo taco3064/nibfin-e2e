@@ -26,7 +26,7 @@ import type { Snapshot } from './observe.ts';
 
 const MIN = 60_000;
 
-/** How long each kind of wait may take. Phase 2 shares two Runners among many fixtures. */
+/** How long each kind of wait may take. Phase 2 shares the host's Runners (four on Linux) among many fixtures. */
 export const DEADLINE = {
   /** A wake or route run, a label or a comment after an event. */
   event: 30 * MIN,
