@@ -10,7 +10,7 @@ import { mainDigest, requireCurrentImage } from '../../scenarios/lib/image.ts';
 import { schemaValidator } from '../../scenarios/lib/schema.ts';
 import { waitFor } from '../../scenarios/lib/wait.ts';
 import { guideTail, GUIDE_LINE, loginGuide, loginRefusal, PASTE_PROMPT, statusRunners, SUCCESS_LINE, volumeContainers, volumeExists, waitForOutput } from '../../scenarios/management/login-guide.ts';
-import { describeLogin, isCliLogin, parseIds, pickLogin, projectLogin } from '../../scenarios/management/login-container.ts';
+import { describeLogin, isCliLogin, loginMiss, loginVerdict, parseIds, pickLogin, projectLogin, shapeMiss } from '../../scenarios/management/login-container.ts';
 import type { LoginContainer } from '../../scenarios/management/login-container.ts';
 import { LABEL_REPO } from '../../scenarios/lib/containers.ts';
 import { claudeLoggedIn, providerLogin } from '../../scenarios/dashboard/support.ts';
@@ -523,13 +523,13 @@ const JOB_IMAGE = 'a'.repeat(64);
 const OTHER_IMAGE = 'b'.repeat(64);
 
 /** A `podman container inspect` document shaped like gh-nibfin's Codex login container. */
-function inspectDoc(over: { id?: string; image?: string; entrypoint?: unknown; cmd?: unknown; tty?: boolean; stdin?: boolean; running?: boolean; labels?: Record<string, string> } = {}) {
+function inspectDoc(over: { id?: string; image?: string; digest?: string; entrypoint?: unknown; cmd?: unknown; tty?: boolean; stdin?: boolean; running?: boolean; labels?: Record<string, string> } = {}) {
   return [
     {
       Id: over.id ?? '1234567890ab' + 'c'.repeat(52),
       Image: over.image ?? JOB_IMAGE,
       ImageName: 'ghcr.io/taco3064/nibfin:main',
-      ImageDigest: D1,
+      ImageDigest: over.digest ?? D1,
       Config: {
         Entrypoint: 'entrypoint' in over ? over.entrypoint : ['/usr/bin/tini', '--'],
         Cmd: 'cmd' in over ? over.cmd : ['codex', 'login', '--device-auth'],
@@ -607,6 +607,67 @@ test('pickLogin matches only a non-Job, running, interactive codex login from th
   equal(later.match, ok);
   equal(later.problems.length, 1);
   match(describeLogin(projectLogin({}) as LoginContainer), /^container \(none\) image \(none\) \(no digest, id \(none\)\) command "" Tty=false OpenStdin=false$/);
+});
+
+test('shapeMiss holds the misses of loginMiss except the image id', () => {
+  const status = login({ stdin: false, cmd: ['codex', 'login', 'status'], image: OTHER_IMAGE });
+  equal(shapeMiss(login({ image: OTHER_IMAGE })), undefined);
+  equal(shapeMiss(status), 'not interactive, not the CLI\'s own login (codex login [--device-auth])');
+  equal(loginMiss(status, JOB_IMAGE), `${shapeMiss(status)}, image id differs from the Jobs' image id aaaaaaaaaaaa`);
+  equal(loginMiss(login(), JOB_IMAGE), undefined);
+});
+
+test('loginVerdict: run state only for a login-shaped candidate proven to be from a moved :main; the observation always stays', async () => {
+  const CUR_IMAGE = 'd'.repeat(64);
+  const D3 = 'sha256:' + '3'.repeat(64);
+  const ref = `ghcr.io/taco3064/nibfin@${D1}`;
+  const base = { ref, jobImageId: JOB_IMAGE, initDigest: D1, volume: 'nibfin-codex', waitText: 'within 60 s' };
+  const r611 = /^R6\.11: expected an interactive container from the Jobs' image ghcr\.io\/taco3064\/nibfin@sha256:1+ running the CLI's own login \(codex login \[--device-auth\]\) while the guide was shown; observed: /;
+  const reasons: string[] = [];
+  const verdict = (input: Partial<Parameters<typeof loginVerdict>[0]>) => {
+    const { failure } = loginVerdict({ ...base, seen: [], ...input });
+    reasons.push(failure);
+    return failure;
+  };
+
+  // Proven by the container's ImageDigest.
+  const byDigest = login({ id: '7'.repeat(64), image: CUR_IMAGE, digest: D2 });
+  const rs = verdict({ seen: [byDigest], current: { digest: await mainDigest(ghcr(D2)) } });
+  match(rs, /^run state: precondition not reached: GHCR :main is sha256:2+, init resolved sha256:1+; a newer main image appeared after init and login candidate container 777777777777 /);
+  match(rs, /; observed: container 777777777777 .*: image id differs from the Jobs' image id aaaaaaaaaaaa within 60 s$/);
+  // Proven by the local image id of ghcr.io/taco3064/nibfin@<current>, with a platform digest.
+  const byId = login({ id: '8'.repeat(64), image: CUR_IMAGE, digest: D3 });
+  match(verdict({ seen: [byId], current: { digest: D2, imageId: `sha256:${CUR_IMAGE}` } }), /^run state: precondition not reached: GHCR :main is sha256:2+, init resolved sha256:1+; .*login candidate container 888888888888 .*observed: container 888888888888 /);
+
+  // From neither the Jobs' image nor the current :main.
+  const other = login({ id: '9'.repeat(64), image: OTHER_IMAGE, digest: D3 });
+  const neither = verdict({ seen: [other], current: { digest: D2, imageId: CUR_IMAGE } });
+  match(neither, r611);
+  match(neither, /observed: container 999999999999 .*: image id differs .* within 60 s \(GHCR :main is sha256:2+, init resolved sha256:1+; no login candidate is from it\)$/);
+  // Current image not present locally and the digest differs: never run state.
+  match(verdict({ seen: [byId], current: { digest: D2 } }), r611);
+
+  // :main has not moved.
+  const still = verdict({ seen: [byDigest], current: { digest: await mainDigest(ghcr(D1)) } });
+  match(still, r611);
+  match(still, /observed: container 777777777777 .* within 60 s$/);
+
+  // GHCR cannot be read.
+  const error = await mainDigest(ghcr(null)).then(() => '', (e: Error) => e.message);
+  const unread = verdict({ seen: [other], current: { error } });
+  match(unread, r611);
+  match(unread, /observed: container 999999999999 .* within 60 s \(GHCR :main could not be read to rule out a newer image: GHCR HEAD taco3064\/nibfin:main returned 404\)$/);
+
+  // From the current image but not login-shaped.
+  const status = login({ id: '6'.repeat(64), image: CUR_IMAGE, digest: D2, stdin: false, cmd: ['codex', 'login', 'status'] });
+  const notLogin = verdict({ seen: [status], current: { digest: D2, imageId: CUR_IMAGE } });
+  match(notLogin, r611);
+  match(notLogin, /container 666666666666 .*not interactive, not the CLI's own login/);
+
+  // Nothing seen.
+  equal(verdict({ waitText: 'before the command exited' }), `R6.11: expected an interactive container from the Jobs' image ${ref} running the CLI's own login (codex login [--device-auth]) while the guide was shown; observed: no running container mounting nibfin-codex before the command exited`);
+
+  for (const r of reasons) equal(/secret|OPENAI_API_KEY|PATH=/.test(r), false, r);
 });
 
 test('parseIds reads podman ps --no-trunc --format {{.ID}} output', () => {

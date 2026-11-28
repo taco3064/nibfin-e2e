@@ -9,13 +9,13 @@ import type { RunContext } from '../../src/types.ts';
 import { claudeLoggedIn, defineScenario, providerLogin, statusJson } from '../dashboard/support.ts';
 import type { Secrets } from '../dashboard/support.ts';
 import { tail } from '../lib/check.ts';
-import { requireCurrentImage } from '../lib/image.ts';
+import { mainDigest } from '../lib/image.ts';
 import { IMAGE, imageDigest } from '../lib/observed-facts.ts';
 import { registrations } from '../lib/github.ts';
 import type { Registration } from '../lib/github.ts';
 import { listVolume } from '../lib/volume.ts';
-import { bareImageId, describeLogin, parseIds, pickLogin, projectLogin, shortId } from './login-container.ts';
-import type { LoginContainer } from './login-container.ts';
+import { describeLogin, loginVerdict, otherImageLogin, parseIds, pickLogin, projectLogin, shortId } from './login-container.ts';
+import type { CurrentMain, LoginContainer } from './login-container.ts';
 import { guideTail, loginGuide, statusRunners, SUCCESS_LINE, volumeContainers, volumeExists, waitForOutput } from './login-guide.ts';
 
 const PROVIDER = 'codex';
@@ -104,22 +104,24 @@ async function checkLoginContainer(ctx: RunContext, child: Child, image: { diges
       pass: `R6.11 (Codex branch; Claude /login not exercised): login container ${shortId(match.id)} from ${ref} (image ${match.imageName || '(none)'}) ran "${match.argv.join(' ')}" with OpenStdin=${match.openStdin} Tty=${match.tty}`,
     };
   }
-  const { problems } = pickLogin(sample.seen, image.id);
-  let note = '';
-  // A candidate from another image may only mean GHCR :main moved after init.
-  if (sample.seen.some((c) => bareImageId(c.imageId) !== bareImageId(image.id))) {
+  // A login-shaped candidate from another image may only mean GHCR :main moved after
+  // init; loginVerdict calls it run state only when it is proven to be from :main.
+  let current: CurrentMain | undefined;
+  if (sample.seen.some((c) => otherImageLogin(c, image.id))) {
     try {
-      const moved = await requireCurrentImage(image.digest);
-      if (moved) return { failure: `run state: ${moved.reason}` };
+      current = { digest: await mainDigest() };
     } catch (e) {
-      note = ` (GHCR :main could not be read to rule out a newer image: ${errorText(e)})`;
+      current = { error: errorText(e) };
+    }
+    if ('digest' in current && current.digest !== image.digest) {
+      // The current image may not be present locally; then only a digest match can prove it.
+      const r = await ctx.exec(['podman', 'image', 'inspect', '--format', '{{.Id}}', `${IMAGE}@${current.digest}`]).catch(() => undefined);
+      const id = r?.stdout.trim();
+      if (r?.code === 0 && id) current = { digest: current.digest, imageId: id };
     }
   }
-  const observed = problems.length ? problems.join('; ') : `no running container mounting ${CODEX_VOLUME}`;
   const when = { exited: 'before the command exited', aborted: 'before the run budget ended the wait', timeout: `within ${LOGIN_CONTAINER_MS / 1000} s`, found: '' }[sample.end];
-  return {
-    failure: `R6.11: expected an interactive container from the Jobs' image ${ref} running the CLI's own login (codex login [--device-auth]) while the guide was shown; observed: ${observed} ${when}${note}`,
-  };
+  return loginVerdict({ seen: sample.seen, ref, jobImageId: image.id, initDigest: image.digest, current, volume: CODEX_VOLUME, waitText: when });
 }
 
 /** Every failure here is the run's state, never R5.30. */
