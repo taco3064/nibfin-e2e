@@ -470,6 +470,8 @@ export interface RouteReport {
 
 /**
  * Whether the route of an Issue reported something, in its job log or a marked comment.
+ * A log line counts only when it also names the checked Issue, so a report about another
+ * Issue in the same log does not count; a marked comment on the Issue counts as it is.
  * A route job no runner took is not read; a log that cannot be read gives no evidence and
  * is named in `unreadable`, so a missing report can be told apart from an unreadable log.
  */
@@ -486,7 +488,7 @@ export async function routeReport(
       unreadable.push(`route job ${job.id} (run ${job.run.id}): ${message(e)}`);
       return [];
     });
-    if (lines.some((l) => pattern.test(l.text))) return { reported: true, unreadable };
+    if (lines.some((l) => refersToIssue(l.text, k.exec, n) && pattern.test(l.text))) return { reported: true, unreadable };
   }
   // Only comments written by then: a later Shape or closing comment may name the dependency too.
   const reported = (await k.obs.comments(k.exec, n)).some(

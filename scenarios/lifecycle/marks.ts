@@ -20,9 +20,14 @@ export const VALIDATOR_VERDICT = new RegExp(
 export const ACCEPT_START = /\baccept(or|ance)?\b.*\b(start\w*|begin\w*|running|launch\w*|review\w*)\b/i;
 export const ACCEPT_END = /\baccept(or|ance)?\b.*\b(pass\w*|approv\w*|verdict|done|finish\w*|complete\w*|defects?)\b/i;
 
-/** A route's explicit report of an open blocker or a missing Assignee (Proposal R3.32). */
-export const BLOCKER_REPORT = /\b(blocked\s*by|blocker|blocking|dependenc(y|ies))\b/i;
-export const NO_ASSIGNEE_REPORT = /\b(no|without|missing)\s+assignees?\b|\bassignees?\b.*\b(none|missing|empty)\b/i;
+/**
+ * A route's explicit report of an open blocker or a missing Assignee (Proposal R3.32).
+ * Besides free wordings such as `blocked by #4` or `no assignee`, they accept Core's route
+ * lines `nothing to run (ineligible (blocked))` and `nothing to run (ineligible (no-assignee))`.
+ * A bare `blocked` is not enough on its own, so `not blocked` or `unblocked` do not count.
+ */
+export const BLOCKER_REPORT = /\b(blocked\s*by|blocker|blocking|dependenc(y|ies))\b|\bineligible\s*\(\s*blocked\s*\)/i;
+export const NO_ASSIGNEE_REPORT = /\b(no|without|missing)[\s-]+assignees?\b|\bassignees?\b.*\b(none|missing|empty)\b/i;
 
 /** The single Shape comment (marker `<!-- nibfin:shape… -->`). */
 export const SHAPE_MARKER = /^shape\b/;
