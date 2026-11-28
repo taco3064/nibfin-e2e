@@ -74,6 +74,40 @@ export async function awaitDecisionStop(k: Kit, n: number, show: (s: Snapshot) =
 
 // ---- pure helpers ----
 
+/**
+ * Where the resolution record written at or after `pendingAt` stands: `done` when the
+ * latest one names one of the six classes, `unfinished` when it names none (the repair
+ * stage first writes a "being classified" record and later updates the same comment in
+ * place with its class), and neither when there is no record yet.
+ */
+export function recordProgress(
+  comments: Comment[],
+  pendingAt: number,
+): { done?: ResolutionRecord; unfinished?: ResolutionRecord } {
+  const r = resolutionRecord(comments, pendingAt);
+  if (!r) return {};
+  return r.class !== undefined ? { done: r } : { unfinished: r };
+}
+
+/**
+ * Why the wait for a resolution record failed. At the deadline with an unfinished latest
+ * record, it names that record, says it never named a class and quotes it; otherwise it
+ * says no resolution record was found and lists the marker keys seen after `pendingAt`.
+ */
+export function recordWaitReason(input: {
+  n: number;
+  pendingAt: number;
+  keys: string[];
+  unfinished?: ResolutionRecord;
+  timedOut: boolean;
+  cause: string;
+}): string {
+  const at = new Date(input.pendingAt).toISOString();
+  if (input.timedOut && input.unfinished)
+    return `the resolution record ${input.unfinished.url} on #${input.n} never named a class of R4.41 after pending was added at ${at} (${input.cause}): ${briefRecord(input.unfinished.body)}`;
+  return `no resolution record on #${input.n} after pending was added at ${at} (${input.cause}); marker keys seen after it: ${input.keys.join(', ') || 'none'}`;
+}
+
 /** Problems of a product-decision record's options (R4.45): 2–4, exactly one recommended, each with text, numbers unique. */
 export function optionProblems(r: ResolutionRecord): string[] {
   const out: string[] = [];
@@ -286,9 +320,12 @@ export function bodyUnchanged(base: string, read: string): boolean {
 // ---- shared steps ----
 
 /**
- * Waits for the resolution record written after `pendingAt` and returns it with the
- * snapshot that showed it. It ends early when `pending` goes first or the Issue closes,
- * and throws naming the marker keys seen after `pendingAt`.
+ * Waits until the latest resolution record written at or after `pendingAt` names a class
+ * and returns it with the snapshot that showed it. An unfinished record (no class yet)
+ * keeps the wait going, including across in-place updates of the same comment. It ends
+ * early when `pending` goes first, the Issue closes or the stage is gone. At the deadline
+ * it names and quotes an unfinished record; otherwise it names the marker keys seen after
+ * `pendingAt`.
  */
 export async function awaitResolutionRecord(
   k: Kit,
@@ -297,19 +334,25 @@ export async function awaitResolutionRecord(
 ): Promise<{ r: ResolutionRecord; s: Snapshot }> {
   const { exec } = k;
   let keys: string[] = [];
+  // The latest record when it has no class yet, and the reason of an early end, so the
+  // failure can tell a deadline on an unfinished record from every other end.
+  let unfinished: ResolutionRecord | undefined;
+  let early: string | undefined;
   const markerKeys = (cs: Comment[]) =>
     cs
       .filter((x) => Math.max(time(x.created_at), time(x.updated_at)) >= pendingAt)
       .flatMap((x) => markerOf(x.body) ?? []);
   const closed = k.stageGone(exec, n, 'shape', { since: pendingAt - MIN, allowPending: true, jobs: false });
+  const started = k.now();
   try {
     return await k.obs.until(
-      `a resolution record on #${n}`,
+      `a resolution record on #${n} that names its class`,
       async (s) => {
         const cs = await k.obs.comments(exec, n);
         keys = markerKeys(cs);
-        const r = resolutionRecord(cs, pendingAt);
-        return r ? { r, s } : undefined;
+        const p = recordProgress(cs, pendingAt);
+        unfinished = p.unfinished;
+        return p.done ? { r: p.done, s } : undefined;
       },
       DEADLINE.stage,
       (s) => `#${n} labels: ${k.labels(s, exec, n).join(', ') || 'none'}`,
@@ -317,17 +360,21 @@ export async function awaitResolutionRecord(
         ...k.about(exec, n),
         expects: { pending: DECISION_PENDING },
         quiet: true,
-        gonePast: async (s) =>
-          k.issue(s, exec, n) && !k.labels(s, exec, n).includes('pending')
-            ? `#${n} lost pending before a resolution record appeared`
-            : closed(s),
+        gonePast: async (s) => {
+          const reason =
+            k.issue(s, exec, n) && !k.labels(s, exec, n).includes('pending')
+              ? `#${n} lost pending before a resolution record appeared`
+              : await closed(s);
+          if (reason !== undefined) early = reason;
+          return reason;
+        },
       },
     );
   } catch (error) {
-    throw new Error(
-      `no resolution record on #${n} after pending was added at ${new Date(pendingAt).toISOString()} (${message(error)}); marker keys seen after it: ${keys.join(', ') || 'none'}`,
-      { cause: error },
-    );
+    const timedOut = early === undefined && k.now() >= started + DEADLINE.stage;
+    throw new Error(recordWaitReason({ n, pendingAt, keys, unfinished, timedOut, cause: message(error) }), {
+      cause: error,
+    });
   }
 }
 
@@ -472,7 +519,7 @@ async function decide(k: Kit, filed: (n: number) => void): Promise<Outcome> {
   c.check(
     'R4.45',
     r.class === 'product-decision',
-    `the resolution record ${r.url} is classed ${r.class ?? (r.classLabel ? `"${briefRecord(r.classLabel, 80)}"` : 'nothing')}, not 產品決策: ${brief}`,
+    `the resolution record ${r.url} is classed ${r.class}, not 產品決策: ${brief}`,
   );
   c.none(
     'R4.45',
