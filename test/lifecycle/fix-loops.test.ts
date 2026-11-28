@@ -1,9 +1,9 @@
 // fix-loops (Issue #472): F's body allows the CHANGELOG/README updates its hook rules
 // require only after a failure asks for them, and its waits end once F gets pending.
-import { equal, match, rejects } from 'node:assert/strict';
+import { deepEqual, equal, match, rejects } from 'node:assert/strict';
 import { test } from 'node:test';
 import { DEADLINE, Kit, STALL, changeRequest } from '../../scenarios/lifecycle/kit.ts';
-import { FIX_LOOPS_EXTRA, fixGone, fixJob, pendingGone } from '../../scenarios/lifecycle/phase2-fixtures.ts';
+import { FIX_LOOPS_EXTRA, fixGone, fixJob, pendingGone, reviewFixProblems } from '../../scenarios/lifecycle/phase2-fixtures.ts';
 import { createGitHub } from '../../src/host/github.ts';
 import { clock, context, routes } from './fake.ts';
 
@@ -89,4 +89,39 @@ test('a successful ci-failure deliver job satisfies the fix wait', async () => {
   equal(j.id, 21);
   equal(j.run.id, 7);
   equal(await fixJob(k, await k.obs.current(), 6, 'review'), undefined, 'another reason does not');
+});
+
+const HARNESS = 'a'.repeat(40);
+const MERGED = 'b'.repeat(40);
+const ADDS = '/** Adds two numbers. */\nexport function sum(a, b) {\n  return a + b;\n}\n';
+const SUBTRACTS = '/** Adds two numbers. */\nexport function sum(a, b) {\n  return a - b;\n}\n';
+
+test('R3.24 passes a review-fixed head that differs from the harness commit and adds, whether or not it descends from it', () => {
+  deepEqual(reviewFixProblems({ harness: HARNESS, merged: MERGED, sum: ADDS }), []);
+});
+
+test('R3.24 fails when the harness commit itself merged, naming it', () => {
+  const p = reviewFixProblems({ harness: HARNESS, merged: HARNESS, sum: ADDS });
+  equal(p.length, 1);
+  match(p[0] ?? '', new RegExp(`harness commit ${HARNESS} itself was merged`));
+});
+
+test('R3.24 fails when the merged head still subtracts, naming both SHAs', () => {
+  const p = reviewFixProblems({ harness: HARNESS, merged: MERGED, sum: SUBTRACTS });
+  equal(p.length, 1);
+  match(p[0] ?? '', /^the merged head still subtracts in sum/);
+  match(p[0] ?? '', new RegExp(`merged head ${MERGED}, harness commit ${HARNESS}`));
+});
+
+test('R3.24 fails when the merged head has no src/sum.js, naming the merged head', () => {
+  const p = reviewFixProblems({ harness: HARNESS, merged: MERGED, sum: undefined });
+  equal(p.length, 1);
+  match(p[0] ?? '', new RegExp(`the merged head ${MERGED} has no src/sum\\.js`));
+});
+
+test('R3.24 reports both problems when the subtracting harness commit itself merged', () => {
+  const p = reviewFixProblems({ harness: HARNESS, merged: HARNESS, sum: SUBTRACTS });
+  equal(p.length, 2);
+  match(p[0] ?? '', /itself was merged/);
+  match(p[1] ?? '', /still subtracts in sum/);
 });

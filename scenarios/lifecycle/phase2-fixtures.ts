@@ -467,6 +467,20 @@ export function fixGone(k: Kit, n: number, reason: string, from = 0): (s: Snapsh
 }
 
 /**
+ * R3.24 for fix-loops step 2: the problems with F's merged head after the rejected
+ * harness commit, or none. The fixed branch need not keep the harness commit as an
+ * ancestor (R3.18 and R5.67 allow rebased history); only the merged head itself and
+ * its `src/sum.js` are judged.
+ */
+export function reviewFixProblems(e: { harness: string; merged: string; sum: string | undefined }): string[] {
+  const out: string[] = [];
+  if (e.merged === e.harness) out.push(`the harness commit ${e.harness} itself was merged as the head of F's first PR; the review should have rejected it and a review fix should have replaced it`);
+  if (e.sum === undefined) out.push(`the merged head ${e.merged} has no src/sum.js (harness commit ${e.harness})`);
+  else if (!e.sum.includes('a + b')) out.push(`the merged head still subtracts in sum (merged head ${e.merged}, harness commit ${e.harness})`);
+  return out;
+}
+
+/**
  * F's exception to its two-file limit. The scenario's CI and CD hook rules require
  * `CHANGELOG.md` and `README.md` entries the Writer cannot see up front, so the body
  * allows them only once a CI or CD failure asks for them; the R3.21 and R3.30 loops still run.
@@ -542,8 +556,7 @@ export const fixLoops: Scenario = lifecycle({
         await readHeads('review', pr1.number);
         const merged1 = await k.obs.until('F\'s first PR to merge', (s) => s.pulls.get(exec)?.find((p) => p.number === pr1.number && p.merged_at), DEADLINE.stage, show, gone);
         const s = await k.obs.fresh();
-        c.check('R3.24', merged1.head.sha !== sha && (await k.obs.descends(exec, sha, merged1.head.sha)), `the merged head ${merged1.head.sha} is the harness commit or does not follow it`);
-        c.check('R3.24', ((await k.fileOn(exec, merged1.head.sha, 'src/sum.js')) ?? '').includes('a + b'), 'the merged head still subtracts in sum');
+        c.none('R3.24', reviewFixProblems({ harness: sha, merged: merged1.head.sha, sum: await k.fileOn(exec, merged1.head.sha, 'src/sum.js') }));
         const reviews = (await k.agentJobs(s, exec, n, ['review'])).filter((j) => time(j.started_at) >= time(reviewFix.completed_at) && time(j.started_at) < time(merged1.merged_at));
         c.check('R3.25', reviews.length > 0, 'no review ran on the head that merged (after the review fix)');
 
