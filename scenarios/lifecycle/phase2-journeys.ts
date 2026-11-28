@@ -30,7 +30,7 @@ import {
   STAGES,
   time,
 } from './analysis.ts';
-import type { Activity, Job, ReadWindow, Run, Window } from './analysis.ts';
+import type { Activity, Comment, Job, ReadWindow, Run, Window } from './analysis.ts';
 import { holdJourney, journey } from './journeys.ts';
 import { AFTER_DELIVERED, DEADLINE, finishAt, hostedRunProblems, message, stageSeen, lifecycle } from './kit.ts';
 import type { Kit } from './kit.ts';
@@ -39,8 +39,10 @@ import {
   ACCEPT_START,
   BLOCKER_REPORT,
   NO_ASSIGNEE_REPORT,
+  SHAPE_KEY,
   SHAPE_MARKER,
   VALIDATOR_VERDICT,
+  isShapeKey,
 } from './marks.ts';
 import type { Snapshot } from './observe.ts';
 import { IMAGE } from '../lib/observed-facts.ts';
@@ -732,6 +734,54 @@ export const pauseAndPending: Scenario = lifecycle({
   },
 });
 
+/** One comment check of shape-rewrite: its rule, whether it held, and the failure text. */
+export interface ShapeRewriteCheck {
+  rule: 'R3.39' | 'R3.40';
+  ok: boolean;
+  problem: string;
+}
+
+/**
+ * The comment checks of shape-rewrite on P, in order reason, count, rewrite, judged by the exact Shape key (`shape`)
+ * rather than `SHAPE_MARKER`, which also matches Core's `shape-wrong` report:
+ * - R3.39: some other marked comment was created or updated between the edit and the
+ *   re-Shape (`until`), so the later closing comment cannot stand in for the reason;
+ * - R3.40: exactly one comment carries the Shape key (Proposal R3.42 updates it in place);
+ * - R3.40: that comment, the oldest with the key and the one Core updates, was updated
+ *   after the edit and names `quadruple`.
+ * A failure names every marked comment read on P with its key, times and URL (R1.14).
+ */
+export function shapeRewriteCommentChecks(
+  comments: Comment[],
+  editedAt: number,
+  until: number,
+): [ShapeRewriteCheck, ShapeRewriteCheck, ShapeRewriteCheck] {
+  const marked = comments.filter((x) => markerOf(x.body));
+  const read = `marked comments on P: ${describeComments(marked, { stamps: true })}`;
+  const between = (t: string) => time(t) >= editedAt && time(t) <= until;
+  const reason = marked.find((x) => !isShapeKey(markerOf(x.body)) && (between(x.created_at) || between(x.updated_at)));
+  const shapes = marked.filter((x) => isShapeKey(markerOf(x.body)));
+  const shape = shapes[0];
+  const window = `between ${iso(editedAt)} and ${Number.isFinite(until) ? iso(until) : 'now'}`;
+  return [
+    {
+      rule: 'R3.39',
+      ok: !!reason,
+      problem: `no marked comment ${window} gives the reason the Shape was sent back; ${read}`,
+    },
+    {
+      rule: 'R3.40',
+      ok: shapes.length === 1,
+      problem: `${shapes.length} comments with the Shape key \`${SHAPE_KEY}\`, expected the one rewritten; ${read}`,
+    },
+    {
+      rule: 'R3.40',
+      ok: !!shape && time(shape.updated_at) >= editedAt && /quadruple/.test(shape.body ?? ''),
+      problem: `the Shape comment was not rewritten for the edited Issue (no \`quadruple\`); ${read}`,
+    },
+  ];
+}
+
 export const shapeRewrite: Scenario = lifecycle({
   id: 'shape-rewrite',
   concurrent: true,
@@ -744,28 +794,13 @@ export const shapeRewrite: Scenario = lifecycle({
     if (!c.check('R3.39', h.sentBack, 'Deliver did not send the contradicted Shape back (shaped was never removed)'))
       return c.outcome('');
     const comments = await k.obs.comments(k.exec, n);
-    // Written between the edit and the re-Shape, so the later closing comment cannot stand in for it.
-    const until = h.reshapedAt ?? Infinity;
-    const between = (t: string) => time(t) >= h.editedAt && time(t) <= until;
-    const reason = comments.find(
-      (x) =>
-        markerOf(x.body) &&
-        !SHAPE_MARKER.test(markerOf(x.body) ?? '') &&
-        (between(x.created_at) || between(x.updated_at)),
-    );
-    c.check('R3.39', !!reason, 'no marked comment gives the reason the Shape was sent back');
+    const [reason, ...shape] = shapeRewriteCommentChecks(comments, h.editedAt, h.reshapedAt ?? Infinity);
+    c.check(reason.rule, reason.ok, reason.problem);
     const removed = (await k.obs.timeline(k.exec, n)).some(
       (e) => e.event === 'unlabeled' && e.label?.name === 'shaped' && time(e.created_at) >= h.editedAt,
     );
     c.check('R3.39', removed, '`shaped` was not removed after the edit');
-    const shapes = comments.filter((x) => SHAPE_MARKER.test(markerOf(x.body) ?? ''));
-    c.check('R3.40', shapes.length === 1, `${shapes.length} marked Shape comments, expected the one rewritten`);
-    const shape = shapes[0];
-    c.check(
-      'R3.40',
-      !!shape && time(shape.updated_at) >= h.editedAt && /quadruple/.test(shape.body ?? ''),
-      'the Shape comment was not rewritten for the edited Issue (no `quadruple`)',
-    );
+    for (const x of shape) c.check(x.rule, x.ok, x.problem);
     const reShape = await validatorProblems(k, s, k.exec, n, h.editedAt, true);
     c.none('R3.13', reShape);
     c.none(
