@@ -8,11 +8,16 @@ import {
   fail,
   fixtureTitle,
   intervalMatches,
+  MANUAL_PAUSE_POLL_MS,
+  MANUAL_PAUSE_REFRESHES,
+  MANUAL_PAUSE_WAIT_MS,
+  manualPauseMissed,
+  pauseAfterManualRefresh,
   pauseAppeared,
   pausePreconditionProblem,
   startsInWindow,
 } from './checks.ts';
-import type { PauseView } from './checks.ts';
+import type { ManualRefresh, PauseView } from './checks.ts';
 import {
   assertQuietSandboxes,
   createIssue,
@@ -53,13 +58,34 @@ const TOLERANCE_MS = 30_000;
  * server and page on the same view, since reloading would re-send a spent one-time proof (R9.26).
  */
 async function refreshed(ctx: RunContext, secrets: Secrets, page: Page, view: View, repo?: string): Promise<Page> {
+  return (await refreshedBy(ctx, secrets, page, view, repo)).page;
+}
+
+/** The same manual refresh as `refreshed`, also saying whether the Refresh control or a fresh view was used. */
+async function refreshedBy(
+  ctx: RunContext,
+  secrets: Secrets,
+  page: Page,
+  view: View,
+  repo?: string,
+): Promise<{ page: Page; method: ManualRefresh['method'] }> {
   const r = await button(page, /refresh/i);
   if (r) {
     await r.click();
     await sleep(3000);
-    return page;
+    return { page, method: 'Refresh control' };
   }
-  return freshView(ctx, secrets, view, repo);
+  return { page: await freshView(ctx, secrets, view, repo), method: 'fresh view' };
+}
+
+/** The visible text of the view's header, or of `main` when there is none; empty when unreadable. */
+async function headerText(page: Page): Promise<string> {
+  const header = page.locator('header, [role="banner"]');
+  const scope = (await header.count().catch(() => 0)) ? header : page.locator('main');
+  return scope
+    .allInnerTexts()
+    .then((t) => t.join(' '))
+    .catch(() => '');
 }
 
 /** A new server and page opened on a view; both are stopped when the scenario ends. */
@@ -193,15 +219,44 @@ async function remoteChange(ctx: RunContext, secrets: Secrets, markers: Record<s
           );
           liveSeen++;
         } else {
-          const again = await refreshed(ctx, secrets, page, name, name === 'repo' ? exec : undefined);
-          const after = await pauseView(again, D.title);
-          check(
-            pauseAppeared(before[name] as PauseView, after),
-            'R9.8',
-            `the ${name} view (marked manual) to show D's pause after a manual refresh`,
-            () => `not shown; ${shown(after)}`,
+          // Read D again after each manual refresh until the pause shows or the bound passes.
+          // The one retry uses the same method, so a Refresh control that does not re-read
+          // GitHub still fails here instead of being masked by a fresh view.
+          let current = page;
+          const outcome = await pauseAfterManualRefresh({
+            before: before[name] as PauseView,
+            refresh: async () => {
+              const r = await refreshedBy(ctx, secrets, current, name, name === 'repo' ? exec : undefined);
+              current = r.page;
+              return r.method;
+            },
+            read: () => pauseView(current, D.title),
+            since: changedAt,
+            boundMs: MANUAL_PAUSE_WAIT_MS,
+            everyMs: MANUAL_PAUSE_POLL_MS,
+            attempts: MANUAL_PAUSE_REFRESHES,
+            now: Date.now,
+            sleep,
+          });
+          if (!outcome.seen) {
+            const marker = await readUpdateMarker(current).catch((e: Error) => `unreadable (${e.message})`);
+            fail(
+              'R9.8',
+              `the ${name} view (marked manual) to show D's pause within ${MANUAL_PAUSE_WAIT_MS / 1000} s of a manual refresh (one more refresh allowed)`,
+              manualPauseMissed({
+                outcome,
+                before: before[name] as PauseView,
+                boundMs: MANUAL_PAUSE_WAIT_MS,
+                marker,
+                header: await headerText(current),
+              }),
+            );
+          }
+          const k = outcome.refreshes.length;
+          const lastRefresh = outcome.refreshes[k - 1] as ManualRefresh;
+          notes.push(
+            `${name} view is manual and showed the pause ${Math.round((Date.now() - changedAt - lastRefresh.atMs) / 1000)} s after refresh ${k} (${lastRefresh.method})`,
           );
-          notes.push(`${name} view is manual and showed the pause after a refresh`);
         }
       }
       check(

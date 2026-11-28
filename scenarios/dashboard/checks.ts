@@ -831,6 +831,84 @@ export function describePauseView(v: PauseView): string {
   return `${v.pauseControls} Pause and ${v.resumeControls} Resume control(s), text "${t.length > 200 ? `${t.slice(0, 200)}…` : t}"`;
 }
 
+/** How long a manual view may take to show a pause after each manual refresh (R9.8), and how often it is read. */
+export const MANUAL_PAUSE_WAIT_MS = 60_000;
+export const MANUAL_PAUSE_POLL_MS = 2_000;
+/** Manual refreshes allowed: the first one and one retry with the same method. */
+export const MANUAL_PAUSE_REFRESHES = 2;
+
+/** One manual refresh: how it was done and when, in ms after the edit. */
+export interface ManualRefresh {
+  method: 'Refresh control' | 'fresh view';
+  atMs: number;
+}
+
+export interface ManualPauseOutcome {
+  seen: boolean;
+  refreshes: ManualRefresh[];
+  /** What the last read showed. */
+  last: PauseView;
+  /** From the first refresh to the last read. */
+  waitedMs: number;
+}
+
+/**
+ * Refreshes a manual view and reads the Issue element until it shows a pause that was not
+ * there `before` (`pauseAppeared`) or `boundMs` passed since that refresh; then refreshes
+ * once more, up to `attempts` refreshes in all. Each refresh's read is made at least once.
+ * The clock and sleep are injected so the sequence can be tested without real waiting.
+ */
+export async function pauseAfterManualRefresh(o: {
+  before: PauseView;
+  refresh: () => Promise<ManualRefresh['method']>;
+  read: () => Promise<PauseView>;
+  since: number;
+  boundMs: number;
+  everyMs: number;
+  attempts: number;
+  now: () => number;
+  sleep: (ms: number) => Promise<unknown>;
+}): Promise<ManualPauseOutcome> {
+  const refreshes: ManualRefresh[] = [];
+  let last: PauseView = { present: false, text: '', pauseControls: 0, resumeControls: 0 };
+  let first: number | undefined;
+  let lastRead = o.now();
+  for (let i = 0; i < Math.max(1, o.attempts); i++) {
+    const method = await o.refresh();
+    const at = o.now();
+    first ??= at;
+    refreshes.push({ method, atMs: at - o.since });
+    for (;;) {
+      last = await o.read();
+      lastRead = o.now();
+      if (pauseAppeared(o.before, last)) return { seen: true, refreshes, last, waitedMs: lastRead - first };
+      if (lastRead - at >= o.boundMs) break;
+      await o.sleep(o.everyMs);
+    }
+  }
+  return { seen: false, refreshes, last, waitedMs: lastRead - (first ?? lastRead) };
+}
+
+/** The observed text of an R9.8 failure when a manual view never showed the pause after its refreshes. */
+export function manualPauseMissed(o: {
+  outcome: ManualPauseOutcome;
+  before: PauseView;
+  boundMs: number;
+  marker: string;
+  header: string;
+}): string {
+  const { refreshes, waitedMs, last } = o.outcome;
+  const how = refreshes.map((r) => `${r.method} at +${seconds(r.atMs)}`).join(', ');
+  const h = o.header.replace(/\s+/g, ' ').trim();
+  const header = h ? `"${h.length > 200 ? `${h.slice(0, 200)}…` : h}"` : '(none)';
+  return (
+    `not shown after ${refreshes.length} refresh(es): ${how} after the edit; ` +
+    `waited ${seconds(waitedMs)} in total (bound ${seconds(o.boundMs)} after each refresh); ` +
+    `update marker after the last read: ${o.marker}; header: ${header}; ` +
+    `before the edit: ${describePauseView(o.before)}; after the last read: ${describePauseView(last)}`
+  );
+}
+
 /** The first primitive value in a JSON document under a key matching `key`. */
 export function statusValue(json: unknown, key: RegExp): string | number | boolean | undefined {
   let found: string | number | boolean | undefined;
