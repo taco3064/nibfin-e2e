@@ -13,7 +13,7 @@ import {
   startDashboard,
   statusJson,
 } from './support.ts';
-import { setField } from './operations.ts';
+import { RUNNER_LOGIN, setField } from './operations.ts';
 
 /** Deliberately invalid: no authorization can happen, so no person is needed. */
 const BOGUS_CODE = 'nibfin-e2e-298-invalid-code';
@@ -28,7 +28,7 @@ export const dashboardLoginRelay = defineScenario({
       const { page } = await openPage(ctx);
       await openDashboard(page, dash);
       await gotoView(page, 'runner');
-      await (await mustButton(page, /^log ?in\b/i, 'R6.16', 'the Runner view')).click();
+      await (await mustButton(page, RUNNER_LOGIN, 'R6.16', 'the Runner view')).click();
       const d = await dialog(page);
       await setField(d, /provider/i, 'claude').catch(() => {});
       const go = d.getByRole('button', { name: /^(start|log ?in|continue|next|preview|confirm)\b/i });
