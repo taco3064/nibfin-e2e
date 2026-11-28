@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import type { Visibility } from './config.ts';
-import type { GitHub } from './github.ts';
+import { GitHubError, type GitHub } from './github.ts';
 
 export interface TemplateFile {
   /** Path relative to the template root, with `/` separators. */
@@ -108,6 +108,13 @@ export async function branchProtection(gh: GitHub, repo: string, branch = 'main'
   return r.data;
 }
 
+interface Runner {
+  id: number;
+  name: string;
+  status: string;
+  busy: boolean;
+}
+
 interface State {
   settings: Record<string, unknown>;
   pulls: { number: number }[];
@@ -117,13 +124,18 @@ interface State {
   secrets: string[];
   variables: string[];
   keys: { id: number; title: string }[];
-  runners: { id: number; name: string; status: string }[];
+  runners: Runner[];
   rulesets: Ruleset[];
   /** main has classic branch protection. */
   protection: boolean;
   tags: string[];
   mainCommit?: string;
   mainTree?: string;
+}
+
+async function listRunners(gh: GitHub, repo: string): Promise<Runner[]> {
+  const runners = await gh.list<Runner>(`/repos/${repo}/actions/runners`, 'runners');
+  return runners.map(({ id, name, status, busy }) => ({ id, name, status, busy: busy === true }));
 }
 
 async function read(gh: GitHub, repo: string): Promise<State> {
@@ -140,7 +152,7 @@ async function read(gh: GitHub, repo: string): Promise<State> {
     secrets: (await gh.list<{ name: string }>(`${r}/actions/secrets`, 'secrets')).map((s) => s.name),
     variables: (await gh.list<{ name: string }>(`${r}/actions/variables`, 'variables')).map((v) => v.name),
     keys: await gh.list<{ id: number; title: string }>(`${r}/keys`),
-    runners: await gh.list<{ id: number; name: string; status: string }>(`${r}/actions/runners`, 'runners'),
+    runners: await listRunners(gh, repo),
     rulesets: await rulesets(gh, repo),
     protection: (await branchProtection(gh, repo)) !== undefined,
     mainCommit: main?.commit,
@@ -211,6 +223,115 @@ export interface SandboxDeps {
   github: GitHub;
   template: TemplateFile[];
   log(message: string): void;
+  /** Milliseconds now; defaults to `Date.now`. Tests replace it with a fake clock. */
+  now?: () => number;
+  /** Waits the given milliseconds; defaults to a real timer. Tests replace it with a fake clock. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/** Workflow run statuses GitHub lists that have not completed. */
+const UNFINISHED = ['queued', 'in_progress', 'waiting', 'pending', 'requested'] as const;
+/** How long the reset waits for busy runner registrations to be released. */
+const WAIT_MS = 360_000;
+/** How often the reset reads the runner registrations again while it waits. */
+const POLL_MS = 10_000;
+/** After this long with a registration still busy, runs that had a plain cancel get one force-cancel. */
+const FORCE_AFTER_MS = 60_000;
+
+interface Run {
+  id: number;
+  name: string;
+  status: string;
+}
+
+/** The sandbox's workflow runs that have not completed, one list call per status, by id. */
+async function unfinishedRuns(gh: GitHub, repo: string): Promise<Run[]> {
+  const runs = new Map<number, Run>();
+  for (const status of UNFINISHED) {
+    for (const run of await gh.list<Run>(`/repos/${repo}/actions/runs?status=${status}`, 'workflow_runs')) {
+      if (!runs.has(run.id)) runs.set(run.id, { id: run.id, name: run.name, status: run.status });
+    }
+  }
+  return [...runs.values()];
+}
+
+/** Sends a cancel (or force-cancel) for the run and logs it; a 409 (already finished) is accepted. */
+async function cancelRun(deps: SandboxDeps, repo: string, run: Run, force: boolean): Promise<void> {
+  const kind = force ? 'force-cancel' : 'cancel';
+  const r = await deps.github.rest<{ message?: string }>('POST', `/repos/${repo}/actions/runs/${run.id}/${kind}`, undefined, [409]);
+  const answer = r.status === 409 ? `; GitHub answered 409: ${String(r.data?.message ?? '')}` : '';
+  deps.log(`${repo}: ${kind} requested for workflow run ${run.id} (${run.name}, ${run.status})${answer}`);
+}
+
+/** The in-progress job of the sandbox that GitHub reports on the runner, if any. */
+async function holder(gh: GitHub, repo: string, runner: Runner): Promise<string> {
+  for (const run of await unfinishedRuns(gh, repo)) {
+    if (run.status !== 'in_progress') continue;
+    const jobs = await gh.list<{ name: string; status: string; runner_name: string | null; html_url: string }>(`/repos/${repo}/actions/runs/${run.id}/jobs`, 'jobs');
+    const job = jobs.find((j) => j.status === 'in_progress' && j.runner_name === runner.name);
+    if (job) return `held by job "${job.name}" (${job.html_url}) of workflow run ${run.id} (${run.name})`;
+  }
+  return 'no in-progress job of this repository names it';
+}
+
+const ids = (list: number[]) => (list.length ? list.join(', ') : 'none');
+
+/**
+ * Cancels the sandbox's unfinished workflow runs, waits up to WAIT_MS for no runner
+ * registration to be busy, then deletes every registration. A registration GitHub still
+ * refuses to delete fails the reset with the runner, the job holding it and the next step.
+ */
+async function releaseRunners(deps: SandboxDeps, repo: string, initial: Runner[]): Promise<void> {
+  const { github: gh, log } = deps;
+  const now = deps.now ?? Date.now;
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const cancelled: number[] = [];
+  const forced: number[] = [];
+  for (const run of await unfinishedRuns(gh, repo)) {
+    await cancelRun(deps, repo, run, false);
+    cancelled.push(run.id);
+  }
+
+  let runners = initial;
+  let waited = 0;
+  if (runners.some((rn) => rn.busy)) {
+    const start = now();
+    const waitedFor = runners.filter((rn) => rn.busy).map((rn) => rn.name);
+    let forceSent = false;
+    while (runners.some((rn) => rn.busy) && now() - start < WAIT_MS) {
+      await sleep(POLL_MS);
+      runners = await listRunners(gh, repo);
+      // Force-cancel once, only runs that ignored a plain cancel (GitHub reserves it for those).
+      if (!forceSent && runners.some((rn) => rn.busy) && now() - start >= FORCE_AFTER_MS) {
+        forceSent = true;
+        for (const run of await unfinishedRuns(gh, repo)) {
+          if (!cancelled.includes(run.id)) continue;
+          await cancelRun(deps, repo, run, true);
+          forced.push(run.id);
+        }
+      }
+    }
+    waited = now() - start;
+    const busy = runners.filter((rn) => rn.busy).map((rn) => rn.name);
+    log(`${repo}: waited ${Math.round(waited / 1000)}s for runner(s) ${waitedFor.join(', ')} to be released; ${busy.length ? `still busy: ${busy.join(', ')}` : 'released'}`);
+  }
+
+  const refused: { runner: Runner; error: GitHubError }[] = [];
+  for (const rn of runners) {
+    const path = `/repos/${repo}/actions/runners/${rn.id}`;
+    const r = await gh.rest<{ message?: string }>('DELETE', path, undefined, [422]);
+    if (r.status === 422) refused.push({ runner: rn, error: new GitHubError('DELETE', path, 422, String(r.data?.message ?? '')) });
+  }
+  if (!refused.length) return;
+
+  const parts: string[] = [];
+  for (const { runner, error } of refused) {
+    parts.push(`${repo}: runner registration ${runner.name} (id ${runner.id}) could not be deleted: ${error.message}; ${await holder(gh, repo, runner)}`);
+  }
+  parts.push(`cancel requested for runs ${ids(cancelled)}; force-cancel for ${ids(forced)}`);
+  parts.push(`waited ${Math.round(waited / 1000)}s of ${WAIT_MS / 1000}s`);
+  parts.push('the runner must finish its job, or its job must be cancelled or the runner released on GitHub, before the sandboxes can be reset; then rerun the sandboxes step');
+  throw new Error(parts.join('; '), { cause: refused[0]?.error });
 }
 
 /**
@@ -242,7 +363,7 @@ export async function resetSandbox(deps: SandboxDeps, repo: string, visibility: 
   for (const name of s.secrets) await gh.rest('DELETE', `${r}/actions/secrets/${encodeURIComponent(name)}`);
   for (const name of s.variables) await gh.rest('DELETE', `${r}/actions/variables/${encodeURIComponent(name)}`);
   for (const k of s.keys) await gh.rest('DELETE', `${r}/keys/${k.id}`);
-  for (const rn of s.runners) await gh.rest('DELETE', `${r}/actions/runners/${rn.id}`);
+  await releaseRunners(deps, repo, s.runners);
   for (const t of s.tags) await gh.rest('DELETE', `${r}/git/refs/tags/${ref(t)}`);
 
   if (s.mainTree !== tree) {

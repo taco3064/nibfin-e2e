@@ -14,7 +14,17 @@ function setup(visibility = 'public') {
   const fake = new FakeGitHub();
   fake.repos.set('o/exec', cleanRepo(visibility, tree));
   const github = createGitHub(() => 'tok', fake.fetch);
-  return { fake, repo: fake.repos.get('o/exec') as ReturnType<typeof cleanRepo>, deps: { github, template, log: () => {} } };
+  // A fake clock: sleep advances now at once, so a wait passes no real time.
+  const clock = { t: 0, sleeps: 0 };
+  const logs: string[] = [];
+  const deps = {
+    github,
+    template,
+    log: (m: string) => void logs.push(m),
+    now: () => clock.t,
+    sleep: async (ms: number) => void ((clock.t += ms), clock.sleeps++),
+  };
+  return { fake, repo: fake.repos.get('o/exec') as ReturnType<typeof cleanRepo>, deps, clock, logs };
 }
 
 test('treeSha matches git write-tree, including the order of d.txt and d/', () => {
@@ -173,4 +183,85 @@ test('a leftover tag that does not delete is reported by the read-back', async (
   repo.tags.push('r1-a-ci2');
   fake.failures.set('DELETE /repos/o/exec/git/refs/tags/r1-a-ci2', 204);
   deepEqual(await resetSandbox(deps, 'o/exec', 'public'), ['o/exec: tag r1-a-ci2 exists']);
+});
+
+const GITHUB_BUSY = 'Bad request - Runner host-claude-1 is currently running a job and cannot be deleted.';
+
+test('an in-progress run is cancelled before its busy runner is deleted, and the sandbox reads back clean', async () => {
+  const { fake, repo, deps, clock, logs } = setup();
+  repo.runs.push({ id: 41, name: 'Nibfin', status: 'in_progress' });
+  repo.runners.push({ id: 61, name: 'host-claude-1', status: 'offline', busy: true });
+  fake.onCancel = (r, id) => {
+    const run = r.runs.find((x) => x.id === id);
+    if (run) run.status = 'completed';
+    for (const rn of r.runners) rn.busy = false;
+  };
+  deepEqual(await resetSandbox(deps, 'o/exec', 'public'), []);
+  deepEqual(repo.runners, []);
+  const cancel = fake.writes.indexOf('POST /repos/o/exec/actions/runs/41/cancel');
+  const del = fake.writes.indexOf('DELETE /repos/o/exec/actions/runners/61');
+  equal(cancel >= 0 && del > cancel, true, fake.writes.join(', '));
+  equal(fake.writes.some((w) => w.includes('force-cancel')), false);
+  equal(clock.sleeps, 1);
+  deepEqual(logs, [
+    'o/exec: cancel requested for workflow run 41 (Nibfin, in_progress)',
+    'o/exec: waited 10s for runner(s) host-claude-1 to be released; released',
+  ]);
+});
+
+test('a runner that stays busy fails within the wait limit, naming the runner, its job, the cancels and the next step', async () => {
+  const { fake, repo, deps, clock, logs } = setup();
+  repo.runs.push({
+    id: 41,
+    name: 'Nibfin',
+    status: 'in_progress',
+    jobs: [
+      { name: 'route', status: 'completed', runner_name: 'other', html_url: 'https://github.com/o/exec/actions/runs/41/job/1' },
+      { name: 'review', status: 'in_progress', runner_name: 'host-claude-1', html_url: 'https://github.com/o/exec/actions/runs/41/job/2' },
+    ],
+  });
+  repo.runners.push({ id: 61, name: 'host-claude-1', status: 'offline', busy: true }, { id: 62, name: 'idle', status: 'offline', busy: false });
+  const err = (await resetSandbox(deps, 'o/exec', 'public').catch((e: unknown) => e)) as Error;
+  equal(err instanceof Error, true);
+  const m = err.message;
+  match(m, /o\/exec: runner registration host-claude-1 \(id 61\) could not be deleted/);
+  equal(m.includes(`GitHub DELETE /repos/o/exec/actions/runners/61 returned 422: ${GITHUB_BUSY}`), true, m);
+  match(m, /held by job "review" \(https:\/\/github\.com\/o\/exec\/actions\/runs\/41\/job\/2\) of workflow run 41 \(Nibfin\)/);
+  match(m, /cancel requested for runs 41; force-cancel for 41/);
+  match(m, /waited 360s of 360s/);
+  match(m, /the runner must finish its job, or its job must be cancelled or the runner released on GitHub, before the sandboxes can be reset; then rerun the sandboxes step/);
+  match(String((err.cause as Error).message), /returned 422: Bad request - Runner host-claude-1/);
+  equal((err.cause as { status?: number }).status, 422);
+  // The idle registration is still deleted; the busy one is kept.
+  deepEqual(repo.runners.map((r) => r.id), [61]);
+  equal(clock.t <= 360_000 + 10_000, true);
+  equal(fake.writes.filter((w) => w === 'POST /repos/o/exec/actions/runs/41/force-cancel').length, 1);
+  deepEqual(logs, [
+    'o/exec: cancel requested for workflow run 41 (Nibfin, in_progress)',
+    'o/exec: force-cancel requested for workflow run 41 (Nibfin, in_progress)',
+    'o/exec: waited 360s for runner(s) host-claude-1 to be released; still busy: host-claude-1',
+  ]);
+});
+
+test('a runner refused with no in-progress job of the repository says so', async () => {
+  const { repo, deps } = setup();
+  repo.runners.push({ id: 61, name: 'host-claude-1', status: 'offline', busy: true });
+  await rejects(resetSandbox(deps, 'o/exec', 'public'), /no in-progress job of this repository names it; cancel requested for runs none; force-cancel for none; waited 360s/);
+});
+
+test('completed runs are not cancelled and an idle runner is deleted without waiting', async () => {
+  const { fake, repo, deps, clock } = setup();
+  repo.runs.push({ id: 40, name: 'Nibfin', status: 'completed' });
+  repo.runners.push({ id: 9, name: 'idle', status: 'offline', busy: false });
+  deepEqual(await resetSandbox(deps, 'o/exec', 'public'), []);
+  deepEqual(fake.writes, ['DELETE /repos/o/exec/actions/runners/9']);
+  equal(clock.sleeps, 0);
+});
+
+test('a run that finished before its cancel arrives (409) is accepted and logged', async () => {
+  const { fake, repo, deps, logs } = setup();
+  repo.runs.push({ id: 42, name: 'Nibfin', status: 'queued' });
+  fake.failures.set('POST /repos/o/exec/actions/runs/42/cancel', 409);
+  deepEqual(await resetSandbox(deps, 'o/exec', 'public'), []);
+  deepEqual(logs, ['o/exec: cancel requested for workflow run 42 (Nibfin, queued); GitHub answered 409: refused by fake']);
 });
