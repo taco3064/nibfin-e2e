@@ -31,9 +31,5 @@ jobs:
           git diff --check "$BASE" HEAD
       - name: Verify the scenario harness
         run: |
-          if [[ ! -f package.json ]]; then
-            echo "No package.json yet; nothing to verify."
-            exit 0
-          fi
           npm ci --ignore-scripts
           npm --ignore-scripts run verify
