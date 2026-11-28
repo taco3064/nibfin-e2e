@@ -4,7 +4,7 @@
 import { deepEqual, equal, rejects } from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Job } from '../../scenarios/lifecycle/analysis.ts';
-import { stageJobRunning } from '../../scenarios/lifecycle/journeys.ts';
+import { stageJobRunning, stageJobRunningOrMissed } from '../../scenarios/lifecycle/journeys.ts';
 import { deliverWithCommits } from '../../scenarios/lifecycle/phase1.ts';
 import { DEADLINE, Kit, STALL } from '../../scenarios/lifecycle/kit.ts';
 import { clock, context, routes } from './fake.ts';
@@ -263,4 +263,138 @@ for (const [name, answer, last] of [
     equal(c.now() - T0 < STALL, true);
     equal(f.calls.some((x) => x.startsWith(branchRead)), false, 'no branch head is read without a commit');
   });
+}
+
+// When A's deliver job can no longer be seen running, the reason names what the direct reads
+// saw, and the delivery journey goes on without its wakes (Proposal R4.35, R1.14).
+const deliverWait = { desc: "A's deliver job to run", deadlineMs: DEADLINE.delivery, who: 'A' } as const;
+const allJobs = (url: URL) => url.searchParams.get('filter') === 'all';
+
+test('a deliver job the direct reads never saw, followed by Review, names the direct reads and is a miss for the journey', async () => {
+  for (const wait of [stageJobRunning, stageJobRunningOrMissed]) {
+    const c = clock(T0);
+    const runs = () => [
+      run(9, 'deliver', 'completed', iso(30_000)),
+      ...(c.now() - T0 >= 66_000 ? [run(10, 'review', 'in_progress', iso(66_000))] : []),
+    ];
+    const f = routes({
+      ...base,
+      'GET /repos/o/exec/actions/runs': () => ({ workflow_runs: runs() }),
+      // The direct reads (filter=latest) see no job; the observer's filter=all reads see it completed.
+      'GET /repos/o/exec/actions/runs/9/jobs': (_b: unknown, url: URL) => ({
+        jobs: allJobs(url) ? [timedJob(() => T0 + 65_000, 62_000, 65_000, { id: 21, run: 9 })] : [],
+      }),
+      'GET /repos/o/exec/actions/runs/10/jobs': { jobs: [] },
+      'GET /repos/o/exec/issues': [issue],
+    });
+    const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
+    const reason = new RegExp(
+      `^gave up waiting for A's deliver job to run: #6's deliver job 21 completed \\(run 9, success\\) and a review run 10 followed; direct reads: run 9 \\(attempt 1\\) last read at ${iso(0)}: no self-hosted job; observed: o/exec#6 open`,
+    );
+    const o = { ...deliverWait, show: k.show('o/exec', 6) };
+    if (wait === stageJobRunning) await rejects(stageJobRunning(k, 6, 'deliver', o), (e: Error) => reason.test(e.message));
+    else {
+      const r = await stageJobRunningOrMissed(k, 6, 'deliver', o);
+      equal('missed' in r && reason.test(r.missed), true, JSON.stringify(r));
+    }
+    equal(c.now() - T0 < 3 * 60_000, true, 'it ended on the snapshot that showed Review');
+    equal(c.now() - T0 < STALL, true);
+  }
+});
+
+test("a direct read that fails before stageGone ends A's deliver wait names the read error", async () => {
+  const c = clock(T0);
+  const runs = () => [
+    run(9, 'deliver', c.now() - T0 < 67_000 ? 'in_progress' : 'completed', iso(30_000)),
+    ...(c.now() - T0 >= 66_000 ? [run(10, 'review', 'in_progress', iso(66_000))] : []),
+  ];
+  const f = routes({
+    ...base,
+    'GET /repos/o/exec/actions/runs': () => ({ workflow_runs: runs() }),
+    'GET /repos/o/exec/actions/runs/9/jobs': (_b: unknown, url: URL) =>
+      allJobs(url) || c.now() - T0 <= 60_000
+        ? { jobs: [timedJob(c.now, 62_000, 65_000, { id: 21, run: 9 })] }
+        : { status: 502, data: { message: 'Bad Gateway' } },
+    'GET /repos/o/exec/actions/runs/10/jobs': { jobs: [] },
+    'GET /repos/o/exec/issues': [issue],
+  });
+  const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
+  await rejects(
+    stageJobRunning(k, 6, 'deliver', { ...deliverWait, show: k.show('o/exec', 6) }),
+    (e: Error) =>
+      new RegExp(
+        `^gave up waiting for A's deliver job to run: #6's deliver job 21 completed \\(run 9, success\\) and a review run 10 followed; direct reads: run 9 \\(attempt 1\\) last read at ${iso(60_000)}: job 21 queued, started none, completed none; last direct read error at [^ ]+ \\(run 9\\): [^;]*502`,
+      ).test(e.message) || assertFail(e.message),
+  );
+  equal(c.now() - T0 < STALL, true);
+});
+
+test('a re-run attempt of a deliver run whose first attempt ran no job is read directly again', async () => {
+  const c = clock(T0);
+  const rerun = () => c.now() - T0 >= 40_000;
+  const cancelled: Job = { ...timedJob(c.now, 0, 0, { id: 21, run: 9 }), conclusion: 'cancelled', started_at: null };
+  const f = routes({
+    ...base,
+    'GET /repos/o/exec/actions/runs': () => ({
+      workflow_runs: [
+        rerun()
+          ? { ...run(9, 'deliver', 'in_progress', iso(30_000)), run_attempt: 2 }
+          : { ...run(9, 'deliver', 'completed', iso(30_000), 'cancelled'), run_attempt: 1 },
+      ],
+    }),
+    'GET /repos/o/exec/actions/runs/9/jobs': () => ({
+      jobs: [rerun() ? timedJob(c.now, 70_000, 100_000, { id: 22, run: 9 }) : cancelled],
+    }),
+    'GET /repos/o/exec/issues': [issue],
+  });
+  const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
+  const j = await stageJobRunning(k, 6, 'deliver', deliverWait);
+  deepEqual([j.id, j.status, j.run.id, j.run.run_attempt], [22, 'in_progress', 9, 2]);
+  equal(c.now() - T0 < 100_000, true, 'found while it was running');
+});
+
+test("a deliver job that completed before any read saw it running is a miss for A's deliver wait", async () => {
+  const c = clock(T0);
+  const runs = () => [
+    run(9, 'deliver', c.now() - T0 < 67_000 ? 'in_progress' : 'completed', iso(30_000)),
+    ...(c.now() - T0 >= 66_000 ? [run(10, 'review', 'in_progress', iso(66_000))] : []),
+  ];
+  const f = routes({
+    ...base,
+    'GET /repos/o/exec/actions/runs': () => ({ workflow_runs: runs() }),
+    'GET /repos/o/exec/actions/runs/9/jobs': () => ({ jobs: [timedJob(c.now, 62_000, 65_000, { id: 21, run: 9 })] }),
+    'GET /repos/o/exec/actions/runs/10/jobs': { jobs: [] },
+    'GET /repos/o/exec/issues': [issue],
+  });
+  const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
+  const r = await stageJobRunningOrMissed(k, 6, 'deliver', { ...deliverWait, show: k.show('o/exec', 6) });
+  equal('missed' in r, true);
+  equal(
+    'missed' in r &&
+      new RegExp(
+        `^gave up waiting for A's deliver job to run: A's deliver job 21 \\(run 9\\) completed \\(success\\) before the wait saw it running: started ${iso(62_000)}, completed ${iso(65_000)}; the wait last read it at ${iso(60_000)} \\(queued\\); observed: o/exec#6 open`,
+      ).test(r.missed),
+    true,
+    JSON.stringify(r),
+  );
+  equal(c.now() - T0 < 2 * 60_000, true);
+});
+
+test("a closed A without delivered still ends A's deliver wait, naming the direct reads", async () => {
+  const c = clock(T0);
+  const closed = { ...issue, state: 'closed', state_reason: 'not_planned', closed_at: new Date(T0 - 3_600_000).toISOString() };
+  const f = routes({
+    ...base,
+    'GET /repos/o/exec/actions/runs': { workflow_runs: [] },
+    'GET /repos/o/exec/issues': [closed],
+  });
+  const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
+  await rejects(
+    stageJobRunningOrMissed(k, 6, 'deliver', deliverWait),
+    /^Error: gave up waiting for A's deliver job to run: #6 is closed \(not_planned\) without delivered; direct reads: none saw a deliver run of #6$/,
+  );
+});
+
+function assertFail(m: string): never {
+  throw new Error(`unexpected reason: ${m}`);
 }

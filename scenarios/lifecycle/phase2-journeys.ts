@@ -198,23 +198,27 @@ export const deliveryLifecycle: Scenario = lifecycle({
     );
 
     // R4.35: the two wakes during Deliver started no stage again.
-    const toggled = await k.obs.job(exec, j.wakeToggles.jobId);
-    const from = j.wakeToggles.at[0] ?? 0;
-    const to = toggled.completed_at ? time(toggled.completed_at) : k.now();
-    if (to <= (j.wakeToggles.at.at(-1) ?? 0))
-      c.notExercised(
-        'R4.35',
-        `deliver job ${toggled.id} completed at ${String(toggled.completed_at)}, before the wakes ended`,
-      );
+    const wakes = j.wakeToggles;
+    if ('missed' in wakes) c.notExercised('R4.35', `no wakes were sent during A's Deliver: ${wakes.missed}`);
     else {
-      const again = k
-        .stages(s, exec, n, AGENT_STAGES)
-        .filter((r) => time(r.created_at) >= from && time(r.created_at) <= to);
-      c.check(
-        'R4.35',
-        again.length === 0,
-        `while Deliver ran, the wakes started ${again.map((r) => r.stage).join(', ')}`,
-      );
+      const toggled = await k.obs.job(exec, wakes.jobId);
+      const from = wakes.at[0] ?? 0;
+      const to = toggled.completed_at ? time(toggled.completed_at) : k.now();
+      if (to <= (wakes.at.at(-1) ?? 0))
+        c.notExercised(
+          'R4.35',
+          `deliver job ${toggled.id} completed at ${String(toggled.completed_at)}, before the wakes ended`,
+        );
+      else {
+        const again = k
+          .stages(s, exec, n, AGENT_STAGES)
+          .filter((r) => time(r.created_at) >= from && time(r.created_at) <= to);
+        c.check(
+          'R4.35',
+          again.length === 0,
+          `while Deliver ran, the wakes started ${again.map((r) => r.stage).join(', ')}`,
+        );
+      }
     }
 
     // R3.22–R3.25, R3.33: review after the required `test` completed on the reviewed head, and that head merged.
