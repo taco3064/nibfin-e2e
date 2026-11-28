@@ -6,7 +6,7 @@ import { deepEqual, equal, rejects } from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Job } from '../../scenarios/lifecycle/analysis.ts';
 import { stageJobRunning, stageJobRunningOrMissed } from '../../scenarios/lifecycle/journeys.ts';
-import { deliverWithCommits } from '../../scenarios/lifecycle/phase1.ts';
+import { deliverStarted, deliverWithCommits } from '../../scenarios/lifecycle/phase1.ts';
 import { DEADLINE, Kit, STALL } from '../../scenarios/lifecycle/kit.ts';
 import { clock, context, routes } from './fake.ts';
 
@@ -265,6 +265,53 @@ for (const [name, answer, last] of [
     equal(f.calls.some((x) => x.startsWith(branchRead)), false, 'no branch head is read without a commit');
   });
 }
+
+// I3 is filed once I's deliver job is seen running, before any commit, so that I3's shape
+// job is dispatched while that job alone holds the only active Runner (Proposal R4.23).
+test("I3 is due once a watched read sees I's deliver job in progress, before any commit and without a branch read", async () => {
+  const c = clock(T0);
+  const f = routes({
+    ...base,
+    'GET /repos/o/exec/actions/runs': () => ({
+      workflow_runs: [
+        run(5, 'shape', 'completed', iso(0)),
+        ...(c.now() - T0 >= 30_000 ? [run(9, 'deliver', c.now() - T0 < 50_000 ? 'queued' : 'in_progress', iso(30_000))] : []),
+      ],
+    }),
+    'GET /repos/o/exec/actions/runs/9/jobs': () => ({ jobs: [timedJob(c.now, 70_000, 600_000, { id: 21, run: 9 })] }),
+    'GET /repos/o/exec/issues': [issue],
+  });
+  const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
+  const j = await deliverStarted(k, 6, { since: T0, show: k.show('o/exec', 6) });
+  deepEqual([j.id, j.status, j.stage, j.run.id], [21, 'in_progress', 'deliver', 9]);
+  const t = c.now() - T0;
+  equal(t >= 70_000, true, 'not while the run or the job was only queued');
+  equal(t < 100_000, true, 'within about one watch interval of the job going in_progress');
+  equal(f.calls.some((x) => x.startsWith(compare) || x.startsWith(branchRead)), false, 'no branch is read');
+});
+
+test('a deliver job that completed before any read saw it running ends the wait before I3 at once with its times', async () => {
+  const c = clock(T0);
+  const runs = () => [
+    run(9, 'deliver', c.now() - T0 < 67_000 ? 'in_progress' : 'completed', iso(30_000)),
+    ...(c.now() - T0 >= 66_000 ? [run(10, 'review', 'in_progress', iso(66_000))] : []),
+  ];
+  const f = routes({
+    ...base,
+    'GET /repos/o/exec/actions/runs': () => ({ workflow_runs: runs() }),
+    'GET /repos/o/exec/actions/runs/9/jobs': () => ({ jobs: [timedJob(c.now, 62_000, 65_000, { id: 21, run: 9 })] }),
+    'GET /repos/o/exec/actions/runs/10/jobs': { jobs: [] },
+    'GET /repos/o/exec/issues': [issue],
+  });
+  const k = new Kit(context(f.github), { now: c.now, sleep: c.sleep });
+  await rejects(
+    deliverStarted(k, 6, { since: T0, show: k.show('o/exec', 6) }),
+    new RegExp(
+      `^Error: gave up waiting for I's deliver job to start: I's deliver job 21 \\(run 9\\) completed \\(success\\) before the wait saw it running: started ${iso(62_000)}, completed ${iso(65_000)}; the wait last read it at ${iso(60_000)} \\(queued\\); observed: o/exec#6 open`,
+    ),
+  );
+  equal(c.now() - T0 < 2 * 60_000, true, 'it ended on the read that saw it completed');
+});
 
 // When A's deliver job can no longer be seen running, the reason names what the watched reads
 // saw, and the delivery journey goes on without its wakes (Proposal R4.35, R1.14).
