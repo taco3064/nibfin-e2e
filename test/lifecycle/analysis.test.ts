@@ -19,6 +19,9 @@ import {
   queuedHoldProblems,
   reasonOf,
   routePodmanProblems,
+  describeReadWindow,
+  rereadWindows,
+  sameIssueOverlapMessage,
   sameIssueOverlaps,
   selfHosted,
   stageRuns,
@@ -120,6 +123,108 @@ test('concurrent pairs need two Issues on two Runners; same-Issue overlaps are f
   );
   equal(sameIssueOverlaps([w('a', 'r1', 0, 10), w('a', 'r2', 10, 20)]).length, 0);
   equal(sameIssueOverlaps([w('a', 'r1', 0, 10), w('a', 'r2', 9, 20), w('b', 'r1', 0, 30)]).length, 1);
+});
+
+test('same-Issue overlaps re-read jobs listed unfinished and judge them from GitHub times', async () => {
+  const at = (hms: string) => `2026-11-28T${hms}Z`;
+  const listedRoute = job(140939084380, {
+    run_id: 46131929960,
+    status: 'in_progress',
+    conclusion: null,
+    started_at: at('09:46:29'),
+    completed_at: null,
+  });
+  const finish = job(140939246167, {
+    run_id: 46131975822,
+    started_at: at('09:47:10'),
+    completed_at: at('09:47:44'),
+  });
+  const reads: number[] = [];
+  const route = { ...listedRoute, status: 'completed', conclusion: 'success', completed_at: at('09:47:06') };
+  const read = async (id: number) => {
+    reads.push(id);
+    return route;
+  };
+  const now = () => Date.parse(at('09:50:00'));
+  const ws = await rereadWindows(
+    [
+      { ...listedRoute, stage: 'route' },
+      { ...finish, stage: 'finish' },
+    ],
+    'o/s#402',
+    read,
+    now,
+  );
+  // Only the job listed without completed_at is read again.
+  deepEqual(reads, [140939084380]);
+  deepEqual(
+    ws.map((w) => [w.stage, w.reread, w.end]),
+    [
+      ['route', true, Date.parse(at('09:47:06'))],
+      ['finish', false, Date.parse(at('09:47:44'))],
+    ],
+  );
+  equal(sameIssueOverlaps(ws).length, 0);
+
+  // Re-read times that truly overlap still give one pair, and the message names both jobs.
+  const late = { ...route, completed_at: at('09:47:20') };
+  const overlapping = await rereadWindows(
+    [
+      { ...listedRoute, stage: 'route' },
+      { ...finish, stage: 'finish' },
+    ],
+    'o/s#402',
+    async () => late,
+    now,
+  );
+  const pairs = sameIssueOverlaps(overlapping);
+  equal(pairs.length, 1);
+  const [a, b] = pairs[0] as [(typeof overlapping)[number], (typeof overlapping)[number]];
+  const msg = sameIssueOverlapMessage(a, b);
+  match(msg, /^o\/s#402: route job 140939084380 \(run 46131929960\) completed\/success/);
+  match(msg, /started_at 2026-11-28T09:46:29Z, completed_at 2026-11-28T09:47:20Z, read again by job id/);
+  match(msg, /finish job 140939246167 \(run 46131975822\) completed\/success/);
+  match(msg, /started_at 2026-11-28T09:47:10Z, completed_at 2026-11-28T09:47:44Z, from the run job list/);
+  match(msg, /file a request/);
+});
+
+test('a job still unfinished on its re-read ends at the read time, not Infinity', async () => {
+  const at = (hms: string) => `2026-11-28T${hms}Z`;
+  const running = job(1, { run_id: 10, status: 'in_progress', conclusion: null, started_at: at('10:00:00'), completed_at: null });
+  const readAt = Date.parse(at('10:05:00'));
+  const [w] = await rereadWindows([{ ...running, stage: 'deliver' }], 'o/s#1', async () => running, () => readAt);
+  if (!w) throw new Error('no window');
+  equal(w.end, readAt);
+  equal(w.readAt, readAt);
+  match(describeReadWindow(w), /in_progress, started_at 2026-11-28T10:00:00Z, running as of 2026-11-28T10:05:00.000Z, read again by job id/);
+  const before = await rereadWindows(
+    [{ ...job(2, { run_id: 11, started_at: at('09:50:00'), completed_at: at('09:59:59') }), stage: 'route' }],
+    'o/s#1',
+    async () => {
+      throw new Error('not read');
+    },
+    () => readAt,
+  );
+  equal(sameIssueOverlaps([w, ...before]).length, 0);
+  const during = await rereadWindows(
+    [{ ...job(3, { run_id: 12, started_at: at('10:04:00'), completed_at: at('10:06:00') }), stage: 'finish' }],
+    'o/s#1',
+    async () => running,
+    () => readAt,
+  );
+  equal(sameIssueOverlaps([w, ...during]).length, 1);
+  // A read time before the start (clock skew) never ends the window before it starts.
+  const [skew] = await rereadWindows([{ ...running, stage: 'deliver' }], 'o/s#1', async () => running, () => readAt - 600_000);
+  equal(skew?.end, skew?.start);
+  // A failed re-read fails with its own error.
+  await rereadWindows([{ ...running, stage: 'deliver' }], 'o/s#1', async () => {
+    throw new Error('HTTP 502 for jobs/1');
+  }, () => readAt).then(
+    () => {
+      throw new Error('resolved');
+    },
+    (e: unknown) => match(String(e), /HTTP 502 for jobs\/1/),
+  );
 });
 
 test('log lines carry their leading timestamp; REASON is read from the step env', () => {
