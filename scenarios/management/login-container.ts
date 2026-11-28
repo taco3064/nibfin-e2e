@@ -1,6 +1,5 @@
 // Telling the first-login container apart from Podman's public view (Proposal R6.11):
 // an interactive, non-Job container from the Jobs' image running the CLI's own login.
-import { precondition } from '../lib/check.ts';
 import { LABEL_REPO } from '../lib/containers.ts';
 
 /**
@@ -135,9 +134,11 @@ export interface LoginVerdictInput {
 
 /**
  * The R6.11 failure when no sampled container is the login container (Proposal R6.11,
- * R1.14). Run state only when `:main` moved since init and a login-shaped candidate is
- * proven to be from the current `:main` image (its digest, or its image id equal to the
- * local id of the current digest); the observation stays in every reason.
+ * R1.14). No outcome is run state: the login must run in the Jobs' image pulled by digest
+ * (Proposal R5.7, R8.2), so a login-shaped candidate from any other image fails R6.11,
+ * even one proven to be from the current GHCR `:main` (its digest, or its image id equal
+ * to the local id of the current digest). The GHCR read only adds context that names the
+ * cause; the observation stays in every reason.
  */
 export function loginVerdict(input: LoginVerdictInput): { failure: string } {
   const { seen, ref, jobImageId, initDigest, current, volume, waitText } = input;
@@ -156,6 +157,7 @@ export function loginVerdict(input: LoginVerdictInput): { failure: string } {
     return {
       failure: `${r611} (GHCR :main is ${current.digest}, init resolved ${initDigest}; no login candidate is from it)`,
     };
-  const why = `GHCR :main is ${current.digest}, init resolved ${initDigest}; a newer main image appeared after init and login candidate ${describeLogin(proven)} is from it, not from the Jobs' image ${ref}; observed: ${observed} ${waitText}`;
-  return { failure: `run state: ${precondition(why).reason}` };
+  return {
+    failure: `${r611} (GHCR :main is ${current.digest}, init resolved ${initDigest}; login candidate ${describeLogin(proven)} is from the current :main, not from the Jobs' image ${ref})`,
+  };
 }
