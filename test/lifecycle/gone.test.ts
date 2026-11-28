@@ -1,12 +1,11 @@
 // Waits that end early (Issue #334): a goal out of reach, a stall, an abort; and the
 // deterministic Runner-busy checks of interrupted-deliver.
-import { deepEqual, equal, match, rejects } from 'node:assert/strict';
+import { equal, match, rejects, throws } from 'node:assert/strict';
 import { test } from 'node:test';
-import { busyTogether, issueKey, jobWindow } from '../../scenarios/lifecycle/analysis.ts';
 import type { Job } from '../../scenarios/lifecycle/analysis.ts';
 import { DEADLINE, Kit, PUBLISH_GRACE, QUOTE_LIMIT, STALL } from '../../scenarios/lifecycle/kit.ts';
 import { Observer } from '../../scenarios/lifecycle/observe.ts';
-import { allBusyAt, busyGone, i2Due } from '../../scenarios/lifecycle/phase1.ts';
+import { activeRunner, allBusyAt, i3Missed } from '../../scenarios/lifecycle/phase1.ts';
 import { clock, context, routes } from './fake.ts';
 
 const MIN = 60_000;
@@ -309,99 +308,62 @@ test("an observer wait ends with the abort reason once the run's signal aborts",
   await rejects(waiting, /^Error: budget$/);
 });
 
-test('interrupted-deliver step 4: two jobs that overlapped on the two Runners pass even when both completed before any snapshot', () => {
-  const runners = ['claude-1', 'claude-2'];
+test("interrupted-deliver step 5: I's deliver job alone on the one active Runner counts as every active Runner busy while it runs", () => {
+  const runners = ['claude-1'];
   const deliver = job(21, 2, {
     runner_name: 'claude-1',
     started_at: '2026-11-26T10:00:00Z',
     completed_at: '2026-11-26T10:30:00Z',
   });
-  const shape = job(31, 3, {
-    runner_name: 'claude-2',
-    started_at: '2026-11-26T10:10:00Z',
-    completed_at: '2026-11-26T10:12:00Z',
-  });
-  const w = (j: Job, stage: 'deliver' | 'shape') =>
-    jobWindow(j, issueKey('o/exec', j.id), stage) as NonNullable<ReturnType<typeof jobWindow>>;
-  deepEqual(busyTogether([w(deliver, 'deliver'), w(shape, 'shape')], runners), {
-    start: Date.parse('2026-11-26T10:10:00Z'),
-    end: Date.parse('2026-11-26T10:12:00Z'),
-  });
-  equal(busyGone(deliver, shape, runners), undefined);
-  // Still running: the window ends at Infinity and still counts.
-  const running = { ...shape, status: 'in_progress', completed_at: null };
-  deepEqual(
-    busyTogether([w(deliver, 'deliver'), w(running, 'shape')], runners)?.end,
-    Date.parse('2026-11-26T10:30:00Z'),
-  );
-
-  // Sequential windows, the same Runner, or other Runners registered do not count.
-  const after = { ...shape, started_at: '2026-11-26T10:31:00Z', completed_at: '2026-11-26T10:40:00Z' };
-  equal(busyTogether([w(deliver, 'deliver'), w(after, 'shape')], runners), undefined);
-  const same = { ...shape, runner_name: 'claude-1' };
-  equal(busyTogether([w(deliver, 'deliver'), w(same, 'shape')], runners), undefined);
-  equal(busyTogether([w(deliver, 'deliver'), w(shape, 'shape')], [...runners, 'claude-3']), undefined);
-  equal(
-    busyGone(deliver, after, runners),
-    "I's deliver job 21 completed at 2026-11-26T10:30:00Z before I2's shape job started",
-  );
-  equal(
-    busyGone(deliver, undefined, runners),
-    "I's deliver job 21 completed at 2026-11-26T10:30:00Z before I2's shape job started",
-  );
-  equal(busyGone(deliver, same, runners), "I2's shape job 31 ran on claude-1, the same Runner as I's deliver job 21");
-  equal(
-    busyGone(deliver, shape, ['claude-1']),
-    "the registered Runners are claude-1; I's deliver job and I2's shape job cannot cover them",
-  );
-  // While I's job runs and I2's has not started, the goal is still in reach.
-  equal(busyGone({ ...deliver, status: 'in_progress', completed_at: null }, undefined, runners), undefined);
+  equal(allBusyAt(Date.parse('2026-11-26T10:11:00Z'), [deliver], runners), true);
+  // Still running: its window ends at Infinity.
+  const running = { ...deliver, status: 'in_progress', completed_at: null };
+  equal(allBusyAt(Date.parse('2026-11-26T11:00:00Z'), [running], runners), true);
+  // After it completed, with a second Runner to cover, or with no Runner, it does not count.
+  equal(allBusyAt(Date.parse('2026-11-26T10:31:00Z'), [deliver], runners), false);
+  equal(allBusyAt(Date.parse('2026-11-26T10:11:00Z'), [deliver], ['claude-1', 'claude-2']), false);
+  equal(allBusyAt(Date.parse('2026-11-26T10:11:00Z'), [deliver], []), false);
 });
 
-test('interrupted-deliver step 4: with I2 filed early, its shape job may run before I\'s deliver job starts', () => {
-  const runners = ['claude-1', 'claude-2'];
-  const deliver = job(21, 2, { runner_name: 'claude-1', status: 'in_progress', started_at: '2026-11-26T10:00:00Z', completed_at: null });
-  const w = (j: Job, stage: 'deliver' | 'shape') => jobWindow(j, issueKey('o/exec', j.id), stage) as NonNullable<ReturnType<typeof jobWindow>>;
-  // I2's shape job ran 09:50–09:58, before I's deliver job started at 10:00: the overlap can no longer happen.
-  const early = job(31, 3, { runner_name: 'claude-2', started_at: '2026-11-26T09:50:00Z', completed_at: '2026-11-26T09:58:00Z' });
-  equal(busyGone(deliver, early, runners), "I2's shape job 31 completed at 2026-11-26T09:58:00Z before I's deliver job 21 started at 2026-11-26T10:00:00Z");
-  equal(busyGone(undefined, early, runners), "I2's shape job 31 completed at 2026-11-26T09:58:00Z before I's deliver job started");
-  // Started earlier and still running when I's deliver job starts: the goal holds.
-  const running = { ...early, status: 'in_progress', completed_at: null };
-  equal(busyGone(deliver, running, runners), undefined);
-  deepEqual(busyTogether([w(deliver, 'deliver'), w(running, 'shape')], runners)?.start, Date.parse('2026-11-26T10:00:00Z'));
-  // Neither job, or only I2's running one, has started yet: still in reach.
-  equal(busyGone(undefined, undefined, runners), undefined);
-  equal(busyGone(undefined, running, runners), undefined);
-  equal(busyGone(undefined, running, ['claude-1']), "the registered Runners are claude-1; I's deliver job and I2's shape job cannot cover them");
+test("interrupted-deliver step 5: I's deliver job completing before I3's shape job was seen queued names both jobs", () => {
+  const at = Date.parse('2026-11-26T10:31:00Z');
+  const running = job(21, 2, { status: 'in_progress', started_at: '2026-11-26T10:00:00Z', completed_at: null });
+  equal(i3Missed(running, undefined, at), undefined);
+  const deliver = { ...running, status: 'completed', completed_at: '2026-11-26T10:30:00Z' };
+  const head = "I's deliver job 21 completed at 2026-11-26T10:30:00Z before I3's shape job was seen queued while it ran; ";
+  equal(i3Missed(deliver, undefined, at), `${head}I3's shape job was not yet seen when read at 2026-11-26T10:31:00.000Z`);
+  const queued = job(31, 3, { status: 'queued', conclusion: null, runner_name: null, created_at: '2026-11-26T10:29:00Z', started_at: null, completed_at: null });
+  equal(
+    i3Missed(deliver, queued, at),
+    `${head}I3's shape job 31 was queued (created 2026-11-26T10:29:00Z) when read at 2026-11-26T10:31:00.000Z`,
+  );
+  const started = { ...queued, status: 'in_progress', runner_name: 'claude-1', started_at: '2026-11-26T10:30:10Z' };
+  equal(
+    i3Missed(deliver, started, at),
+    `${head}I3's shape job 31 was in_progress, started at 2026-11-26T10:30:10Z on claude-1, when read at 2026-11-26T10:31:00.000Z`,
+  );
+  const done = { ...started, status: 'completed', conclusion: 'success', completed_at: '2026-11-26T10:30:50Z' };
+  equal(
+    i3Missed(deliver, done, at),
+    `${head}I3's shape job 31 had started at 2026-11-26T10:30:10Z on claude-1 and completed at 2026-11-26T10:30:50Z when read at 2026-11-26T10:31:00.000Z`,
+  );
 });
 
-test('interrupted-deliver step 5: a queued job counts when the jobs\' own windows cover every Runner at the snapshot', () => {
-  const runners = ['claude-1', 'claude-2'];
-  const deliver = job(21, 2, {
-    runner_name: 'claude-1',
-    started_at: '2026-11-26T10:00:00Z',
-    completed_at: null,
-    status: 'in_progress',
-  });
-  const shape = job(31, 3, {
-    runner_name: 'claude-2',
-    started_at: '2026-11-26T10:10:00Z',
-    completed_at: '2026-11-26T10:12:00Z',
-  });
-  equal(allBusyAt(Date.parse('2026-11-26T10:11:00Z'), [deliver, shape], runners), true);
-  equal(allBusyAt(Date.parse('2026-11-26T10:13:00Z'), [deliver, shape], runners), false);
-  equal(allBusyAt(Date.parse('2026-11-26T10:11:00Z'), [deliver, shape], []), false);
-  // I2 already in Deliver on the second Runner, with no shape job in the list, still covers it.
-  const deliver2 = job(41, 4, { runner_name: 'claude-2', started_at: '2026-11-26T10:15:00Z', completed_at: null, status: 'in_progress' });
-  equal(allBusyAt(Date.parse('2026-11-26T10:16:00Z'), [deliver, deliver2], runners), true);
-});
-
-test('interrupted-deliver: I2 is filed once I is shaped or its deliver run exists', () => {
-  equal(i2Due(['scope'], []), false);
-  equal(i2Due(['scope', 'shaped'], []), true);
-  equal(i2Due(['scope'], ['shape', 'deliver']), true);
-  equal(i2Due(['scope'], ['route', 'shape']), false);
+test('interrupted-deliver: exactly one registration of the active slot is required, and any other read names every registration', () => {
+  const r = (id: number, name: string, status = 'online', busy = false) => ({ id, name, status, busy });
+  equal(activeRunner([r(1, 'h-1a2b-claude-1'), r(2, 'h-1a2b-claude-2', 'online')]), 'h-1a2b-claude-1');
+  throws(
+    () => activeRunner([r(2, 'h-1a2b-claude-2', 'offline', true)]),
+    {
+      message:
+        'interrupted-deliver needs exactly one active Runner (claude-1); the registrations read are h-1a2b-claude-2 (slot claude-2, offline, busy)',
+    },
+  );
+  throws(() => activeRunner([]), /the registrations read are none$/);
+  throws(
+    () => activeRunner([r(1, 'a-claude-1'), r(3, 'b-claude-1'), r(4, 'other')]),
+    /are a-claude-1 \(slot claude-1, online, idle\), b-claude-1 \(slot claude-1, online, idle\), other \(slot none, online, idle\)$/,
+  );
 });
 
 test("a wait is not judged on a snapshot taken before it began, such as one still showing the harness's own pending", async () => {
