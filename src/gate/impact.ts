@@ -162,3 +162,34 @@ export async function readImpact(
   }
   return { source, ids, decisions };
 }
+
+interface ListedIssue {
+  number?: number;
+  closed_at?: string | null;
+  pull_request?: unknown;
+}
+
+/**
+ * Every Issue in the repositories whose delivered Issues select a rerun that is closed with
+ * `delivered` at or after `since`, in repository order and then by number. The list's `since`
+ * filters by last update, which is never earlier than closing, so it only narrows the
+ * candidates; `closed_at` is then compared as a timestamp. `readImpact` rechecks each Issue.
+ */
+export async function listDeliveredSince(gh: GitHub, since: string): Promise<IssueRef[]> {
+  const from = Date.parse(since);
+  const out: IssueRef[] = [];
+  for (const repo of DELIVERED_REPOS) {
+    const issues = await gh.list<ListedIssue>(
+      `/repos/${repo}/issues?state=closed&labels=delivered&since=${encodeURIComponent(since)}`,
+    );
+    const numbers = issues
+      .filter((i) => {
+        if (i.pull_request || !Number.isInteger(i.number) || (i.number as number) < 1) return false;
+        const closed = typeof i.closed_at === 'string' ? Date.parse(i.closed_at) : NaN;
+        return !Number.isNaN(closed) && closed >= from;
+      })
+      .map((i) => i.number as number);
+    for (const number of [...new Set(numbers)].sort((a, b) => a - b)) out.push({ repo, number });
+  }
+  return out;
+}

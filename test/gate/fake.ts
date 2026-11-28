@@ -10,6 +10,7 @@ export interface FakeIssue {
   assignees: string[];
   pull_request?: boolean;
   updated_at: string;
+  closed_at?: string;
   comments: { body: string; user: string; updated_at: string; html_url: string }[];
 }
 
@@ -20,6 +21,17 @@ export interface FakeJob {
   runner_name: string | null;
   html_url: string;
   steps?: { name: string; conclusion: string | null }[];
+}
+
+/** One run in a workflow's run list (`/actions/workflows/{file}/runs`), newest first. */
+export interface FakeWorkflowRun {
+  id: number;
+  event: string;
+  status: string;
+  conclusion: string | null;
+  display_title: string;
+  created_at: string;
+  run_started_at: string;
 }
 
 export interface FakePull {
@@ -42,6 +54,8 @@ export class FakeGate implements GitHub {
   jobs = new Map<string, FakeJob[]>();
   /** Pull requests per repository; every repository's default branch is `main`. */
   pulls = new Map<string, FakePull[]>();
+  /** Runs per `<repo>/<workflow file>`, newest first. */
+  workflowRuns = new Map<string, FakeWorkflowRun[]>();
   writes: string[] = [];
   reads: string[] = [];
   /** Throws before the call whose "METHOD path" (without query) matches, once. */
@@ -98,6 +112,7 @@ export class FakeGate implements GitHub {
       labels: i.labels.map((name) => ({ name })),
       assignees: i.assignees.map((login) => ({ login })),
       updated_at: i.updated_at,
+      ...(i.closed_at ? { closed_at: i.closed_at } : {}),
       ...(i.pull_request ? { pull_request: {} } : {}),
     };
   }
@@ -115,7 +130,19 @@ export class FakeGate implements GitHub {
       }
     }
     if (key === 'GET /user') return { login: this.login };
-    let m = /^\/repos\/([^/]+\/[^/]+)\/actions\/runs\/(\d+)(\/jobs)?$/.exec(path);
+    let m = /^\/repos\/([^/]+\/[^/]+\/actions\/workflows\/[^/]+)\/runs$/.exec(path);
+    if (m && method === 'GET') {
+      const key = (m[1] as string).replace('/actions/workflows', '');
+      const event = q.get('event');
+      const status = q.get('status');
+      const all = (this.workflowRuns.get(key) ?? []).filter(
+        (r) => (!event || r.event === event) && (!status || r.status === status),
+      );
+      const per = Number(q.get('per_page') ?? '30');
+      const page = Number(q.get('page') ?? '1');
+      return { total_count: all.length, workflow_runs: all.slice((page - 1) * per, page * per) };
+    }
+    m = /^\/repos\/([^/]+\/[^/]+)\/actions\/runs\/(\d+)(\/jobs)?$/.exec(path);
     if (m && method === 'GET') {
       const run = this.runs.get(m[2] as string);
       if (!run) throw new GitHubError(method, path, 404, 'Not Found');
