@@ -8,6 +8,7 @@ import { createProvisioning } from './provisioning.ts';
 import type { ProvisioningStep, Scenario } from './types.ts';
 import { dashboardLoginRelay } from '../scenarios/dashboard/login-relay.ts';
 import { dashboardOperations } from '../scenarios/dashboard/operations.ts';
+import { dashboardResolution } from '../scenarios/dashboard/resolution.ts';
 import { dashboardServing } from '../scenarios/dashboard/serving.ts';
 import { dashboardUpdates } from '../scenarios/dashboard/updates.ts';
 import { dashboardViews } from '../scenarios/dashboard/views.ts';
@@ -85,6 +86,8 @@ export const scenarios: Scenario[] = [
   dashboardViews,
   dashboardOperations,
   dashboardUpdates,
+  // After dashboard-views, so its paused fixtures do not change that scenario's counts; with the Runners dashboard-operations restored.
+  dashboardResolution,
   dashboardLoginRelay,
   runnerAddLogin,
   // Alone, with no Job on the Claude login volume: starts a Claude re-login, abandons it at the guide.
