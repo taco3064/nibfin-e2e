@@ -1,12 +1,17 @@
+import type { ExecResult } from '../../src/host/exec.ts';
+import { MINUTE_MS } from '../../src/host/github.ts';
 import { readHostState, readTask } from '../../src/host/hoststate.ts';
 import type { HostRun } from '../../src/host/hoststate.ts';
-import type { Scenario } from '../../src/types.ts';
-import { Check, message, tail } from '../lib/check.ts';
+import { describeLimit, readCoreLimit, waitForCoreLimit } from '../../src/host/ratelimit.ts';
+import type { CoreLimit } from '../../src/host/ratelimit.ts';
+import type { Outcome, Scenario } from '../../src/types.ts';
+import { Check, message, precondition, redact, tail } from '../lib/check.ts';
 import { parseRemaining } from '../lib/gh.ts';
 import { nibfinFacts, openPulls, registrations } from '../lib/github.ts';
 import type { StartTaskRecord, TaskSeen } from '../lib/github.ts';
 import { finishHold, removeHold, startHold } from '../lib/hold.ts';
 import { startsMachine } from '../lib/start-task.ts';
+import { sleep } from '../lib/wait.ts';
 import { hostRun, newTasks, wslconfigChanges } from './runner-add-setup.ts';
 
 /** Each task's actions and trigger kinds; a failed read is kept on that task and the others are still read. */
@@ -98,6 +103,93 @@ function remaining(c: Check, stdout: string, expected: number, what: string): vo
     );
 }
 
+/** A `runner remove` that exited non-zero, with the core limit read right after it (or that read's error). */
+export interface RemoveFailure {
+  result: ExecResult;
+  limit?: CoreLimit;
+  limitError?: string;
+  /** How many times the command ran; 2 after the one rerun. */
+  tries: number;
+}
+
+/**
+ * One `runner remove` command: `ok` when it exited 0 (`retried` keeps the rate-limited
+ * first try when only the rerun passed), `rateLimited` when it failed under a GitHub rate
+ * limit (its output names one, or the core limit read right after shows none left), and
+ * `failed` otherwise.
+ */
+export type RemoveResult =
+  | { ok: ExecResult; retried?: RemoveFailure }
+  | { rateLimited: RemoveFailure }
+  | { failed: RemoveFailure };
+
+export interface RemoveDeps {
+  ghNibfin(args: string[]): Promise<ExecResult>;
+  readLimit(): Promise<CoreLimit>;
+  /** Waits for the core reset when little is left; reports how long it waited. */
+  waitForLimit(): Promise<{ waitedMs: number }>;
+  sleep(ms: number): Promise<void>;
+  log(line: string): void;
+}
+
+async function classify(deps: RemoveDeps, result: ExecResult, tries: number): Promise<RemoveResult> {
+  if (result.code === 0) return { ok: result };
+  const f: RemoveFailure = { result, tries };
+  try {
+    f.limit = await deps.readLimit();
+  } catch (error) {
+    f.limitError = message(error);
+  }
+  const limited = /rate limit/i.test(`${result.stdout}\n${result.stderr}`) || f.limit?.remaining === 0;
+  return limited ? { rateLimited: f } : { failed: f };
+}
+
+/**
+ * Runs one `runner remove` and classifies it. With `rerun`, a rate-limited try is run once
+ * more after waiting: for the core reset when little is left, otherwise one minute, since
+ * the limit hit was then a secondary one. Only a command that is safe to repeat after a
+ * partial removal may set `rerun`.
+ */
+export async function removeStep(deps: RemoveDeps, args: string[], rerun: boolean): Promise<RemoveResult> {
+  const first = await classify(deps, await deps.ghNibfin(args), 1);
+  if (!rerun || !('rateLimited' in first)) return first;
+  deps.log(`gh nibfin ${args.join(' ')} failed under a GitHub rate limit; waiting for the limit, then running it once more`);
+  if ((await deps.waitForLimit()).waitedMs === 0) await deps.sleep(MINUTE_MS);
+  const second = await classify(deps, await deps.ghNibfin(args), 2);
+  return 'ok' in second ? { ok: second.ok, retried: first.rateLimited } : second;
+}
+
+const limitText = (f: RemoveFailure) =>
+  f.limit ? describeLimit(f.limit) : `the limit could not be read (${f.limitError ?? 'no read'})`;
+
+/**
+ * The one not-reached entry for the checks that depend on a failed `runner remove`: the
+ * command's own failure, the limit read right after it, and the checks left out.
+ */
+export function notReachedEntry(command: string, r: Exclude<RemoveResult, { ok: ExecResult }>, left: string[]): string {
+  const f = 'rateLimited' in r ? r.rateLimited : r.failed;
+  const tries = f.tries > 1 ? ` (on its rerun after a rate-limited try)` : '';
+  const why =
+    'rateLimited' in r
+      ? `failed under a GitHub rate limit${tries}, exiting ${f.result.code}: ${tail(f.result, 400)}`
+      : `failed${tries} while the limit had room, exiting ${f.result.code} (the R5.31 failure)`;
+  return `${command} ${why}; limit read after it: ${limitText(f)}; so these checks were not reached: ${left.join(', ')}`;
+}
+
+/**
+ * The scenario's outcome from its rule problems and its not-reached entries: rule problems
+ * only as `Check` gives them, entries only as a precondition not reached, and both as
+ * `failed` with the problems first and the entries after, without a rule id.
+ */
+export function removeOutcome(c: Check, notReached: string[], summary: string): Outcome {
+  if (!notReached.length) return c.outcome(summary);
+  if (!c.problems.length) return precondition(notReached.join('; '));
+  return {
+    status: 'failed',
+    reason: `${c.problems.join('; ')}; precondition not reached: ${redact(notReached.join('; '))}`,
+  };
+}
+
 /**
  * Destructive: removes every local Runner and the login volume, so it runs last. The
  * `nibfin` teardown then finds no Runner left.
@@ -135,23 +227,64 @@ export const runnerRemove: Scenario = {
           )
         : [];
 
+    const notReached: string[] = [];
+    let retriedNote = '';
+    const deps: RemoveDeps = {
+      ghNibfin: (args) => ctx.ghNibfin(args),
+      readLimit: () => readCoreLimit(gh),
+      waitForLimit: () => waitForCoreLimit(gh, { log: ctx.log, what: 'running gh nibfin runner remove again' }),
+      sleep,
+      log: ctx.log,
+    };
+    // Waited for here, before the 120 s hold Job starts, so the wait inside the first
+    // remove normally finds room and cannot outlast the busy Job (R5.32 idle-first).
+    await waitForCoreLimit(gh, { log: ctx.log, what: 'the busy hold Job and gh nibfin runner remove' });
+
     try {
       const hold = await startHold(gh, execution, 120);
       // Every Runner but one is removed while one is busy: the idle ones go first (R5.32), so only the busy one is left.
+      // Not rerun: after a partial removal, the same --count could take the busy Runner.
       const idle = String(facts.runnerCount - 1);
-      const one = await ctx.ghNibfin(['runner', 'remove', 'claude', '--count', idle, '--yes']);
-      c.that(one.code === 0, 'R5.31', `runner remove claude --count ${idle} --yes exited ${one.code}: ${tail(one)}`);
-      remaining(c, one.stdout, 1, `runner remove --count ${idle}`);
-      const left = await registrations(gh, execution);
-      c.that(
-        left.length === 1 && left[0]?.name === hold.runnerName,
-        'R5.32',
-        `after removing ${idle} of ${facts.runnerCount} Runners, ${execution} lists [${left.map((r) => r.name).join(', ')}]; expected only the busy ${hold.runnerName} (idle Runners go first)`,
-      );
+      const oneCmd = `runner remove claude --count ${idle} --yes`;
+      const one = await removeStep(deps, ['runner', 'remove', 'claude', '--count', idle, '--yes'], false);
+      if ('ok' in one) {
+        remaining(c, one.ok.stdout, 1, `runner remove --count ${idle}`);
+        const left = await registrations(gh, execution);
+        c.that(
+          left.length === 1 && left[0]?.name === hold.runnerName,
+          'R5.32',
+          `after removing ${idle} of ${facts.runnerCount} Runners, ${execution} lists [${left.map((r) => r.name).join(', ')}]; expected only the busy ${hold.runnerName} (idle Runners go first)`,
+        );
+      } else {
+        if ('failed' in one) c.fail('R5.31', `${oneCmd} exited ${one.failed.result.code}: ${tail(one.failed.result)}`);
+        notReached.push(
+          notReachedEntry(oneCmd, one, [
+            'its read-back of remaining: 1 (R5.32)',
+            'only the busy Runner registered, idle ones first (R5.32)',
+          ]),
+        );
+      }
 
-      const all = await ctx.ghNibfin(['runner', 'remove', 'claude', '--delete-login', '--yes']);
-      c.that(all.code === 0, 'R5.31', `runner remove claude --delete-login --yes exited ${all.code}: ${tail(all)}`);
-      remaining(c, all.stdout, 0, 'runner remove --delete-login');
+      // Removes every Runner, so it and its checks do not depend on the first removal.
+      // Safe to run again after a partial removal, so a rate-limited try is rerun once.
+      const allCmd = 'runner remove claude --delete-login --yes';
+      const all = await removeStep(deps, ['runner', 'remove', 'claude', '--delete-login', '--yes'], true);
+      if (!('ok' in all)) {
+        if ('failed' in all) c.fail('R5.31', `${allCmd} exited ${all.failed.result.code}: ${tail(all.failed.result)}`);
+        // Nothing below runs: with local Runners left, init could even open a PR on the peer sandbox.
+        notReached.push(
+          notReachedEntry(allCmd, all, [
+            "its read-back of remaining: 0 and the busy Job's conclusion (R5.32)",
+            'no Runner registered (R5.31)',
+            'the login volume deleted (R6.23)',
+            ...(windows ? ['the start task removed and .wslconfig kept (R5.16)'] : []),
+            'init refused without local Runners (R5.36)',
+          ]),
+        );
+        return removeOutcome(c, notReached, '');
+      }
+      if (all.retried) retriedNote = `; ${allCmd} passed on its rerun after one rate-limited try`;
+      remaining(c, all.ok.stdout, 0, 'runner remove --delete-login');
       const conclusion = await finishHold(gh, execution, hold);
       c.that(
         conclusion === 'success',
@@ -215,8 +348,10 @@ export const runnerRemove: Scenario = {
       await removeHold(gh, execution);
     }
     const host = windows ? ', removed the podman machine start scheduled task and kept .wslconfig unchanged' : '';
-    return c.outcome(
-      `runner remove took the ${facts.runnerCount - 1} idle Runner(s) first, waited for the busy one, read back 1 then 0, deleted the login volume${host}; init then refused`,
+    return removeOutcome(
+      c,
+      notReached,
+      `runner remove took the ${facts.runnerCount - 1} idle Runner(s) first, waited for the busy one, read back 1 then 0, deleted the login volume${host}; init then refused${retriedNote}`,
     );
   },
 };
