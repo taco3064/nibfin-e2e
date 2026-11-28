@@ -390,7 +390,7 @@ export function pendingOutcome(i: {
   sendBackExpected: boolean;
   /** Whether the snapshot shows the Shape sent back (`shaped` removed after the edit). */
   sentBack: boolean;
-  /** Whether a PR for `nibfin/issue-<n>` exists, in any state. */
+  /** Whether an open PR for `nibfin/issue-<n>` exists. */
   pr: boolean;
   open: boolean;
   shaped: boolean;
@@ -428,6 +428,63 @@ export function dispatchedWhilePending(
       (r) => (r.stage === 'deliver' || r.stage === 'review') && r.id !== heldRunId && time(r.created_at) >= pendingAt,
     )
     .map((r) => `${r.stage} run ${r.id} created ${r.created_at}`);
+}
+
+/** The first PR for P's branch `nibfin/issue-<n>` among `pulls`, only an open one when `open`. */
+export function branchPr(pulls: readonly Pull[] | undefined, n: number, open: boolean): Pull | undefined {
+  return pulls?.find((pr) => pr.head.ref === `nibfin/issue-${n}` && (!open || pr.state === 'open'));
+}
+
+const prState = (pr: Pick<Pull, 'state' | 'merged_at'>) =>
+  pr.state === 'open' ? 'open' : pr.merged_at ? 'merged' : 'closed';
+
+/**
+ * Why the wait for the `test` check of P's PR can no longer succeed, judged from one
+ * snapshot, or `undefined` while it still can. It ends when the PR the wait saw open was
+ * closed or merged before its `test` completed, or when P has no open PR, every deliver
+ * run of P since the wait began has completed and a `pending` the repair stage is not
+ * clearing stays on: while `pending` is on no Deliver is dispatched (Proposal R4.13), so
+ * none can open the PR.
+ */
+export function prTestFault(i: {
+  n: number;
+  /** The open PR, else the PR this wait last saw open as it is now, else undefined. */
+  pr: Pick<Pull, 'number' | 'state' | 'merged_at'> | undefined;
+  /** Whether that PR's `test` check on its head is completed. */
+  testCompleted: boolean;
+  /** P's deliver runs created since the wait began, other than an excluded (held) run. */
+  deliverRuns: readonly { status: string }[];
+  /** Whether P is open and has `pending` in this snapshot. */
+  pendingOn: boolean;
+  /** Why the `pending` on P ends a stage wait (`stageGone`'s text), undefined while the repair stage may clear it. */
+  pendingReason?: string;
+}): string | undefined {
+  const { pr } = i;
+  if (pr?.state === 'open') return undefined;
+  if (pr && !i.testCompleted) return `P's PR #${pr.number} was ${prState(pr)} before its test check completed`;
+  if (i.pendingOn && i.pendingReason !== undefined && i.deliverRuns.every((r) => r.status === 'completed'))
+    return `P has no open PR for nibfin/issue-${i.n}, its Deliver completed and pending is still on, so no Deliver can open one (Proposal R4.13): ${i.pendingReason}`;
+  return undefined;
+}
+
+/**
+ * One line naming the PR a wait on P's PR `test` check judges: its number, state, head and
+ * that check (`undefined` when the head has none, `{ error }` when the read failed), or
+ * that the branch has no PR at all.
+ */
+export function prTestState(
+  n: number,
+  pr: Pick<Pull, 'number' | 'state' | 'merged_at' | 'head'> | undefined,
+  test: { status: string; conclusion: string | null } | { error: string } | undefined,
+): string {
+  if (!pr) return `no PR for nibfin/issue-${n}`;
+  const check =
+    test === undefined
+      ? 'no test check on that head'
+      : 'error' in test
+        ? `test check unread (${test.error})`
+        : `test ${test.status}/${test.conclusion ?? 'none'}`;
+  return `PR #${pr.number} ${prState(pr)}, head ${pr.head.sha}: ${check}`;
 }
 
 /** P: `pause` at a stage boundary, an edit that contradicts its Shape, then `pending` during Deliver. */
@@ -597,8 +654,7 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
       ),
     },
   );
-  const prOf = (s: Snapshot, open = false) =>
-    s.pulls.get(exec)?.find((pr) => pr.head.ref === `nibfin/issue-${n}` && (!open || pr.state === 'open'));
+  const prOf = (s: Snapshot, open = false) => branchPr(s.pulls.get(exec), n, open);
   /**
    * Waits, with `pending` on, for the Deliver whose `job` was running when it was added to
    * send the Shape back (only when `sendBackExpected`), open a PR, or complete without one
@@ -615,7 +671,7 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
         const o = pendingOutcome({
           sendBackExpected,
           sentBack: sendBackExpected && !shaped && (unpausedAt === undefined || (await removedAfterEdit())),
-          pr: prOf(s) !== undefined,
+          pr: prOf(s, true) !== undefined,
           open: isOpen(k, s, n),
           shaped,
           job: await k.obs.job(exec, job.id),
@@ -681,20 +737,65 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
   }
   const pendAt = pendingAt;
 
-  /** Waits for the `test` check of P's open PR to complete, ending at once on `gone`. */
-  const prTest = (gone: Gone) =>
-    k.obs.until(
+  /**
+   * Waits for the `test` check of P's open PR to complete. It ends at once on `gone`, then
+   * when it can no longer succeed (`prTestFault`), judging only P's deliver runs created at
+   * or after `since` other than `excludeRun`. Every failure names the PR, its head and
+   * `test` check, before P's summary.
+   */
+  const prTest = (gone: Gone, since: number, excludeRun?: number) => {
+    // The PR this wait saw open: once it is closed, a snapshot alone cannot tell it from an older closed PR.
+    let seen: number | undefined;
+    const judged = (s: Snapshot) => {
+      const open = prOf(s, true);
+      if (open) seen = open.number;
+      return open ?? (seen === undefined ? undefined : s.pulls.get(exec)?.find((pr) => pr.number === seen));
+    };
+    const testOf = async (pr: Pull) => (await k.obs.checkRuns(exec, pr.head.sha)).find((c) => c.name === 'test');
+    const own: Gone = async (s) => {
+      const pr = judged(s);
+      const test = pr ? await testOf(pr) : undefined;
+      const pendingOn = isOpen(k, s, n) && hasLabel(k, s, n, 'pending');
+      // P is open here, so `stageGone` can only give the text of a `pending` the repair stage is not clearing.
+      const pendingReason =
+        pr?.state !== 'open' && pendingOn ? await k.stageGone(exec, n, 'deliver', { jobs: false })(s) : undefined;
+      const reason = prTestFault({
+        n,
+        pr,
+        testCompleted: test?.status === 'completed',
+        deliverRuns: k
+          .stages(s, exec, n, ['deliver'])
+          .filter((r) => time(r.created_at) >= since && r.id !== excludeRun),
+        pendingOn,
+        pendingReason,
+      });
+      return reason === undefined ? undefined : redact(reason, k.ctx.secretValues());
+    };
+    // A closed or merged PR for the branch that this wait never saw open is still named.
+    const state = async (s: Snapshot) => {
+      const reported = judged(s) ?? prOf(s);
+      let test: Parameters<typeof prTestState>[2];
+      if (reported)
+        try {
+          test = await testOf(reported);
+        } catch (error) {
+          test = { error: error instanceof Error ? error.message : String(error) };
+        }
+      return redact(`${prTestState(n, reported, test)}; ${await show(s)}`, k.ctx.secretValues());
+    };
+    return k.obs.until(
       "P's PR test check to complete",
       async (s) => {
-        const pr = prOf(s, true);
+        const pr = judged(s);
         if (!pr) return undefined;
-        const test = (await k.obs.checkRuns(exec, pr.head.sha)).find((c) => c.name === 'test');
+        const test = await testOf(pr);
         return test?.status === 'completed' ? time(test.completed_at) : undefined;
       },
       DEADLINE.stage,
-      show,
-      { gonePast: gone },
+      state,
+      { gonePast: firstOf(gone, own) },
     );
+  };
 
   let reviewWhilePending = 0;
   let pendingLate: string | undefined;
@@ -712,7 +813,11 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
     unpendedAt = k.now();
     // Judged only while P has no open PR: a review its own CI woke is no sign that the Deliver is gone.
     const gone = k.stageGone(exec, n, 'deliver', { since: unpendedAt - 60_000 });
-    const testDone = await prTest(async (s) => (prOf(s, true) ? undefined : gone(s)));
+    const testDone = await prTest(
+      async (s) => (prOf(s, true) ? undefined : gone(s)),
+      unpendedAt - 60_000,
+      pendingJob.run.id,
+    );
     await k.settle("P's PR test", testDone, ofP);
   } else {
     const testDone = await prTest(async (s) => {
@@ -720,7 +825,7 @@ async function driveHold(k: Kit, filed: number[]): Promise<HoldJourney> {
       if (!hasLabel(k, s, n, 'shaped'))
         return `P lost shaped while waiting for its PR's test: ${await k.summary(s, exec, n)}`;
       return k.stageGone(exec, n, 'deliver', { since: pendAt - 60_000, allowPending: true })(s);
-    });
+    }, (reshapedAt ?? editedAt) - 60_000);
     const quiet = await k.settle("P's PR test", testDone, ofP);
     reviewWhilePending = k.stages(quiet, exec, n, ['review']).filter((r) => time(r.created_at) >= pendAt).length;
     // The hold is only shown when PR CI completed, and so woke the review, after `pending` was on.
