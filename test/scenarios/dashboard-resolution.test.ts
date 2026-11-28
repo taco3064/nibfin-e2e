@@ -1,4 +1,4 @@
-import { deepEqual, equal, match } from 'node:assert/strict';
+import { deepEqual, doesNotMatch, equal, match, rejects } from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   autoEligible,
@@ -7,6 +7,8 @@ import {
   chooseDialogProblems,
   controlsFromAriaSnapshot,
   decisionOption,
+  decisionStopNotExercised,
+  elementMissing,
   LAG_MS,
   latestPending,
   needsExpected,
@@ -17,13 +19,16 @@ import {
   ownWordsComment,
   ownWordsIndex,
   PENDING_SKEW_MS,
+  pendingCause,
   shownState,
   stateOfRecord,
 } from '../../scenarios/dashboard/checks.ts';
 import type { LabelEvent } from '../../scenarios/dashboard/checks.ts';
+import { awaitRecord } from '../../scenarios/dashboard/resolution.ts';
+import type { IssueRead } from '../../scenarios/dashboard/resolution.ts';
 import { defineScenario } from '../../scenarios/dashboard/support.ts';
 import type { Comment } from '../../scenarios/lifecycle/analysis.ts';
-import { parseRecord } from '../../scenarios/lib/resolution.ts';
+import { parseRecord, resolutionRecord } from '../../scenarios/lib/resolution.ts';
 import type { RunContext } from '../../src/types.ts';
 
 const T0 = Date.parse('2026-11-28T10:00:00Z');
@@ -286,4 +291,100 @@ test('defineScenario returns the gate outcome without running, and runs when the
   equal(ran, 0);
   deepEqual(await s(undefined).run(ctx), { status: 'passed', reason: 'ok' });
   equal(ran, 1);
+});
+
+// The record wait (R9.52, R4.49, R3.42): the unfinished record and its in-place updates are waited past.
+const UNFINISHED = "<!-- nibfin:repair -->\nCategory: being classified - Reason: Nibfin's repair agent is looking at this stop";
+const recordComment = (body: string, updated: number): Comment => ({
+  id: 42,
+  body,
+  created_at: at(60_000),
+  updated_at: at(updated),
+  user: { login: 'nibfin-bot' },
+  html_url: 'https://github.com/o/exec/issues/9#issuecomment-42',
+});
+const issueState = (comments: Comment[], labels = ['scope', 'pending']): IssueRead => ({
+  state: 'open',
+  labels,
+  comments,
+  record: resolutionRecord(comments, T0),
+});
+/** A fake clock for waitFor, and a read that returns each state in turn and then the last one. */
+function scripted(states: IssueRead[]) {
+  let t = T0;
+  let i = 0;
+  const reads = { count: 0 };
+  const read = async () => {
+    reads.count++;
+    return states[Math.min(i++, states.length - 1)] as IssueRead;
+  };
+  const options = {
+    what: 'a finished resolution record on #9',
+    deadlineMs: 15 * 60_000,
+    intervalMs: 20_000,
+    now: () => t,
+    sleep: async (ms: number) => void (t += ms),
+  };
+  return { read, options, reads };
+}
+
+test('awaitRecord waits past the unfinished record and accepts the same comment once updated with a class', async () => {
+  const s = scripted([
+    issueState([]),
+    issueState([recordComment(UNFINISHED, 60_000)]),
+    issueState([recordComment(UNFINISHED, 80_000)]),
+    issueState([recordComment(HANDLE, 120_000)]),
+  ]);
+  const got = await awaitRecord(s.read, 9, T0, s.options);
+  equal(s.reads.count, 4);
+  equal(got.record.id, 42);
+  equal(got.record.class, 'operations-or-manual');
+  equal(got.comments.length, 1);
+});
+
+test('awaitRecord names the unfinished record when it never names a class before the deadline', async () => {
+  const s = scripted([issueState([recordComment(UNFINISHED, 60_000)])]);
+  await rejects(awaitRecord(s.read, 9, T0, s.options), (e: Error) => {
+    match(e.message, /latest resolution record https:\/\/github\.com\/o\/exec\/issues\/9#issuecomment-42 on #9/);
+    match(e.message, /never named one of the six R4\.41 classes within 15 min/);
+    match(e.message, /being classified/);
+    return true;
+  });
+});
+
+test('awaitRecord still ends early when pending goes, naming the unfinished record', async () => {
+  const s = scripted([issueState([recordComment(UNFINISHED, 60_000)], ['scope'])]);
+  await rejects(
+    awaitRecord(s.read, 9, T0, s.options),
+    /#9 lost pending before its resolution record https:\S+issuecomment-42 named a class/,
+  );
+  const none = scripted([{ ...issueState([]), state: 'closed' }]);
+  await rejects(awaitRecord(none.read, 9, T0, none.options), /#9 closed before a resolution record appeared/);
+});
+
+test('a product-decision fixture whose finished record has no options names its pending cause, class and record', () => {
+  const pend = comment('<!-- nibfin:pending -->\nNibfin stopped: STAGE_HOST_MEMORY_LOW, the host is low on memory.', 0);
+  const older = comment('<!-- nibfin:pending -->\nNibfin stopped: STAGE_BLOCKED.', -60_000);
+  const r = parseRecord(comment(HANDLE, 30_000));
+  deepEqual(pendingCause([pend, older]), { url: pend.html_url, codes: ['STAGE_HOST_MEMORY_LOW'] });
+  const why = decisionStopNotExercised({ name: 'product-decision', n: 526 }, r, [older, pend]);
+  match(why, /product-decision fixture #526 stopped with pending cause STAGE_HOST_MEMORY_LOW/);
+  match(why, new RegExp(pend.html_url.replace(/[.#/]/g, '\\$&')));
+  match(why, /classed 維運或人為操作 with no options/);
+  match(why, new RegExp(`finished record ${r.url.replace(/[.#/]/g, '\\$&')}`));
+  doesNotMatch(why, /STAGE_BLOCKED/);
+  match(decisionStopNotExercised({ name: 'x', n: 1 }, r, []), /stopped with no pending comment/);
+  match(
+    decisionStopNotExercised({ name: 'x', n: 1 }, r, [comment(PENDING(), 0)]),
+    /no cause code in its latest pending comment/,
+  );
+});
+
+test('elementMissing says the element was not found and names the view and its update marker', () => {
+  const m = elementMissing(
+    { name: 'product-decision', n: 526, title: 'Add roundHalf' },
+    'repo view, update marker manual, refreshed 4 time(s) by its Refresh control, last at 2026-11-28T10:05:00.000Z',
+  );
+  match(m, /#526's element "Add roundHalf" was not found in the repo view, update marker manual, refreshed 4 time/);
+  doesNotMatch(m, /""/);
 });
