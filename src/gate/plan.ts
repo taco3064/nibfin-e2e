@@ -154,7 +154,7 @@ export async function makePlan(
     const entry = byId.get(id);
     if (entry && isExcluded(entry)) {
       excluded.push({ id, reason: entry.notE2e });
-      decisions.push({ subject: id, decision: 'not run', reason: `the Proposal marks it 〔不測：${entry.notE2e}〕` });
+      decisions.push({ subject: id, decision: 'not run', reason: `the coverage map does not test it: ${entry.notE2e}` });
       continue;
     }
     const issues = cited.get(id);

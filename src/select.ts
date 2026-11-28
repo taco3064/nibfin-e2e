@@ -7,7 +7,7 @@ export type Selection = { all: true } | { all: false; rules: string[]; sections:
 export interface Selected {
   /** Selected map entries, in map order. */
   entries: MapEntry[];
-  /** Selected rules the Proposal marks 〔不測：…〕. */
+  /** Selected rules the coverage map does not test, each with its reason. */
   excluded: { id: RuleId; reason: string }[];
   /** Scenarios that declare any selected rule, in registry order. */
   scenarios: Scenario[];

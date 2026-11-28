@@ -82,7 +82,7 @@ test('crossCheck reports every inconsistency', () => {
     /R3.1: lists unknown scenario ghost/,
     /R3.1: scenario b does not declare R3.1/,
     /scenario a: declares R3.2, but the map does not list it/,
-    /scenario a: declares R0.1, which the Proposal marks 不測/,
+    /scenario a: declares R0.1, which the coverage map does not test: 文件定位/,
     /scenario a: declares R9.9, which is not in the coverage map/,
   ]) {
     ok(
@@ -138,7 +138,7 @@ test('the real coverage map marks R8.26 and R8.27 not tested by e2e (Proposal R8
   for (const [id, reason] of expected) {
     const e = entries.find((x) => x.id === id);
     ok(e && isExcluded(e), `Proposal ${id}: ${id} must be a notE2e entry`);
-    equal(e.notE2e, reason, `Proposal ${id}: the reason must be the text of its 〔不測〕 mark`);
+    equal(e.notE2e, reason, `Proposal ${id}: the coverage map gives this reason`);
   }
 });
 

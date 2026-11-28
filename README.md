@@ -214,11 +214,17 @@ text only, and the Dashboard's responses are never mocked or intercepted.
 `coverage-map.json` lists every Proposal rule, in Proposal order, by its `R` id:
 
 - a rule to verify: `{"id": "R5.13", "platforms": ["windows"], "scenarios": ["…"]}`
-- a rule the Proposal marks 〔不測：…〕: `{"id": "R0.1", "notE2e": "文件定位"}`,
-  with the reason copied from the Proposal. Only the Proposal can exempt a rule.
+- a rule e2e does not test: `{"id": "R0.1", "notE2e": "文件定位"}`, with the
+  map's own reason for not testing it.
 
-When the Proposal changes, update the map from the Proposal itself: add new
-rules, change 不測 marks, and keep ids as they are (they are never reused).
+The map, not the Proposal, decides which rules e2e tests and why the others are
+not tested (Proposal R8.15, R8.16): e2e tests only what users operate directly,
+and Nibfin's automatic workflow is verified by Nibfin's own development
+(`由 Nibfin 自我開發驗證（R8.15）`). Nothing compares a `notE2e` reason with
+Proposal text. When the Proposal changes, add an entry for each new rule
+(scenarios, or a `notE2e` reason) and keep ids as they are (they are never
+reused). A selected rule with no entry is a coverage gap that files a `request`
+(Proposal R8.20).
 
 ## Adding a scenario
 

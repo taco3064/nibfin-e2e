@@ -41,6 +41,10 @@ test('a delivered Issue selects the Shape line; rules cited by open scope Issues
   deepEqual(p.selection, { all: false, rules: ['R3.1', 'R5.14'] });
   deepEqual(p.waiting, [{ id: 'R3.2', issues: ['https://github.com/taco3064/gh-nibfin/issues/1'] }]);
   deepEqual(p.excluded, [{ id: 'R0.1', reason: '文件定位' }]);
+  deepEqual(
+    p.decisions.find((d) => d.subject === 'R0.1'),
+    { subject: 'R0.1', decision: 'not run', reason: 'the coverage map does not test it: 文件定位' },
+  );
   deepEqual(p.unknown, ['R9.9']);
   deepEqual(p.gaps, [
     { id: 'R9.9', missing: 'not in coverage-map.json' },

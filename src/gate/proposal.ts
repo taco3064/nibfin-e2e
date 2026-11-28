@@ -104,6 +104,8 @@ function newBody(event: ProposalEvent, state: ProposalState, runLink: string): s
   return [
     "The Nibfin Proposal changed. The Scope stage reads the before and after text of each change in Notion's version history (kept 7 days on the Free plan): it compares the page between the previous handled update and the latest change event below. Each changed block starts with its rule's `R` id, so the changed rules are found there; the gate does not map block ids to rules (Proposal R8.13, R8.20).",
     '',
+    'Each new or changed rule gets its `coverage-map.json` entry in this repository, either the scenarios that test it or a `notE2e` reason, because the Proposal no longer marks which rules are tested (Proposal R8.15).',
+    '',
     stateBlock(state),
     '',
     '## First event',
