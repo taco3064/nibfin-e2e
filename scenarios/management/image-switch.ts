@@ -125,7 +125,7 @@ export function imageSwitch(kitFor: KitFor): Scenario {
       const c = new Check();
       const gh = kit.github;
       const repo = kit.sandbox.execution;
-      const dNew = nibfinFacts(ctx).imageDigest;
+      const { imageDigest: dNew, runnerCount: runners } = nibfinFacts(ctx);
 
       let n: number | undefined;
       let watch: Watch | undefined;
@@ -471,7 +471,7 @@ export function imageSwitch(kitFor: KitFor): Scenario {
       if (up && !upJudged) {
         // An early return or a throw left the upgrade running: it may still open its PR or align
         // (restart) an idle Runner, so wait for it to end, after the fixture is closed and before
-        // the new PRs are closed and both Runners are checked online.
+        // the new PRs are closed and every Runner is checked online.
         const pending = up;
         await step('waiting for gh nibfin upgrade --yes to end', async () => {
           await remoteWait(kit, 'gh nibfin upgrade --yes to end', DEADLINE.shape, 10 * SECOND, async () =>
@@ -500,10 +500,10 @@ export function imageSwitch(kitFor: KitFor): Scenario {
           if (odd.length) throw new Error(`main still pins ${odd.join(', ')}`);
         });
       }
-      await step('waiting for both Runners to be online', () =>
-        remoteWait(kit, `both Runners of ${repo} online`, DEADLINE.runnerOnline, 10 * SECOND, async () => {
+      await step('waiting for every Runner to be online', () =>
+        remoteWait(kit, `all ${runners} Runners of ${repo} online`, DEADLINE.runnerOnline, 10 * SECOND, async () => {
           const rs = await registrations(gh, repo);
-          return rs.length === 2 && rs.every((r) => r.status === 'online') ? true : undefined;
+          return rs.length === runners && rs.every((r) => r.status === 'online') ? true : undefined;
         }),
       );
       if (!down.length) return result;

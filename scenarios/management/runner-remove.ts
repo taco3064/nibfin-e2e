@@ -56,14 +56,16 @@ export const runnerRemove: Scenario = {
 
     try {
       const hold = await startHold(gh, execution, 120);
-      const one = await ctx.ghNibfin(['runner', 'remove', 'claude', '--count', '1', '--yes']);
-      c.that(one.code === 0, 'R5.31', `runner remove claude --count 1 --yes exited ${one.code}: ${tail(one)}`);
-      remaining(c, one.stdout, 1, 'runner remove --count 1');
+      // Every Runner but one is removed while one is busy: the idle ones go first (R5.32), so only the busy one is left.
+      const idle = String(facts.runnerCount - 1);
+      const one = await ctx.ghNibfin(['runner', 'remove', 'claude', '--count', idle, '--yes']);
+      c.that(one.code === 0, 'R5.31', `runner remove claude --count ${idle} --yes exited ${one.code}: ${tail(one)}`);
+      remaining(c, one.stdout, 1, `runner remove --count ${idle}`);
       const left = await registrations(gh, execution);
       c.that(
         left.length === 1 && left[0]?.name === hold.runnerName,
         'R5.32',
-        `after removing one Runner, ${execution} lists [${left.map((r) => r.name).join(', ')}]; expected only the busy ${hold.runnerName} (idle Runners go first)`,
+        `after removing ${idle} of ${facts.runnerCount} Runners, ${execution} lists [${left.map((r) => r.name).join(', ')}]; expected only the busy ${hold.runnerName} (idle Runners go first)`,
       );
 
       const all = await ctx.ghNibfin(['runner', 'remove', 'claude', '--delete-login', '--yes']);
@@ -136,7 +138,7 @@ export const runnerRemove: Scenario = {
     }
     const host = windows ? ', removed the podman machine start scheduled task and kept .wslconfig unchanged' : '';
     return c.outcome(
-      `runner remove took the idle Runner first, waited for the busy one, read back 1 then 0, deleted the login volume${host}; init then refused`,
+      `runner remove took the ${facts.runnerCount - 1} idle Runner(s) first, waited for the busy one, read back 1 then 0, deleted the login volume${host}; init then refused`,
     );
   },
 };

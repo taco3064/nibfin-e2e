@@ -267,9 +267,9 @@ export const initSettings: Scenario = {
     const execRegs = await registrations(gh, execution);
     const peerRegs = await registrations(gh, peer);
     c.that(
-      execRegs.length === 2 && peerRegs.length === 0,
+      execRegs.length === facts.runnerCount && peerRegs.length === 0,
       'R5.56',
-      `after init on both, ${execution} has ${execRegs.length} registrations (expected 2) and ${peer} ${peerRegs.length} (expected 0)`,
+      `after init on both, ${execution} has ${execRegs.length} registrations (expected ${facts.runnerCount}) and ${peer} ${peerRegs.length} (expected 0)`,
     );
     c.that(
       execRegs.length > 0 && peerRegs.length === 0,

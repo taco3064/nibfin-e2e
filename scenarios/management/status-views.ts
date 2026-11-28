@@ -2,7 +2,7 @@ import type { GitHub } from '../../src/host/github.ts';
 import type { RunContext, Scenario } from '../../src/types.ts';
 import { Check, precondition, redact, tail } from '../lib/check.ts';
 import { isNibfinRunFor } from '../lib/gh.ts';
-import { createIssue, deleteFile, json, putFile, readFile, registrations, whoami } from '../lib/github.ts';
+import { createIssue, deleteFile, json, nibfinFacts, putFile, readFile, registrations, whoami } from '../lib/github.ts';
 import type { Issue } from '../lib/github.ts';
 import { statusValidator } from '../lib/schema.ts';
 import { waitFor } from '../lib/wait.ts';
@@ -213,6 +213,7 @@ export const statusViews: Scenario = {
     const gh = ctx.github;
     const { execution, peer } = ctx.sandbox;
     const validate = statusValidator(ctx.workPath('gh-nibfin'));
+    const runners = nibfinFacts(ctx).runnerCount;
     const me = await whoami(gh);
 
     // Fixtures: A (scope + pause, so Nibfin starts no work, Proposal R4.12) is blocked by C (open) and B (closed, in peer).
@@ -321,9 +322,9 @@ export const statusViews: Scenario = {
       c.that(host?.host?.running === true, 'R5.43', `the ${name} view shows the host not running`);
       const claude = (host?.runners?.runners ?? []).filter((r) => r.provider === 'claude');
       c.that(
-        claude.length === 2 && claude.every((r) => r.active === true && r.status === 'online'),
+        claude.length === runners && claude.every((r) => r.active === true && r.status === 'online'),
         'R5.43',
-        `the ${name} view lists ${claude.length} claude Runners (${claude.map((r) => `${r.active ? 'active' : 'inactive'}/${r.status}`).join(', ')}), expected 2 active and online`,
+        `the ${name} view lists ${claude.length} claude Runners (${claude.map((r) => `${r.active ? 'active' : 'inactive'}/${r.status}`).join(', ')}), expected ${runners} active and online`,
       );
       const login = (host?.providers ?? []).find((p) => p.provider === 'claude');
       c.that(
