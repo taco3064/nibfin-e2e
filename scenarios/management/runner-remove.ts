@@ -1,20 +1,90 @@
 import { readHostState, readTask } from '../../src/host/hoststate.ts';
 import type { HostRun } from '../../src/host/hoststate.ts';
 import type { Scenario } from '../../src/types.ts';
-import { Check, tail } from '../lib/check.ts';
+import { Check, message, tail } from '../lib/check.ts';
 import { parseRemaining } from '../lib/gh.ts';
 import { nibfinFacts, openPulls, registrations } from '../lib/github.ts';
+import type { StartTaskRecord, TaskSeen } from '../lib/github.ts';
 import { finishHold, removeHold, startHold } from '../lib/hold.ts';
+import { startTask } from './podman-machine-detached.ts';
 import { hostRun, newTasks, wslconfigChanges } from './runner-add-setup.ts';
 
-/** The new scheduled tasks that run `podman machine start` (other tasks may appear on the host meanwhile). */
-async function podmanStartTasks(run: HostRun, tasks: string[]): Promise<string[]> {
-  const out: string[] = [];
-  for (const t of tasks) {
-    const d = await readTask(run, t);
-    if (d.actions.some((a) => /podman/i.test(a.execute) && /\bmachine\s+start\b/.test(a.arguments))) out.push(t);
+/** Each task's actions and trigger kinds; a failed read is kept on that task and the others are still read. */
+async function seen(run: HostRun, tasks: string[]): Promise<TaskSeen[]> {
+  const out: TaskSeen[] = [];
+  for (const name of tasks) {
+    try {
+      const d = await readTask(run, name);
+      out.push({ name, actions: d.actions, triggers: d.triggers });
+    } catch (error) {
+      out.push({ name, error: message(error) });
+    }
   }
   return out;
+}
+
+/** The task runs `podman machine start`, by the same match as the R5.12 and R5.13 scenarios. */
+const isStart = (t: TaskSeen) =>
+  !!t.actions && !!startTask([{ t: t.name, d: { actions: t.actions, triggers: t.triggers ?? [], repetitions: [] } }]);
+
+export type StartTasks = { tasks: string[] } | { missing: 'unrecorded' | 'gone' | 'none' };
+
+/**
+ * The start tasks whose removal R5.16 checks: the one recorded right after runner add when
+ * it is still `present`, first, then every other start task new since before runner add
+ * (`fresh`), since the last removal must remove each of them. When there is none, it names
+ * why: the recorded task is `gone`, the record found none (`unrecorded`), or there is no
+ * usable record (`none`: no record, or only its read error).
+ */
+export function startTasksToCheck(o: { record?: StartTaskRecord; present: string[]; fresh: TaskSeen[] }): StartTasks {
+  const tasks: string[] = [];
+  const recorded = o.record?.task?.name;
+  if (recorded !== undefined && o.present.includes(recorded)) tasks.push(recorded);
+  for (const t of o.fresh) if (isStart(t) && !tasks.includes(t.name)) tasks.push(t.name);
+  if (tasks.length) return { tasks };
+  if (recorded !== undefined) return { missing: 'gone' };
+  if (o.record && o.record.error === undefined) return { missing: 'unrecorded' };
+  return { missing: 'none' };
+}
+
+/** A task for a reason: its name and actions (`execute arguments`), or its read error. */
+export function describeTask(t: TaskSeen): string {
+  if (t.error !== undefined) return `${t.name} (read error: ${t.error})`;
+  const actions = (t.actions ?? []).map((a) => `${a.execute} ${a.arguments}`.trim());
+  return `${t.name} (actions: ${actions.join('; ') || 'none'})`;
+}
+
+const describeAll = (ts: TaskSeen[]) => ts.map(describeTask).join(', ') || 'none';
+
+/**
+ * The R5.16 reason when no start task can be checked: which case it is and what was seen,
+ * right after runner add (the record) and when runner-remove started (`fresh`, and the
+ * podman-named tasks that existed before runner add, `older`).
+ */
+export function noStartTaskReason(o: {
+  record?: StartTaskRecord;
+  missing: 'unrecorded' | 'gone' | 'none';
+  fresh: TaskSeen[];
+  older: TaskSeen[];
+}): string {
+  const parts: string[] = [];
+  const r = o.record;
+  if (o.missing === 'gone' && r?.task)
+    parts.push(
+      `the recorded task ${describeTask(r.task)} was gone when runner-remove started; an earlier Runner removal may have removed it — file a new request to decide whether that is allowed (R5.16)`,
+    );
+  else if (o.missing === 'unrecorded')
+    parts.push(`the record right after runner add found no such task (new tasks then: ${describeAll(r?.tasks ?? [])})`);
+  else
+    parts.push(
+      r?.error !== undefined
+        ? `the record right after runner add could not read the scheduled tasks: ${r.error}`
+        : 'the nibfin provisioning step left no record of the tasks right after runner add',
+    );
+  for (const t of o.older.filter(isStart))
+    parts.push(`a start task ${describeTask(t)} is present but existed before runner add, so it was not recorded or not new`);
+  parts.push(`new since before runner add at runner-remove start: ${describeAll(o.fresh)}`);
+  return `runner add's scheduled task that runs podman machine start cannot be checked for removal: ${parts.join('; ')}`;
 }
 
 /** Checks the command's own read-back of the remaining count (Proposal R5.32). */
@@ -49,9 +119,21 @@ export const runnerRemove: Scenario = {
     // Windows here (scheduled task removed, .wslconfig kept); it names nothing on Linux.
     const windows = ctx.target.platform === 'windows';
     const setup = windows ? await readHostState(run, ctx.target.platform) : undefined;
-    const added =
-      setup?.platform === 'windows' && facts.hostBefore.platform === 'windows'
-        ? await podmanStartTasks(run, newTasks(facts.hostBefore, setup))
+    const before = facts.hostBefore.platform === 'windows' ? facts.hostBefore : undefined;
+    const fresh = setup?.platform === 'windows' && before ? await seen(run, newTasks(before, setup)) : [];
+    const found = startTasksToCheck({
+      record: facts.startTask,
+      present: setup?.platform === 'windows' ? setup.tasks : [],
+      fresh,
+    });
+    // Diagnosis only, when nothing can be checked: start tasks that existed before runner add.
+    // Filtered by name, since reading every scheduled task's detail is one host call per task.
+    const older =
+      'missing' in found && setup?.platform === 'windows' && before
+        ? await seen(
+            run,
+            before.tasks.filter((t) => /podman/i.test(t) && setup.tasks.includes(t)),
+          )
         : [];
 
     try {
@@ -101,13 +183,10 @@ export const runnerRemove: Scenario = {
         if (setup?.platform !== 'windows' || now.platform !== 'windows')
           c.fail('R5.16', 'the Windows host state could not be read to check the last removal');
         else {
-          c.that(
-            added.length > 0,
-            'R5.16',
-            "runner add's scheduled task that runs podman machine start could not be found to check its removal (no new such task against the host before runner add)",
-          );
-          const still = added.filter((t) => now.tasks.includes(t));
-          c.that(!still.length, 'R5.16', `the last Runner's removal left the scheduled task ${still.join(', ')}`);
+          if ('tasks' in found) {
+            const still = found.tasks.filter((t) => now.tasks.includes(t));
+            c.that(!still.length, 'R5.16', `the last Runner's removal left the scheduled task ${still.join(', ')}`);
+          } else c.fail('R5.16', noStartTaskReason({ record: facts.startTask, missing: found.missing, fresh, older }));
           const w = wslconfigChanges(setup.wslconfig, now.wslconfig);
           c.that(
             !w.changed.length,
